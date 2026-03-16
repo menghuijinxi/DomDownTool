@@ -50,7 +50,7 @@ namespace DownTool
 
 		uint32_t X = 0;
 		uint32_t Y = 0;
-		uint8_t Zoom = 0;
+		uint32_t Zoom = 0;
 	};
 
 	struct GetDownServerIndex

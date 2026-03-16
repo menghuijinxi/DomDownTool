@@ -25,6 +25,9 @@ namespace DownTool
 		//下载半径，单位米
 		double Radius = 0.;
 
+		//下载级别，如果服务器没有提供某个级别的瓦片，下载工具会自动降级下载更低级别的瓦片然后合并成更高等级的瓦片
+		uint32_t Zoom = 18;
+
 		//下载URL模板
 		std::string UrlTemplate = "";
 
@@ -54,6 +57,6 @@ namespace DownTool
 		//计算下载范围
 		virtual void CalculateDownRange();
 
-		GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate)
+		GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Zoom, MaxLonLat, MinLonLat)
 	};
 }

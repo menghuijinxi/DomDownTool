@@ -6,9 +6,8 @@
 #if WIN32
 #include "windows.h"
 #endif
+#include "GaoDeDown.h"
 #include "curl/curl.h"
-
-using namespace std;
 
 int main()
 {
@@ -19,7 +18,7 @@ int main()
 	SetConsoleOutputCP(CP_UTF8);
 #endif
 
-	DownTool::TianDiTuDown base;
+	DownTool::GaoDeDown base;
 	base.SetRadius(1000.);
 	base.SetCenterLonLat(DownTool::LonLat(116.468067, 39.912247));
 	base.StartDown();
