@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include <map>
 #include <string>
 #include <thread>
 #include <GeographicLib/Geodesic.hpp>
@@ -11,6 +12,15 @@ namespace DownTool
 	const std::string yReplace = "{y}";
 	const std::string zReplace = "{z}";
 	const std::string serverIndexReplace = "{s}";
+
+	class DownToolBase;
+
+	struct CurlMultiHandle
+	{
+		DownToolBase* owner = nullptr;
+		Tile tile;
+		std::string url;
+	};
 
 	class DownToolBase
 	{
@@ -39,10 +49,24 @@ namespace DownTool
 		//最大下载线程数，默认使用硬件并发数
 		uint32_t MaxDownQueue = std::thread::hardware_concurrency();
 
+		//多线程下载时使用的CURLM句柄
 		CURLM* curlMulti = nullptr;
+
+		CURLSH* share = nullptr;
+
+		//所有下载句柄
+		std::map<CURL*, CurlMultiHandle> curlEasyHandles;
 
 		//是否正在下载
 		bool bDowning = false;
+
+		//临时文件的缓存路径
+		std::string CachePath = "cache";
+
+		//停止下载的标志，设置为true后，正在下载的线程会尽快停止下载
+		std::atomic_bool bStop = false;
+
+		void WaitDown();
 
 	public:
 
@@ -57,6 +81,12 @@ namespace DownTool
 		//计算下载范围
 		virtual void CalculateDownRange();
 
-		GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Zoom, MaxLonLat, MinLonLat)
+        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue)
+		
+			//停止下载，正在下载的线程会尽快停止下载
+		void StopDown()
+		{
+			bStop = true;
+		}
 	};
 }

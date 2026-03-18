@@ -43,7 +43,7 @@ namespace DownTool
 	struct Tile
 	{
 		Tile() = default;
-		Tile(uint32_t newX, uint32_t newY, uint8_t newZoom)
+		Tile(uint32_t newX, uint32_t newY, uint32_t newZoom)
 			: X(newX), Y(newY), Zoom(newZoom)
 		{
 		}

@@ -19,7 +19,7 @@ int main()
 #endif
 
 	DownTool::GaoDeDown base;
-	base.SetRadius(1000.);
+	base.SetRadius(300.);
 	base.SetCenterLonLat(DownTool::LonLat(116.468067, 39.912247));
 	base.StartDown();
 
