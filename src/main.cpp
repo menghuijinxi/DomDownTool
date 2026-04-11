@@ -23,6 +23,6 @@ int main()
 	base.SetCenterLonLat(DownTool::LonLat(116.468067, 39.912247));
 	base.StartDown();
 
-	std::printf("下载完毕");
+	fmt::print("下载完成：{}/{}\n", base.GetDowningCount(), (base.GetMaxTile().X - base.GetMinTile().X + 1) * (base.GetMaxTile().Y - base.GetMinTile().Y + 1));
 	return 0;
 }

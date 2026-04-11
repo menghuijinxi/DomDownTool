@@ -1,5 +1,6 @@
 ﻿#include "DownToolBase.h"
 
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 
@@ -7,27 +8,29 @@
 
 namespace
 {
+	enum class ImageType { Unknown, Png, Jpeg };
+
+	ImageType DetectImageType(const unsigned char* data, size_t len)
+	{
+		if (len >= 8 &&
+			data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 &&
+			data[4] == 0x0D && data[5] == 0x0A && data[6] == 0x1A && data[7] == 0x0A)
+			return ImageType::Png;
+
+		if (len >= 3 &&
+			data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF)
+			return ImageType::Jpeg;
+
+		return ImageType::Unknown;
+	}
+
 	size_t WriteTileData(void* ptr, size_t size, size_t nmemb, void* userdata)
 	{
 		DownTool::CurlMultiHandle* context = static_cast<DownTool::CurlMultiHandle*>(userdata);
-		std::string filePath = fmt::format("{}/{}/{}/{}.png", context->owner->GetCachePath(), context->tile.Zoom, context->tile.X, context->tile.Y);
-		std::filesystem::path nativePath = std::filesystem::u8path(filePath);
-		std::filesystem::create_directories(nativePath.parent_path());
-		std::ofstream outFile(nativePath, std::ios::binary);
 		size_t totalSize = size * nmemb;
-		if (outFile.is_open())
+		if (context->fileStream.is_open())
 		{
-			if (totalSize <= 4000)
-			{
-				fmt::print("下载成功，但文件大小较小，可能是无效数据：{}。url:{}\n", filePath, context->url);
-			}
-			outFile.write(static_cast<char*>(ptr), totalSize);
-			outFile.close();
-			fmt::print("成功下载切片：{}\n", filePath);
-		}
-		else
-		{
-			fmt::print("无法打开文件进行写入：{}\n", filePath);
+			context->fileStream.write(static_cast<char*>(ptr), totalSize);
 		}
 		return totalSize;
 	}
@@ -46,8 +49,11 @@ void DownTool::DownToolBase::WaitDown()
 	// 2. 检查是否有已完成的任务
 	CURLMsg* msg;
 	int msgs_left;
+	bool hasProgressUpdate = false;
 	while ((msg = curl_multi_info_read(curlMulti, &msgs_left)))
 	{
+		if (bStop) break;
+
 		if (msg->msg == CURLMSG_DONE)
 		{
 			CURL* easy = msg->easy_handle;
@@ -60,7 +66,16 @@ void DownTool::DownToolBase::WaitDown()
 			curl_multi_remove_handle(curlMulti, easy);
 			curl_easy_cleanup(easy);
 			curlEasyHandles.erase(easy);
+			DowningCount += 1;
+			hasProgressUpdate = true;
 		}
+	}
+
+	if (hasProgressUpdate)
+	{
+		const uint64_t total = (static_cast<uint64_t>(MaxTile.X) - static_cast<uint64_t>(MinTile.X) + 1)
+			* (static_cast<uint64_t>(MaxTile.Y) - static_cast<uint64_t>(MinTile.Y) + 1);
+		fmt::print("\r下载进度: {}/{}", GetDowningCount(), total);
 	}
 
 	// 3. 等待 socket 事件（避免 busy loop）
@@ -129,6 +144,15 @@ void DownTool::DownToolBase::StartDown()
 			CURLMcode mc = curl_multi_perform(curlMulti, &still_running);
 
 			CurlMultiHandle multiHandle;
+			std::string filePath = fmt::format("{}/{}/{}/{}.png", GetCachePath(), GetZoom(), x, y);
+			std::filesystem::path nativePath = std::filesystem::u8path(filePath);
+			std::filesystem::create_directories(nativePath.parent_path());
+			multiHandle.fileStream.open(nativePath, std::ios::binary);
+			if (!multiHandle.fileStream.is_open())
+			{
+				fmt::print("无法打开文件进行写入，切片将会被跳过，解决文件占用问题后再重新下载一遍即可修复：{}\n", filePath);
+				continue;
+			}
 			multiHandle.owner = this;
 			multiHandle.tile = Tile(x, y, GetZoom());
 			CURL* easy = curl_easy_init();
@@ -139,7 +163,10 @@ void DownTool::DownToolBase::StartDown()
 			}
 			std::string url = MakeUri(multiHandle.tile);
 			multiHandle.url = url;
-			curlEasyHandles[easy] = multiHandle;
+			//downTileCount[url.substr(0, 20)]++;
+			curlEasyHandles[easy] = std::move(multiHandle);
+			//避免高速下载被服务器拒绝，设置最大连接数为6（根据服务器限制调整）
+			//curl_easy_setopt(easy, CURLOPT_MAXCONNECTS, 2L);
 			curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
 			curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, WriteTileData);
 			curl_easy_setopt(easy, CURLOPT_WRITEDATA, &curlEasyHandles[easy]);
@@ -154,8 +181,15 @@ void DownTool::DownToolBase::StartDown()
 	// 等待所有下载完成
 	while (curlEasyHandles.size() > 0)
 	{
+		if (bStop) break;
 		WaitDown();
 	}
+	fmt::print("\n");
+
+	/*for (auto& d : downTileCount)
+	{
+		fmt::print("URL前缀：{}，下载次数：{}\n", d.first, d.second);
+	}*/
 
 	bDowning = false;
 }

@@ -59,6 +59,7 @@ namespace DownTool
 		GetDownServerIndex(const IntVector2& range)
 			: DomServerRange(range)
 		{
+			currentDomServerIndex = range.X - 1;
 		}
 
 		std::atomic<int32_t> currentDomServerIndex = 0;

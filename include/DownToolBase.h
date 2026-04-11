@@ -1,7 +1,9 @@
 ﻿#pragma once
+#include <fstream>
 #include <map>
 #include <string>
 #include <thread>
+#include <fmt/base.h>
 #include <GeographicLib/Geodesic.hpp>
 #include "DataType.h"
 #include "curl/curl.h"
@@ -20,6 +22,7 @@ namespace DownTool
 		DownToolBase* owner = nullptr;
 		Tile tile;
 		std::string url;
+		std::ofstream fileStream;
 	};
 
 	class DownToolBase
@@ -66,7 +69,12 @@ namespace DownTool
 		//停止下载的标志，设置为true后，正在下载的线程会尽快停止下载
 		std::atomic_bool bStop = false;
 
+		//确定完成下载的数量
+		std::int32_t DowningCount = 0;
+
 		void WaitDown();
+
+		//std::map<std::string, int32_t> downTileCount;
 
 	public:
 
@@ -81,7 +89,7 @@ namespace DownTool
 		//计算下载范围
 		virtual void CalculateDownRange();
 
-        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue)
+        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount)
 		
 			//停止下载，正在下载的线程会尽快停止下载
 		void StopDown()
