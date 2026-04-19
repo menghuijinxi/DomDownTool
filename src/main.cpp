@@ -19,10 +19,9 @@ int main()
 #endif
 
 	DownTool::GaoDeDown base;
-	base.SetRadius(300.);
+	base.SetRadius(1000.);
 	base.SetCenterLonLat(DownTool::LonLat(116.468067, 39.912247));
 	base.StartDown();
 
-	fmt::print("下载完成：{}/{}\n", base.GetDowningCount(), (base.GetMaxTile().X - base.GetMinTile().X + 1) * (base.GetMaxTile().Y - base.GetMinTile().Y + 1));
 	return 0;
 }

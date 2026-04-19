@@ -73,4 +73,8 @@ if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET DomDownTool PROPERTY CXX_STANDARD 20)
 endif()
 
+if(MSVC)
+  target_compile_definitions(DomDownTool PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+
 # TODO: 如有需要，请添加测试并安装目标。

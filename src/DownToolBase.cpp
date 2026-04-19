@@ -73,9 +73,7 @@ void DownTool::DownToolBase::WaitDown()
 
 	if (hasProgressUpdate)
 	{
-		const uint64_t total = (static_cast<uint64_t>(MaxTile.X) - static_cast<uint64_t>(MinTile.X) + 1)
-			* (static_cast<uint64_t>(MaxTile.Y) - static_cast<uint64_t>(MinTile.Y) + 1);
-		fmt::print("\r下载进度: {}/{}", GetDowningCount(), total);
+		fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
 	}
 
 	// 3. 等待 socket 事件（避免 busy loop）
@@ -127,53 +125,30 @@ void DownTool::DownToolBase::StartDown()
 		MinLonLat.lon, MaxLonLat.lat, MaxLonLat.lon, MinLonLat.lat,
 		MinTile.X, MinTile.Y, MaxTile.X, MaxTile.Y, CachePath, (MaxTile.X - MinTile.X + 1) * (MaxTile.Y - MinTile.Y + 1));
 
-	for (uint32_t x = MinTile.X; x <= MaxTile.X; x++)
+	TotalDownCount += (MaxTile.X - MinTile.X + 1) * (MaxTile.Y - MinTile.Y + 1);
+
+	for (uint32_t x_base = MinTile.X; x_base <= MaxTile.X; x_base++)
 	{
 		if (bStop) break;
-		for (uint32_t y = MinTile.Y; y <= MaxTile.Y; y++)
+		for (uint32_t y_base = MinTile.Y; y_base <= MaxTile.Y; y_base++)
 		{
 			if (bStop) break;
 
-			// 等待至少一个下载完成
-			while (curlEasyHandles.size() >= MaxDownQueue)
+			if (IsTileOffset())
 			{
-				WaitDown();
+				TileRange offsetTiles = GetOffsetTiles(Tile(x_base, y_base, GetZoom()));
+				TotalDownCount += (offsetTiles.MaxTile.X - offsetTiles.MinTile.X + 1) * (offsetTiles.MaxTile.Y - offsetTiles.MinTile.Y + 1) - 1; // 减去原本的1个瓦片，因为下面会下载这个瓦片
+				for (uint32_t x = offsetTiles.MinTile.X; x <= offsetTiles.MaxTile.X; x++)
+				{
+					for (uint32_t y = offsetTiles.MinTile.Y; y <= offsetTiles.MaxTile.Y; y++)
+					{
+						DownloadTile(x, y);
+					}
+				}
 			}
-
-			int still_running = 1;
-			CURLMcode mc = curl_multi_perform(curlMulti, &still_running);
-
-			CurlMultiHandle multiHandle;
-			std::string filePath = fmt::format("{}/{}/{}/{}.png", GetCachePath(), GetZoom(), x, y);
-			std::filesystem::path nativePath = std::filesystem::u8path(filePath);
-			std::filesystem::create_directories(nativePath.parent_path());
-			multiHandle.fileStream.open(nativePath, std::ios::binary);
-			if (!multiHandle.fileStream.is_open())
+			else
 			{
-				fmt::print("无法打开文件进行写入，切片将会被跳过，解决文件占用问题后再重新下载一遍即可修复：{}\n", filePath);
-				continue;
-			}
-			multiHandle.owner = this;
-			multiHandle.tile = Tile(x, y, GetZoom());
-			CURL* easy = curl_easy_init();
-			if (!easy)
-			{
-				fmt::print("无法初始化 CURL easy handle\n");
-				return;
-			}
-			std::string url = MakeUri(multiHandle.tile);
-			multiHandle.url = url;
-			//downTileCount[url.substr(0, 20)]++;
-			curlEasyHandles[easy] = std::move(multiHandle);
-			//避免高速下载被服务器拒绝，设置最大连接数为6（根据服务器限制调整）
-			//curl_easy_setopt(easy, CURLOPT_MAXCONNECTS, 2L);
-			curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
-			curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, WriteTileData);
-			curl_easy_setopt(easy, CURLOPT_WRITEDATA, &curlEasyHandles[easy]);
-			if (curl_multi_add_handle(curlMulti, easy) != CURLM_OK)
-			{
-				fmt::print("无法将 CURL easy handle 添加到 multi handle\n");
-				return;
+				DownloadTile(x_base, y_base);
 			}
 		}
 	}
@@ -192,6 +167,69 @@ void DownTool::DownToolBase::StartDown()
 	}*/
 
 	bDowning = false;
+}
+
+void DownTool::DownToolBase::DownloadTile(uint32_t x, uint32_t y)
+{
+	// 等待至少一个下载完成
+	while (curlEasyHandles.size() >= MaxDownQueue)
+	{
+		WaitDown();
+	}
+
+	std::string filePath = fmt::format("{}/{}/{}/{}.png", GetCachePath(), GetZoom(), x, y);
+	std::filesystem::path nativePath = std::filesystem::u8path(filePath);
+	std::filesystem::create_directories(nativePath.parent_path());
+
+	//如果文件存在，检测是不是一个有效的图片文件，如果是的话就跳过下载，如果不是的话就删除这个文件重新下载
+	if (std::filesystem::exists(nativePath))
+	{
+		std::ifstream fileStream(nativePath, std::ios::binary);
+		if (fileStream.is_open())
+		{
+			unsigned char header[8];
+			fileStream.read(reinterpret_cast<char*>(header), sizeof(header));
+			ImageType type = DetectImageType(header, fileStream.gcount());
+			if (type != ImageType::Unknown)
+			{
+				DowningCount++;
+				fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
+				return;
+			}
+		}
+	}
+
+	int still_running = 1;
+	CURLMcode mc = curl_multi_perform(curlMulti, &still_running);
+
+	CurlMultiHandle multiHandle;
+	multiHandle.fileStream.open(nativePath, std::ios::binary);
+	if (!multiHandle.fileStream.is_open())
+	{
+		fmt::print("无法打开文件进行写入，切片将会被跳过，解决文件占用问题后再重新下载一遍即可修复：{}\n", filePath);
+		return;;
+	}
+	multiHandle.owner = this;
+	multiHandle.tile = Tile(x, y, GetZoom());
+	CURL* easy = curl_easy_init();
+	if (!easy)
+	{
+		fmt::print("无法初始化 CURL easy handle\n");
+		return;
+	}
+	std::string url = MakeUri(multiHandle.tile);
+	multiHandle.url = url;
+	//downTileCount[url.substr(0, 20)]++;
+	curlEasyHandles[easy] = std::move(multiHandle);
+	//避免高速下载被服务器拒绝，设置最大连接数为6（根据服务器限制调整）
+	//curl_easy_setopt(easy, CURLOPT_MAXCONNECTS, 2L);
+	curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
+	curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, WriteTileData);
+	curl_easy_setopt(easy, CURLOPT_WRITEDATA, &curlEasyHandles[easy]);
+	if (curl_multi_add_handle(curlMulti, easy) != CURLM_OK)
+	{
+		fmt::print("无法将 CURL easy handle 添加到 multi handle\n");
+	}
 }
 
 std::string DownTool::DownToolBase::MakeUri(const Tile& tile)

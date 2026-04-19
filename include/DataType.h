@@ -53,6 +53,17 @@ namespace DownTool
 		uint32_t Zoom = 0;
 	};
 
+	struct TileRange
+	{
+		TileRange() = default;
+		TileRange(const Tile& minTile, const Tile& maxTile)
+			: MinTile(minTile), MaxTile(maxTile)
+		{
+		}
+		Tile MinTile;
+		Tile MaxTile;
+	};
+
 	struct GetDownServerIndex
 	{
 		GetDownServerIndex() = default;

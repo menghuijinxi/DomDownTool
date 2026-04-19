@@ -72,6 +72,8 @@ namespace DownTool
 		//确定完成下载的数量
 		std::int32_t DowningCount = 0;
 
+		std::uint32_t TotalDownCount = 0;
+
 		void WaitDown();
 
 		//std::map<std::string, int32_t> downTileCount;
@@ -82,6 +84,14 @@ namespace DownTool
 
 		//开始下载，做一些准备工作
 		virtual void StartDown();
+
+		void DownloadTile(uint32_t x, uint32_t y);
+
+		//对于经过了坐标偏移的瓦片来说，我们就可能会需要下载很多个瓦片了，比如火星偏移过的瓦片一般一个瓦片需要下载4个，然后再进行合并操作
+		virtual bool IsTileOffset() const { return false; }
+
+		//获取经过坐标偏移后的瓦片坐标，返回值是一个瓦片坐标的元组，分别代表了偏移后需要下载的瓦片坐标范围的左上角和右下角瓦片坐标
+		virtual TileRange GetOffsetTiles(const Tile& tile) const { return { tile, tile }; }
 
 		//根据瓦片坐标生成下载URL
 		virtual std::string MakeUri(const Tile& tile);

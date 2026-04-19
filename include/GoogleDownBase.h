@@ -8,5 +8,9 @@ namespace DownTool
 	public:
 
 		virtual void CalculateDownRange() override;
+
+		static LonLat TileToLonLat(const Tile& tile);
+
+		static Tile LonLatToTile(const LonLat& lonLat, uint32_t zoom);
 	};
 }
