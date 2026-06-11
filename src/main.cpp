@@ -8,6 +8,7 @@
 #endif
 #include "GaoDeDown.h"
 #include "curl/curl.h"
+#include <TencentDown.h>
 
 int main()
 {
@@ -18,7 +19,7 @@ int main()
 	SetConsoleOutputCP(CP_UTF8);
 #endif
 
-	DownTool::GaoDeDown base;
+	DownTool::TencentDown base;
 	base.SetRadius(1000.);
 	base.SetCenterLonLat(DownTool::LonLat(116.468067, 39.912247));
 	base.StartDown();

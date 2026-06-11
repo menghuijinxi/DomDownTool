@@ -234,10 +234,14 @@ void DownTool::DownToolBase::DownloadTile(uint32_t x, uint32_t y)
 
 std::string DownTool::DownToolBase::MakeUri(const Tile& tile)
 {
-	auto x = fmt::arg("x", tile.X);
-	auto y = fmt::arg("y", tile.Y);
-	auto z = fmt::arg("z", static_cast<uint32_t>(tile.Zoom));
-	auto s = fmt::arg("s", ServerRange.GetNextServerIndex());
+	const uint32_t xValue = tile.X;
+	const uint32_t yValue = tile.Y;
+	const uint32_t zValue = tile.Zoom;
+	const int32_t sValue = ServerRange.GetNextServerIndex();
+	auto x = fmt::arg("x", xValue);
+	auto y = fmt::arg("y", yValue);
+	auto z = fmt::arg("z", zValue);
+	auto s = fmt::arg("s", sValue);
 	fmt::format_args args = fmt::make_format_args(x, y, z, s);
 	return fmt::vformat(UrlTemplate, args);
 }
