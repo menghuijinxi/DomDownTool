@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
 #include "GCJ02GoogleDownBase.h"
@@ -14,6 +15,11 @@ namespace DownTool
 		TencentDown();
 
 		virtual std::string MakeUri(const Tile& tile) override;
+
+	protected:
+
+		virtual bool IsUnavailableTileFile(
+			const std::filesystem::path& tilePath, const Tile& tile) const override;
 
 	private:
 

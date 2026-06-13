@@ -58,16 +58,35 @@ project ("DomDownTool")
 
 find_package(httplib CONFIG REQUIRED)
 find_package(GDAL CONFIG REQUIRED)
+
+if(MSVC AND MSVC_VERSION GREATER_EQUAL 1950)
+    # GeographicLib 2.4 的版本脚本还未适配 VS18 的 19.5x 编译器版本号。
+    set(DOMDOWNTOOL_MSVC_TOOLSET_VERSION ${MSVC_TOOLSET_VERSION})
+    set(MSVC_TOOLSET_VERSION 145)
+endif()
 find_package(GeographicLib CONFIG REQUIRED)
+if(DEFINED DOMDOWNTOOL_MSVC_TOOLSET_VERSION)
+    set(MSVC_TOOLSET_VERSION ${DOMDOWNTOOL_MSVC_TOOLSET_VERSION})
+endif()
+
 find_package(fmt CONFIG REQUIRED)
 find_package(CURL REQUIRED)
+find_package(OpenCV REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 # 将源代码添加到此项目的可执行文件。
 aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR}/src DIR_SRCS)
 add_executable (DomDownTool ${DIR_SRCS})
 target_include_directories(DomDownTool PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-target_link_libraries(DomDownTool PRIVATE httplib::httplib GDAL::GDAL ${GeographicLib_LIBRARIES} fmt::fmt-header-only CURL::libcurl)
+target_link_libraries(DomDownTool PRIVATE
+    httplib::httplib
+    GDAL::GDAL
+    ${GeographicLib_LIBRARIES}
+    fmt::fmt-header-only
+    CURL::libcurl
+    ${OpenCV_LIBS}
+    OpenSSL::Crypto)
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET DomDownTool PROPERTY CXX_STANDARD 20)

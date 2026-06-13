@@ -1,8 +1,10 @@
 ﻿#pragma once
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <string>
 #include <thread>
+#include <vector>
 #include <fmt/base.h>
 #include <GeographicLib/Geodesic.hpp>
 #include "DataType.h"
@@ -17,11 +19,28 @@ namespace DownTool
 
 	class DownToolBase;
 
+	enum class CurlRequestType
+	{
+		Tile,
+		RepairParent
+	};
+
+	enum class TileCacheState
+	{
+		Ready,
+		Missing,
+		Unavailable,
+		Invalid
+	};
+
 	struct CurlMultiHandle
 	{
 		DownToolBase* owner = nullptr;
+		CurlRequestType requestType = CurlRequestType::Tile;
 		Tile tile;
+		uint32_t repairTargetZoom = 0;
 		std::string url;
+		std::filesystem::path filePath;
 		std::ofstream fileStream;
 	};
 
@@ -75,6 +94,41 @@ namespace DownTool
 		std::uint32_t TotalDownCount = 0;
 
 		void WaitDown();
+
+		void BuildTargetTiles(std::vector<Tile>& targetTiles);
+
+		std::filesystem::path GetTileFilePath(const Tile& tile) const;
+
+		TileCacheState GetTileCacheState(const Tile& tile) const;
+
+		std::vector<Tile> ScanCacheAndCollectPendingTiles(
+			const std::vector<Tile>& targetTiles,
+			const std::string& phaseName,
+			bool updateProgress);
+
+		bool QueueTileDownload(
+			const Tile& tile,
+			const std::filesystem::path& tilePath,
+			CurlRequestType requestType,
+			uint32_t repairTargetZoom);
+
+		bool RepairTileFromLowerZoom(const Tile& tile, const std::filesystem::path& tilePath);
+
+		bool RepairTileFromLowerZoom(
+			const Tile& tile,
+			const std::filesystem::path& tilePath,
+			uint32_t startParentZoom);
+
+		bool RepairTilesFromParent(const Tile& parentTile, uint32_t targetZoom);
+
+		bool IsTileDownloading(const Tile& tile) const;
+
+		uint32_t CancelPendingChildDownloads(const Tile& parentTile, uint32_t childZoom);
+
+		virtual bool IsUnavailableTileFile(
+			const std::filesystem::path& tilePath, const Tile& tile) const { return false; }
+
+		virtual uint32_t GetMinFallbackZoom() const { return 0; }
 
 		//std::map<std::string, int32_t> downTileCount;
 

@@ -20,8 +20,9 @@ int main()
 #endif
 
 	DownTool::TencentDown base;
-	base.SetRadius(1000.);
-	base.SetCenterLonLat(DownTool::LonLat(116.468067, 39.912247));
+	base.SetRadius(30000.);
+	//base.SetZoom(19);
+	base.SetCenterLonLat(DownTool::LonLat(116.927549, 36.712797));
 	base.StartDown();
 
 	return 0;
