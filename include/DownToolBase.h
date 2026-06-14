@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -85,6 +86,15 @@ namespace DownTool
 		//临时文件的缓存路径
 		std::string CachePath = "cache";
 
+		//下载完成后的瓦片后处理输出目录，空字符串时默认输出到 CachePath/Google_墨卡托
+		std::string PostProcessOutputPath = "";
+
+		//是否在下载完成后自动执行瓦片后处理
+		bool PostProcessEnabled = false;
+
+		//瓦片像素大小
+		uint32_t TileSize = 256;
+
 		//停止下载的标志，设置为true后，正在下载的线程会尽快停止下载
 		std::atomic_bool bStop = false;
 
@@ -97,7 +107,13 @@ namespace DownTool
 
 		void BuildTargetTiles(std::vector<Tile>& targetTiles);
 
+		void BuildRequestedTiles(std::vector<Tile>& targetTiles) const;
+
 		std::filesystem::path GetTileFilePath(const Tile& tile) const;
+
+		std::filesystem::path GetPostProcessRootPath() const;
+
+		std::filesystem::path GetPostProcessTileFilePath(const Tile& tile) const;
 
 		TileCacheState GetTileCacheState(const Tile& tile) const;
 
@@ -124,6 +140,55 @@ namespace DownTool
 		bool IsTileDownloading(const Tile& tile) const;
 
 		uint32_t CancelPendingChildDownloads(const Tile& parentTile, uint32_t childZoom);
+
+		void RunPostProcess();
+
+		bool GeneratePostProcessMaxZoomTiles(const std::vector<Tile>& targetTiles);
+
+		void GeneratePostProcessLowerZoomTiles(std::vector<Tile> currentLevelTiles);
+
+		virtual bool WritePostProcessMaxZoomTile(
+			const Tile& targetTile, const std::filesystem::path& outputPath) const;
+
+		bool WritePostProcessMetadata() const;
+
+		virtual bool CanCopyPostProcessTileDirectly() const { return !IsTileOffset(); }
+
+		virtual LonLat ConvertTargetLonLatToSourceLonLat(const LonLat& lonLat) const
+		{
+			return lonLat;
+		}
+
+		virtual std::filesystem::path GetPostProcessSourceTileFilePath(
+			const Tile& tile) const
+		{
+			return GetTileFilePath(tile);
+		}
+
+		virtual bool TryGetLonLatForTilePixel(
+			const Tile& tile, double pixelX, double pixelY, LonLat& lonLat) const
+		{
+			(void)tile;
+			(void)pixelX;
+			(void)pixelY;
+			(void)lonLat;
+			return false;
+		}
+
+		virtual bool TryGetTilePixelForLonLat(
+			const LonLat& lonLat,
+			uint32_t zoom,
+			Tile& tile,
+			double& pixelX,
+			double& pixelY) const
+		{
+			(void)lonLat;
+			(void)zoom;
+			(void)tile;
+			(void)pixelX;
+			(void)pixelY;
+			return false;
+		}
 
 		virtual bool IsUnavailableTileFile(
 			const std::filesystem::path& tilePath, const Tile& tile) const { return false; }
@@ -153,7 +218,7 @@ namespace DownTool
 		//计算下载范围
 		virtual void CalculateDownRange();
 
-        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount)
+        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, TileSize)
 		
 			//停止下载，正在下载的线程会尽快停止下载
 		void StopDown()

@@ -1,9 +1,9 @@
 ﻿#pragma once
-#include "DownToolBase.h"
+#include "GoogleDownBase.h"
 
 namespace DownTool
 {
-	class TianDiTuDown : public DownToolBase
+	class TianDiTuDown : public GoogleDownBase
 	{
 	public:
 

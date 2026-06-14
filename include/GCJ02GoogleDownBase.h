@@ -13,6 +13,11 @@ namespace DownTool
 
 		virtual TileRange GetOffsetTiles(const Tile& tile) const override;
 
+		virtual bool CanCopyPostProcessTileDirectly() const override { return false; }
+
+		virtual LonLat ConvertTargetLonLatToSourceLonLat(
+			const LonLat& lonLat) const override;
+
 		static double Transform_Lat(double lat, double lon);
 
 		static double Transform_Lng(double lng, double lat);

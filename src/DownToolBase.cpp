@@ -3,17 +3,23 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <system_error>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
+#include "cpl_json.h"
 #include "fmt/format.h"
+#include "libxml/tree.h"
+#include "libxml/xmlmemory.h"
 #include "opencv2/core/utility.hpp"
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/imgproc.hpp"
@@ -34,6 +40,29 @@ namespace
 		DownTool::Tile childTile;
 		uint32_t childX = 0;
 		uint32_t childY = 0;
+	};
+
+	struct TileSample
+	{
+		DownTool::Tile sourceTile;
+		double pixelX = 0.;
+		double pixelY = 0.;
+		bool valid = false;
+	};
+
+	struct PostProcessBounds
+	{
+		double west = 0.;
+		double east = 0.;
+		double south = 0.;
+		double north = 0.;
+	};
+
+	struct PostProcessMetadata
+	{
+		PostProcessBounds bounds;
+		uint32_t maxZoom = 0;
+		uint32_t tileSize = 256;
 	};
 
 	bool IsSameTile(const DownTool::Tile& left, const DownTool::Tile& right)
@@ -205,6 +234,338 @@ namespace
 		{
 			return {};
 		}
+	}
+
+	cv::Mat ReadImageUnchanged(const std::filesystem::path& path)
+	{
+		std::ifstream fileStream(path, std::ios::binary);
+		if (!fileStream.is_open())
+		{
+			return {};
+		}
+
+		std::vector<unsigned char> data(
+			(std::istreambuf_iterator<char>(fileStream)), std::istreambuf_iterator<char>());
+		if (data.empty())
+		{
+			return {};
+		}
+
+		try
+		{
+			return cv::imdecode(data, cv::IMREAD_UNCHANGED);
+		}
+		catch (const cv::Exception&)
+		{
+			return {};
+		}
+	}
+
+	cv::Mat EnsureBgra(const cv::Mat& image)
+	{
+		if (image.empty())
+		{
+			return {};
+		}
+
+		if (image.channels() == 4)
+		{
+			return image;
+		}
+
+		cv::Mat bgraImage;
+		if (image.channels() == 3)
+		{
+			cv::cvtColor(image, bgraImage, cv::COLOR_BGR2BGRA);
+			return bgraImage;
+		}
+		if (image.channels() == 1)
+		{
+			cv::cvtColor(image, bgraImage, cv::COLOR_GRAY2BGRA);
+			return bgraImage;
+		}
+
+		return {};
+	}
+
+	cv::Mat ReadBgraTile(const std::filesystem::path& path, uint32_t tileSize)
+	{
+		cv::Mat image = EnsureBgra(ReadImageUnchanged(path));
+		if (image.empty())
+		{
+			return {};
+		}
+
+		if (image.cols == static_cast<int>(tileSize) &&
+			image.rows == static_cast<int>(tileSize))
+		{
+			return image;
+		}
+
+		cv::Mat resizedImage;
+		cv::resize(
+			image,
+			resizedImage,
+			cv::Size(static_cast<int>(tileSize), static_cast<int>(tileSize)),
+			0.,
+			0.,
+			cv::INTER_LINEAR);
+		return resizedImage;
+	}
+
+	cv::Vec4b SampleBilinear(const cv::Mat& image, double pixelX, double pixelY)
+	{
+		const double clampedX =
+			std::clamp(pixelX, 0., static_cast<double>(image.cols - 1));
+		const double clampedY =
+			std::clamp(pixelY, 0., static_cast<double>(image.rows - 1));
+		const int x0 = static_cast<int>(std::floor(clampedX));
+		const int y0 = static_cast<int>(std::floor(clampedY));
+		const int x1 = std::min(x0 + 1, image.cols - 1);
+		const int y1 = std::min(y0 + 1, image.rows - 1);
+		const double weightX = clampedX - x0;
+		const double weightY = clampedY - y0;
+
+		const cv::Vec4b c00 = image.at<cv::Vec4b>(y0, x0);
+		const cv::Vec4b c10 = image.at<cv::Vec4b>(y0, x1);
+		const cv::Vec4b c01 = image.at<cv::Vec4b>(y1, x0);
+		const cv::Vec4b c11 = image.at<cv::Vec4b>(y1, x1);
+
+		cv::Vec4b result;
+		for (int channel = 0; channel < 4; channel++)
+		{
+			const double top =
+				static_cast<double>(c00[channel]) * (1. - weightX) +
+				static_cast<double>(c10[channel]) * weightX;
+			const double bottom =
+				static_cast<double>(c01[channel]) * (1. - weightX) +
+				static_cast<double>(c11[channel]) * weightX;
+			result[channel] = static_cast<unsigned char>(
+				std::clamp(top * (1. - weightY) + bottom * weightY, 0., 255.));
+		}
+
+		return result;
+	}
+
+	bool CopyFileReplacing(
+		const std::filesystem::path& sourcePath,
+		const std::filesystem::path& targetPath)
+	{
+		std::error_code createDirectoryError;
+		std::filesystem::create_directories(targetPath.parent_path(), createDirectoryError);
+		if (createDirectoryError)
+		{
+			return false;
+		}
+
+		std::error_code copyError;
+		std::filesystem::copy_file(
+			sourcePath,
+			targetPath,
+			std::filesystem::copy_options::overwrite_existing,
+			copyError);
+		return !copyError;
+	}
+
+	bool WriteTextFile(const std::filesystem::path& path, const std::string& content)
+	{
+		std::error_code createDirectoryError;
+		std::filesystem::create_directories(path.parent_path(), createDirectoryError);
+		if (createDirectoryError)
+		{
+			return false;
+		}
+
+		std::ofstream fileStream(path, std::ios::binary);
+		if (!fileStream.is_open())
+		{
+			return false;
+		}
+
+		fileStream.write(content.data(), static_cast<std::streamsize>(content.size()));
+		return fileStream.good();
+	}
+
+	double LongitudeToWebMercatorX(double longitude)
+	{
+		constexpr double earthRadius = 6378137.;
+		constexpr double pi = 3.141592653589793238462643383279502884;
+		return earthRadius * longitude * pi / 180.;
+	}
+
+	double LatitudeToWebMercatorY(double latitude)
+	{
+		constexpr double earthRadius = 6378137.;
+		constexpr double pi = 3.141592653589793238462643383279502884;
+		constexpr double maxMercatorLatitude = 85.05112877980659;
+		const double clampedLatitude =
+			std::clamp(latitude, -maxMercatorLatitude, maxMercatorLatitude);
+		const double latitudeRadians = clampedLatitude * pi / 180.;
+		return earthRadius * std::log(std::tan(pi / 4. + latitudeRadians / 2.));
+	}
+
+	const xmlChar* ToXmlChar(const char* text)
+	{
+		return reinterpret_cast<const xmlChar*>(text);
+	}
+
+	const xmlChar* ToXmlChar(const std::string& text)
+	{
+		return reinterpret_cast<const xmlChar*>(text.c_str());
+	}
+
+	std::string FormatMetadataDouble(double value)
+	{
+		return fmt::format("{:.15g}", value);
+	}
+
+	bool SetXmlProperty(xmlNodePtr node, const char* name, const std::string& value)
+	{
+		return xmlSetProp(node, ToXmlChar(name), ToXmlChar(value)) != nullptr;
+	}
+
+	bool SetXmlProperty(xmlNodePtr node, const char* name, const char* value)
+	{
+		return xmlSetProp(node, ToXmlChar(name), ToXmlChar(value)) != nullptr;
+	}
+
+	xmlNodePtr AddXmlChild(xmlNodePtr parent, const char* name, const char* content)
+	{
+		return xmlNewChild(parent, nullptr, ToXmlChar(name), ToXmlChar(content));
+	}
+
+	xmlNodePtr AddXmlChild(xmlNodePtr parent, const char* name)
+	{
+		return xmlNewChild(parent, nullptr, ToXmlChar(name), nullptr);
+	}
+
+	CPLJSONObject BuildBoundsJson(const PostProcessBounds& bounds)
+	{
+		CPLJSONObject jsonBounds;
+		jsonBounds.Add("east", bounds.east);
+		jsonBounds.Add("north", bounds.north);
+		jsonBounds.Add("south", bounds.south);
+		jsonBounds.Add("west", bounds.west);
+		return jsonBounds;
+	}
+
+	std::string BuildMetaJson(const PostProcessMetadata& metadata)
+	{
+		CPLJSONObject root;
+		root.Add("bounds", BuildBoundsJson(metadata.bounds));
+		root.Add("contentType", "image/png");
+		root.Add("generatetool", "DomDownTool");
+		root.Add("latLonBounds", BuildBoundsJson(metadata.bounds));
+		root.Add("maxzoom", static_cast<int>(metadata.maxZoom));
+		root.Add("minzoom", 0);
+		root.Add("proj", 4326);
+		root.Add("tilesize", static_cast<int>(metadata.tileSize));
+		root.Add("tiletrans", "google");
+		root.Add("type", "image");
+		root.Add("ziped", false);
+		return root.Format(CPLJSONObject::PrettyFormat::Plain);
+	}
+
+	std::string BuildTileMapResourceXml(const PostProcessMetadata& metadata)
+	{
+		using XmlDocPtr = std::unique_ptr<xmlDoc, decltype(&xmlFreeDoc)>;
+		struct XmlBufferDeleter
+		{
+			void operator()(xmlChar* buffer) const
+			{
+				xmlFree(buffer);
+			}
+		};
+		using XmlBufferPtr = std::unique_ptr<xmlChar, XmlBufferDeleter>;
+
+		XmlDocPtr document(xmlNewDoc(ToXmlChar("1.0")), xmlFreeDoc);
+		if (!document)
+		{
+			return {};
+		}
+
+		xmlNodePtr root = xmlNewNode(nullptr, ToXmlChar("TileMap"));
+		if (!root)
+		{
+			return {};
+		}
+		xmlDocSetRootElement(document.get(), root);
+
+		if (!SetXmlProperty(root, "version", "1.0.0") ||
+			!SetXmlProperty(root, "tilemapservice", "http://tms.osgeo.org/1.0.0"))
+		{
+			return {};
+		}
+
+		if (!AddXmlChild(root, "Title", "WMTS") ||
+			!AddXmlChild(root, "SRS", "EPSG:3857"))
+		{
+			return {};
+		}
+
+		const double westMercator = LongitudeToWebMercatorX(metadata.bounds.west);
+		const double eastMercator = LongitudeToWebMercatorX(metadata.bounds.east);
+		const double southMercator = LatitudeToWebMercatorY(metadata.bounds.south);
+		const double northMercator = LatitudeToWebMercatorY(metadata.bounds.north);
+
+		xmlNodePtr boundingBox = AddXmlChild(root, "BoundingBox");
+		if (!boundingBox ||
+			!SetXmlProperty(boundingBox, "miny", FormatMetadataDouble(southMercator)) ||
+			!SetXmlProperty(boundingBox, "minx", FormatMetadataDouble(westMercator)) ||
+			!SetXmlProperty(boundingBox, "maxy", FormatMetadataDouble(northMercator)) ||
+			!SetXmlProperty(boundingBox, "maxx", FormatMetadataDouble(eastMercator)))
+		{
+			return {};
+		}
+
+		xmlNodePtr origin = AddXmlChild(root, "Origin");
+		if (!origin ||
+			!SetXmlProperty(origin, "y", FormatMetadataDouble(southMercator)) ||
+			!SetXmlProperty(origin, "x", FormatMetadataDouble(westMercator)))
+		{
+			return {};
+		}
+
+		xmlNodePtr tileFormat = AddXmlChild(root, "TileFormat");
+		if (!tileFormat ||
+			!SetXmlProperty(tileFormat, "width", std::to_string(metadata.tileSize)) ||
+			!SetXmlProperty(tileFormat, "height", std::to_string(metadata.tileSize)) ||
+			!SetXmlProperty(tileFormat, "mime-type", "image/png") ||
+			!SetXmlProperty(tileFormat, "extension", "png"))
+		{
+			return {};
+		}
+
+		xmlNodePtr tileSets = AddXmlChild(root, "TileSets");
+		if (!tileSets || !SetXmlProperty(tileSets, "profile", "global-mercator"))
+		{
+			return {};
+		}
+
+		double unitsPerPixel = 156543.033928041;
+		for (uint32_t zoom = 0; zoom <= metadata.maxZoom; zoom++)
+		{
+			xmlNodePtr tileSet = AddXmlChild(tileSets, "TileSet");
+			if (!tileSet ||
+				!SetXmlProperty(tileSet, "units-per-pixel", FormatMetadataDouble(unitsPerPixel)) ||
+				!SetXmlProperty(tileSet, "order", std::to_string(zoom)))
+			{
+				return {};
+			}
+			unitsPerPixel /= 2.;
+		}
+
+		xmlChar* rawBuffer = nullptr;
+		int bufferSize = 0;
+		xmlDocDumpFormatMemory(document.get(), &rawBuffer, &bufferSize, 1);
+		XmlBufferPtr buffer(rawBuffer);
+		if (!buffer || bufferSize <= 0)
+		{
+			return {};
+		}
+
+		return std::string(
+			reinterpret_cast<const char*>(buffer.get()), static_cast<size_t>(bufferSize));
 	}
 
 	bool WriteImage(const std::filesystem::path& path, const cv::Mat& image)
@@ -433,6 +794,10 @@ void DownTool::DownToolBase::StartDown()
 		fmt::print("下载结束后仍有 {} 个瓦片不可用，请查看上面的缓存检测明细。\n",
 			failedTiles.size());
 	}
+	else if (!bStop && PostProcessEnabled)
+	{
+		RunPostProcess();
+	}
 
 	/*for (auto& d : downTileCount)
 	{
@@ -483,6 +848,22 @@ void DownTool::DownToolBase::BuildTargetTiles(std::vector<Tile>& targetTiles)
 			{
 				addTile(Tile(xBase, yBase, Zoom));
 			}
+		}
+	}
+}
+
+void DownTool::DownToolBase::BuildRequestedTiles(std::vector<Tile>& targetTiles) const
+{
+	targetTiles.clear();
+	const uint64_t xCount = static_cast<uint64_t>(MaxTile.X) - MinTile.X + 1;
+	const uint64_t yCount = static_cast<uint64_t>(MaxTile.Y) - MinTile.Y + 1;
+	targetTiles.reserve(static_cast<size_t>(xCount * yCount));
+
+	for (uint32_t x = MinTile.X; x <= MaxTile.X; x++)
+	{
+		for (uint32_t y = MinTile.Y; y <= MaxTile.Y; y++)
+		{
+			targetTiles.emplace_back(x, y, Zoom);
 		}
 	}
 }
@@ -774,6 +1155,25 @@ std::filesystem::path DownTool::DownToolBase::GetTileFilePath(const Tile& tile) 
 {
 	std::string filePath = fmt::format("{}/{}/{}/{}.png", CachePath, tile.Zoom, tile.X, tile.Y);
 	return std::filesystem::u8path(filePath);
+}
+
+std::filesystem::path DownTool::DownToolBase::GetPostProcessRootPath() const
+{
+	if (!PostProcessOutputPath.empty())
+	{
+		return std::filesystem::u8path(PostProcessOutputPath);
+	}
+
+	return std::filesystem::u8path(fmt::format("{}/Google_墨卡托", CachePath));
+}
+
+std::filesystem::path DownTool::DownToolBase::GetPostProcessTileFilePath(
+	const Tile& tile) const
+{
+	return GetPostProcessRootPath() /
+		std::to_string(tile.Zoom) /
+		std::to_string(tile.X) /
+		fmt::format("{}.png", tile.Y);
 }
 
 bool DownTool::DownToolBase::QueueTileDownload(
@@ -1128,6 +1528,304 @@ bool DownTool::DownToolBase::RepairTilesFromParent(
 		parentTile.Zoom, parentTile.X, parentTile.Y, targetZoom,
 		readyTileCount, batchTileCount, repairedTileCount);
 	return readyTileCount == batchTileCount;
+}
+
+void DownTool::DownToolBase::RunPostProcess()
+{
+	std::vector<Tile> targetTiles;
+	BuildRequestedTiles(targetTiles);
+	if (targetTiles.empty())
+	{
+		fmt::print("后处理跳过：没有可处理的目标瓦片。\n");
+		return;
+	}
+
+	fmt::print("开始瓦片后处理，输出目录：{}\n", GetPostProcessRootPath().string());
+	if (!GeneratePostProcessMaxZoomTiles(targetTiles))
+	{
+		fmt::print("后处理失败：最高层级瓦片生成不完整，跳过低层级和元数据生成。\n");
+		return;
+	}
+
+	GeneratePostProcessLowerZoomTiles(std::move(targetTiles));
+	if (!WritePostProcessMetadata())
+	{
+		fmt::print("后处理警告：元数据写入失败。\n");
+		return;
+	}
+
+	fmt::print("瓦片后处理完成。\n");
+}
+
+bool DownTool::DownToolBase::GeneratePostProcessMaxZoomTiles(
+	const std::vector<Tile>& targetTiles)
+{
+	std::atomic_uint32_t processedCount = 0;
+	std::atomic_uint32_t failedCount = 0;
+	const int stripeCount = GetTileRepairStripeCount(targetTiles.size(), MaxDownQueue);
+
+	cv::parallel_for_(
+		cv::Range(0, static_cast<int>(targetTiles.size())),
+		[&](const cv::Range& range)
+		{
+			for (int index = range.start; index < range.end; index++)
+			{
+				const Tile& tile = targetTiles[static_cast<size_t>(index)];
+				const std::filesystem::path outputPath = GetPostProcessTileFilePath(tile);
+				bool writeSuccess = false;
+				try
+				{
+					writeSuccess = WritePostProcessMaxZoomTile(tile, outputPath);
+				}
+				catch (const std::exception&)
+				{
+					writeSuccess = false;
+				}
+				catch (...)
+				{
+					writeSuccess = false;
+				}
+
+				if (!writeSuccess)
+				{
+					failedCount.fetch_add(1, std::memory_order_relaxed);
+				}
+				const uint32_t currentCount =
+					processedCount.fetch_add(1, std::memory_order_relaxed) + 1;
+				if (currentCount % 1024 == 0 || currentCount == targetTiles.size())
+				{
+					fmt::print("\r最高层级后处理: {}/{}",
+						currentCount, targetTiles.size());
+				}
+			}
+		},
+		stripeCount);
+
+	fmt::print("\r最高层级后处理: {}/{}，失败 {}\n",
+		targetTiles.size(), targetTiles.size(), failedCount.load());
+	return failedCount.load() == 0;
+}
+
+void DownTool::DownToolBase::GeneratePostProcessLowerZoomTiles(
+	std::vector<Tile> currentLevelTiles)
+{
+	while (!currentLevelTiles.empty() && currentLevelTiles.front().Zoom > 0)
+	{
+		std::vector<Tile> parentTiles;
+		parentTiles.reserve(currentLevelTiles.size() / 4 + 1);
+		std::unordered_set<Tile, TileHash, TileEqual> uniqueParents;
+		uniqueParents.reserve(currentLevelTiles.size() / 4 + 1);
+
+		for (const Tile& childTile : currentLevelTiles)
+		{
+			Tile parentTile(childTile.X / 2, childTile.Y / 2, childTile.Zoom - 1);
+			if (uniqueParents.insert(parentTile).second)
+			{
+				parentTiles.push_back(parentTile);
+			}
+		}
+
+		std::atomic_uint32_t writtenCount = 0;
+		const int stripeCount = GetTileRepairStripeCount(parentTiles.size(), MaxDownQueue);
+		cv::parallel_for_(
+			cv::Range(0, static_cast<int>(parentTiles.size())),
+			[&](const cv::Range& range)
+			{
+				const int tileSize = static_cast<int>(TileSize);
+				for (int index = range.start; index < range.end; index++)
+				{
+					const Tile& parentTile = parentTiles[static_cast<size_t>(index)];
+					cv::Mat mergeImage(
+						tileSize * 2, tileSize * 2, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+					bool hasChildImage = false;
+
+					for (uint32_t childX = 0; childX < 2; childX++)
+					{
+						for (uint32_t childY = 0; childY < 2; childY++)
+						{
+							const Tile childTile(
+								parentTile.X * 2 + childX,
+								parentTile.Y * 2 + childY,
+								parentTile.Zoom + 1);
+							const cv::Mat childImage =
+								ReadBgraTile(GetPostProcessTileFilePath(childTile), TileSize);
+							if (childImage.empty())
+							{
+								continue;
+							}
+
+							childImage.copyTo(mergeImage(cv::Rect(
+								static_cast<int>(childX) * tileSize,
+								static_cast<int>(childY) * tileSize,
+								tileSize,
+								tileSize)));
+							hasChildImage = true;
+						}
+					}
+
+					if (!hasChildImage)
+					{
+						continue;
+					}
+
+					cv::Mat targetImage;
+					cv::resize(
+						mergeImage,
+						targetImage,
+						cv::Size(tileSize, tileSize),
+						0.,
+						0.,
+						cv::INTER_AREA);
+					if (WriteImage(GetPostProcessTileFilePath(parentTile), targetImage))
+					{
+						writtenCount.fetch_add(1, std::memory_order_relaxed);
+					}
+				}
+			},
+			stripeCount);
+
+		fmt::print("生成低层级 z{}：{} / {} 张\n",
+			parentTiles.front().Zoom, writtenCount.load(), parentTiles.size());
+		currentLevelTiles = std::move(parentTiles);
+	}
+}
+
+bool DownTool::DownToolBase::WritePostProcessMaxZoomTile(
+	const Tile& targetTile,
+	const std::filesystem::path& outputPath) const
+{
+	if (CanCopyPostProcessTileDirectly())
+	{
+		const std::filesystem::path sourcePath =
+			GetPostProcessSourceTileFilePath(targetTile);
+		if (!IsValidImageFile(sourcePath) || IsUnavailableTileFile(sourcePath, targetTile))
+		{
+			return false;
+		}
+
+		return CopyFileReplacing(sourcePath, outputPath);
+	}
+
+	const int tileSize = static_cast<int>(TileSize);
+	if (tileSize <= 0)
+	{
+		return false;
+	}
+
+	std::vector<TileSample> samples(static_cast<size_t>(tileSize * tileSize));
+	std::unordered_set<Tile, TileHash, TileEqual> sourceTiles;
+	sourceTiles.reserve(8);
+
+	for (int y = 0; y < tileSize; y++)
+	{
+		for (int x = 0; x < tileSize; x++)
+		{
+			LonLat targetLonLat;
+			if (!TryGetLonLatForTilePixel(
+				targetTile, x + 0.5, y + 0.5, targetLonLat))
+			{
+				continue;
+			}
+
+			const LonLat sourceLonLat = ConvertTargetLonLatToSourceLonLat(targetLonLat);
+			Tile sourceTile;
+			double sourcePixelX = 0.;
+			double sourcePixelY = 0.;
+			if (!TryGetTilePixelForLonLat(
+				sourceLonLat, targetTile.Zoom, sourceTile, sourcePixelX, sourcePixelY))
+			{
+				continue;
+			}
+
+			const size_t sampleIndex = static_cast<size_t>(y * tileSize + x);
+			samples[sampleIndex] = TileSample{
+				sourceTile,
+				sourcePixelX,
+				sourcePixelY,
+				true
+			};
+			sourceTiles.insert(sourceTile);
+		}
+	}
+
+	if (sourceTiles.empty())
+	{
+		return false;
+	}
+
+	std::unordered_map<Tile, cv::Mat, TileHash, TileEqual> sourceImages;
+	sourceImages.reserve(sourceTiles.size());
+	for (const Tile& sourceTile : sourceTiles)
+	{
+		const std::filesystem::path sourcePath =
+			GetPostProcessSourceTileFilePath(sourceTile);
+		if (!IsValidImageFile(sourcePath) || IsUnavailableTileFile(sourcePath, sourceTile))
+		{
+			continue;
+		}
+
+		cv::Mat sourceImage = ReadBgraTile(sourcePath, TileSize);
+		if (!sourceImage.empty())
+		{
+			sourceImages.emplace(sourceTile, std::move(sourceImage));
+		}
+	}
+
+	if (sourceImages.empty())
+	{
+		return false;
+	}
+
+	cv::Mat outputImage(tileSize, tileSize, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+	bool hasPixel = false;
+	for (int y = 0; y < tileSize; y++)
+	{
+		for (int x = 0; x < tileSize; x++)
+		{
+			const TileSample& sample = samples[static_cast<size_t>(y * tileSize + x)];
+			if (!sample.valid)
+			{
+				continue;
+			}
+
+			const auto imageIt = sourceImages.find(sample.sourceTile);
+			if (imageIt == sourceImages.end())
+			{
+				continue;
+			}
+
+			outputImage.at<cv::Vec4b>(y, x) =
+				SampleBilinear(imageIt->second, sample.pixelX, sample.pixelY);
+			hasPixel = true;
+		}
+	}
+
+	return hasPixel && WriteImage(outputPath, outputImage);
+}
+
+bool DownTool::DownToolBase::WritePostProcessMetadata() const
+{
+	const PostProcessMetadata metadata{
+		PostProcessBounds{
+			MinLonLat.lon,
+			MaxLonLat.lon,
+			MinLonLat.lat,
+			MaxLonLat.lat },
+		Zoom,
+		TileSize
+	};
+	const std::filesystem::path outputRoot = GetPostProcessRootPath();
+
+	const std::string json = BuildMetaJson(metadata);
+	const std::string xml = BuildTileMapResourceXml(metadata);
+	if (json.empty() || xml.empty())
+	{
+		return false;
+	}
+
+	const bool jsonSuccess = WriteTextFile(outputRoot / "meta.json", json);
+	const bool xmlSuccess = WriteTextFile(outputRoot / "tilemapresource.xml", xml);
+	return jsonSuccess && xmlSuccess;
 }
 
 std::string DownTool::DownToolBase::MakeUri(const Tile& tile)

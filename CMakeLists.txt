@@ -58,6 +58,7 @@ project ("DomDownTool")
 
 find_package(httplib CONFIG REQUIRED)
 find_package(GDAL CONFIG REQUIRED)
+find_package(LibXml2 REQUIRED)
 
 if(MSVC AND MSVC_VERSION GREATER_EQUAL 1950)
     # GeographicLib 2.4 的版本脚本还未适配 VS18 的 19.5x 编译器版本号。
@@ -82,6 +83,7 @@ target_include_directories(DomDownTool PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/inclu
 target_link_libraries(DomDownTool PRIVATE
     httplib::httplib
     GDAL::GDAL
+    LibXml2::LibXml2
     ${GeographicLib_LIBRARIES}
     fmt::fmt-header-only
     CURL::libcurl
