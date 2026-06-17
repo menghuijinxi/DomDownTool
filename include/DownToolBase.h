@@ -11,6 +11,11 @@
 #include "DataType.h"
 #include "curl/curl.h"
 
+namespace cv
+{
+	class Mat;
+}
+
 namespace DownTool
 {
 	const std::string xReplace = "{x}";
@@ -92,6 +97,15 @@ namespace DownTool
 		//是否在下载完成后自动执行瓦片后处理
 		bool PostProcessEnabled = false;
 
+		//是否在下载完成后把请求范围合并成一张大图
+		bool PostProcessMergedImageEnabled = false;
+
+		//合并大图的方形输出分辨率
+		uint32_t PostProcessMergedImageResolution = 16384;
+
+		//合并大图输出路径，空字符串时默认输出到 GetPostProcessRootPath()/merged.png
+		std::string PostProcessMergedImageOutputPath = "";
+
 		//瓦片像素大小
 		uint32_t TileSize = 256;
 
@@ -114,6 +128,8 @@ namespace DownTool
 		std::filesystem::path GetPostProcessRootPath() const;
 
 		std::filesystem::path GetPostProcessTileFilePath(const Tile& tile) const;
+
+		std::filesystem::path GetPostProcessMergedImagePath() const;
 
 		TileCacheState GetTileCacheState(const Tile& tile) const;
 
@@ -146,6 +162,35 @@ namespace DownTool
 		bool GeneratePostProcessMaxZoomTiles(const std::vector<Tile>& targetTiles);
 
 		void GeneratePostProcessLowerZoomTiles(std::vector<Tile> currentLevelTiles);
+
+		uint32_t SelectPostProcessMergedImageSampleZoom() const;
+
+		void BuildRequestedTilesAtZoom(uint32_t zoom, std::vector<Tile>& targetTiles) const;
+
+		bool GeneratePostProcessTilesAtZoom(
+			const std::vector<Tile>& targetTiles,
+			uint32_t sourceZoom,
+			const std::string& phaseName) const;
+
+		bool GeneratePostProcessMergedImage() const;
+
+		cv::Mat ReadPostProcessMaxZoomTile(const Tile& targetTile) const;
+
+		cv::Mat ReadPostProcessTileRegion(
+			const Tile& targetTile,
+			int outputWidth,
+			int outputHeight) const;
+
+		cv::Mat ReadPostProcessTileRegion(
+			const Tile& targetTile,
+			uint32_t sourceZoom,
+			int outputWidth,
+			int outputHeight) const;
+
+		bool WritePostProcessTileFromSourceZoom(
+			const Tile& targetTile,
+			const std::filesystem::path& outputPath,
+			uint32_t sourceZoom) const;
 
 		virtual bool WritePostProcessMaxZoomTile(
 			const Tile& targetTile, const std::filesystem::path& outputPath) const;
@@ -218,7 +263,7 @@ namespace DownTool
 		//计算下载范围
 		virtual void CalculateDownRange();
 
-        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, TileSize)
+        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, TileSize)
 		
 			//停止下载，正在下载的线程会尽快停止下载
 		void StopDown()

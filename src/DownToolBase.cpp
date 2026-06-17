@@ -8,6 +8,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <system_error>
@@ -313,6 +314,32 @@ namespace
 		return resizedImage;
 	}
 
+	cv::Mat ResizeImageToSize(const cv::Mat& image, int width, int height)
+	{
+		if (image.empty() || width <= 0 || height <= 0)
+		{
+			return {};
+		}
+
+		if (image.cols == width && image.rows == height)
+		{
+			return image;
+		}
+
+		cv::Mat resizedImage;
+		const cv::InterpolationFlags interpolation =
+			(image.cols > width || image.rows > height) ?
+			cv::INTER_AREA : cv::INTER_LINEAR;
+		cv::resize(
+			image,
+			resizedImage,
+			cv::Size(width, height),
+			0.,
+			0.,
+			interpolation);
+		return resizedImage;
+	}
+
 	cv::Vec4b SampleBilinear(const cv::Mat& image, double pixelX, double pixelY)
 	{
 		const double clampedX =
@@ -384,6 +411,19 @@ namespace
 
 		fileStream.write(content.data(), static_cast<std::streamsize>(content.size()));
 		return fileStream.good();
+	}
+
+	std::string PathToUtf8String(const std::filesystem::path& path)
+	{
+		const std::u8string utf8Path = path.u8string();
+		std::string result;
+		result.reserve(utf8Path.size());
+		for (char8_t character : utf8Path)
+		{
+			result.push_back(static_cast<char>(character));
+		}
+
+		return result;
 	}
 
 	double LongitudeToWebMercatorX(double longitude)
@@ -676,7 +716,7 @@ void DownTool::DownToolBase::WaitDown()
 				{
 					if (!RepairTileFromLowerZoom(tile, tilePath))
 					{
-						fmt::print("\n无法从低级别瓦片修复占位图: {}\n", tilePath.string());
+						fmt::print("\n无法从低级别瓦片修复占位图: {}\n", PathToUtf8String(tilePath));
 					}
 				}
 
@@ -694,7 +734,7 @@ void DownTool::DownToolBase::WaitDown()
 					continue;
 				}
 
-				fmt::print("\n无法完整批量生成高级别修复瓦片: {}\n", tilePath.string());
+				fmt::print("\n无法完整批量生成高级别修复瓦片: {}\n", PathToUtf8String(tilePath));
 			}
 
 			if (tile.Zoom > GetMinFallbackZoom() && repairTargetZoom > tile.Zoom)
@@ -703,7 +743,7 @@ void DownTool::DownToolBase::WaitDown()
 				if (!RepairTileFromLowerZoom(
 					retryTile, GetTileFilePath(retryTile), tile.Zoom - 1))
 				{
-					fmt::print("\n无法继续降级修复占位图: {}\n", tilePath.string());
+					fmt::print("\n无法继续降级修复占位图: {}\n", PathToUtf8String(tilePath));
 				}
 			}
 		}
@@ -794,7 +834,7 @@ void DownTool::DownToolBase::StartDown()
 		fmt::print("下载结束后仍有 {} 个瓦片不可用，请查看上面的缓存检测明细。\n",
 			failedTiles.size());
 	}
-	else if (!bStop && PostProcessEnabled)
+	else if (!bStop && (PostProcessEnabled || PostProcessMergedImageEnabled))
 	{
 		RunPostProcess();
 	}
@@ -864,6 +904,39 @@ void DownTool::DownToolBase::BuildRequestedTiles(std::vector<Tile>& targetTiles)
 		for (uint32_t y = MinTile.Y; y <= MaxTile.Y; y++)
 		{
 			targetTiles.emplace_back(x, y, Zoom);
+		}
+	}
+}
+
+void DownTool::DownToolBase::BuildRequestedTilesAtZoom(
+	uint32_t zoom, std::vector<Tile>& targetTiles) const
+{
+	targetTiles.clear();
+	if (zoom > Zoom)
+	{
+		return;
+	}
+
+	const uint32_t zoomOffset = Zoom - zoom;
+	if (zoomOffset >= 31)
+	{
+		return;
+	}
+
+	const uint64_t scale = uint64_t{ 1 } << zoomOffset;
+	const uint32_t minX = static_cast<uint32_t>(static_cast<uint64_t>(MinTile.X) / scale);
+	const uint32_t maxX = static_cast<uint32_t>(static_cast<uint64_t>(MaxTile.X) / scale);
+	const uint32_t minY = static_cast<uint32_t>(static_cast<uint64_t>(MinTile.Y) / scale);
+	const uint32_t maxY = static_cast<uint32_t>(static_cast<uint64_t>(MaxTile.Y) / scale);
+	const uint64_t xCount = static_cast<uint64_t>(maxX) - minX + 1;
+	const uint64_t yCount = static_cast<uint64_t>(maxY) - minY + 1;
+	targetTiles.reserve(static_cast<size_t>(xCount * yCount));
+
+	for (uint32_t x = minX; x <= maxX; x++)
+	{
+		for (uint32_t y = minY; y <= maxY; y++)
+		{
+			targetTiles.emplace_back(x, y, zoom);
 		}
 	}
 }
@@ -1086,7 +1159,7 @@ std::vector<DownTool::Tile> DownTool::DownToolBase::ScanCacheAndCollectPendingTi
 				tile.Zoom,
 				tile.X,
 				tile.Y,
-				GetTileFilePath(tile).string());
+				PathToUtf8String(GetTileFilePath(tile)));
 		}
 	}
 
@@ -1121,7 +1194,7 @@ void DownTool::DownToolBase::DownloadTile(uint32_t x, uint32_t y)
 	const bool tileExists = std::filesystem::exists(nativePath, existsError);
 	if (existsError)
 	{
-		fmt::print("\n检测缓存文件失败，将重新下载: {}\n", nativePath.string());
+		fmt::print("\n检测缓存文件失败，将重新下载: {}\n", PathToUtf8String(nativePath));
 	}
 	if (tileExists)
 	{
@@ -1129,7 +1202,7 @@ void DownTool::DownToolBase::DownloadTile(uint32_t x, uint32_t y)
 		{
 			if (!RepairTileFromLowerZoom(tile, nativePath))
 			{
-				fmt::print("\n无法从低级别瓦片修复占位图: {}\n", nativePath.string());
+				fmt::print("\n无法从低级别瓦片修复占位图: {}\n", PathToUtf8String(nativePath));
 			}
 
 			DowningCount++;
@@ -1176,6 +1249,16 @@ std::filesystem::path DownTool::DownToolBase::GetPostProcessTileFilePath(
 		fmt::format("{}.png", tile.Y);
 }
 
+std::filesystem::path DownTool::DownToolBase::GetPostProcessMergedImagePath() const
+{
+	if (!PostProcessMergedImageOutputPath.empty())
+	{
+		return std::filesystem::u8path(PostProcessMergedImageOutputPath);
+	}
+
+	return GetPostProcessRootPath() / "merged.png";
+}
+
 bool DownTool::DownToolBase::QueueTileDownload(
 	const Tile& tile,
 	const std::filesystem::path& tilePath,
@@ -1198,7 +1281,7 @@ bool DownTool::DownToolBase::QueueTileDownload(
 	multiHandle.fileStream.open(tilePath, std::ios::binary);
 	if (!multiHandle.fileStream.is_open())
 	{
-		fmt::print("无法打开文件进行写入，切片将会被跳过，解决文件占用问题后再重新下载一遍即可修复：{}\n", tilePath.string());
+		fmt::print("无法打开文件进行写入，切片将会被跳过，解决文件占用问题后再重新下载一遍即可修复：{}\n", PathToUtf8String(tilePath));
 		return false;
 	}
 	multiHandle.owner = this;
@@ -1540,18 +1623,28 @@ void DownTool::DownToolBase::RunPostProcess()
 		return;
 	}
 
-	fmt::print("开始瓦片后处理，输出目录：{}\n", GetPostProcessRootPath().string());
-	if (!GeneratePostProcessMaxZoomTiles(targetTiles))
+	fmt::print("开始瓦片后处理，输出目录：{}\n", PathToUtf8String(GetPostProcessRootPath()));
+	bool maxZoomTilesReady = false;
+	if (PostProcessEnabled)
 	{
-		fmt::print("后处理失败：最高层级瓦片生成不完整，跳过低层级和元数据生成。\n");
-		return;
+		maxZoomTilesReady = GeneratePostProcessMaxZoomTiles(targetTiles);
+		if (maxZoomTilesReady)
+		{
+			GeneratePostProcessLowerZoomTiles(targetTiles);
+			if (!WritePostProcessMetadata())
+			{
+				fmt::print("后处理警告：元数据写入失败。\n");
+			}
+		}
+		else
+		{
+			fmt::print("后处理警告：最高层级瓦片生成不完整，跳过低层级和元数据生成。\n");
+		}
 	}
 
-	GeneratePostProcessLowerZoomTiles(std::move(targetTiles));
-	if (!WritePostProcessMetadata())
+	if (PostProcessMergedImageEnabled && !GeneratePostProcessMergedImage())
 	{
-		fmt::print("后处理警告：元数据写入失败。\n");
-		return;
+		fmt::print("后处理警告：合并大图生成失败或不完整。\n");
 	}
 
 	fmt::print("瓦片后处理完成。\n");
@@ -1603,6 +1696,118 @@ bool DownTool::DownToolBase::GeneratePostProcessMaxZoomTiles(
 
 	fmt::print("\r最高层级后处理: {}/{}，失败 {}\n",
 		targetTiles.size(), targetTiles.size(), failedCount.load());
+	return failedCount.load() == 0;
+}
+
+uint32_t DownTool::DownToolBase::SelectPostProcessMergedImageSampleZoom() const
+{
+	const double targetResolution =
+		static_cast<double>(std::max(1u, PostProcessMergedImageResolution));
+	uint32_t bestZoom = Zoom;
+	double bestScore = std::numeric_limits<double>::max();
+
+	for (uint32_t zoom = 0; zoom <= Zoom; zoom++)
+	{
+		const uint32_t zoomOffset = Zoom - zoom;
+		if (zoomOffset >= 31)
+		{
+			continue;
+		}
+
+		const uint64_t scale = uint64_t{ 1 } << zoomOffset;
+		const uint64_t minX = static_cast<uint64_t>(MinTile.X) / scale;
+		const uint64_t maxX = static_cast<uint64_t>(MaxTile.X) / scale;
+		const uint64_t minY = static_cast<uint64_t>(MinTile.Y) / scale;
+		const uint64_t maxY = static_cast<uint64_t>(MaxTile.Y) / scale;
+		const uint64_t xCount = maxX - minX + 1;
+		const uint64_t yCount = maxY - minY + 1;
+		const double sourcePixels =
+			static_cast<double>(std::max(xCount, yCount)) * TileSize;
+		if (sourcePixels <= 0.)
+		{
+			continue;
+		}
+
+		const double score = std::abs(std::log(sourcePixels / targetResolution));
+		if (score < bestScore || (score == bestScore && zoom < bestZoom))
+		{
+			bestScore = score;
+			bestZoom = zoom;
+		}
+	}
+
+	return bestZoom;
+}
+
+bool DownTool::DownToolBase::GeneratePostProcessTilesAtZoom(
+	const std::vector<Tile>& targetTiles,
+	uint32_t sourceZoom,
+	const std::string& phaseName) const
+{
+	if (targetTiles.empty())
+	{
+		return true;
+	}
+
+	std::atomic_uint32_t processedCount = 0;
+	std::atomic_uint32_t skippedCount = 0;
+	std::atomic_uint32_t failedCount = 0;
+	const int stripeCount = GetTileRepairStripeCount(targetTiles.size(), MaxDownQueue);
+
+	cv::parallel_for_(
+		cv::Range(0, static_cast<int>(targetTiles.size())),
+		[&](const cv::Range& range)
+		{
+			for (int index = range.start; index < range.end; index++)
+			{
+				const Tile& tile = targetTiles[static_cast<size_t>(index)];
+				const std::filesystem::path outputPath = GetPostProcessTileFilePath(tile);
+				bool writeSuccess = false;
+				std::error_code existsError;
+				const bool outputExists = std::filesystem::exists(outputPath, existsError);
+				if (!existsError && outputExists && IsValidImageFile(outputPath))
+				{
+					writeSuccess = true;
+					skippedCount.fetch_add(1, std::memory_order_relaxed);
+				}
+				else
+				{
+					try
+					{
+						writeSuccess =
+							WritePostProcessTileFromSourceZoom(tile, outputPath, sourceZoom);
+					}
+					catch (const std::exception&)
+					{
+						writeSuccess = false;
+					}
+					catch (...)
+					{
+						writeSuccess = false;
+					}
+				}
+
+				if (!writeSuccess)
+				{
+					failedCount.fetch_add(1, std::memory_order_relaxed);
+				}
+				const uint32_t currentCount =
+					processedCount.fetch_add(1, std::memory_order_relaxed) + 1;
+				if (currentCount % 1024 == 0 || currentCount == targetTiles.size())
+				{
+					fmt::print("\r{}: {}/{}",
+						phaseName, currentCount, targetTiles.size());
+				}
+			}
+		},
+		stripeCount);
+
+	fmt::print("\r{}: {}/{}，跳过 {}，失败 {}\n",
+		phaseName,
+		targetTiles.size(),
+		targetTiles.size(),
+		skippedCount.load(),
+		failedCount.load());
 	return failedCount.load() == 0;
 }
 
@@ -1690,39 +1895,66 @@ void DownTool::DownToolBase::GeneratePostProcessLowerZoomTiles(
 	}
 }
 
-bool DownTool::DownToolBase::WritePostProcessMaxZoomTile(
-	const Tile& targetTile,
-	const std::filesystem::path& outputPath) const
+cv::Mat DownTool::DownToolBase::ReadPostProcessMaxZoomTile(
+	const Tile& targetTile) const
 {
-	if (CanCopyPostProcessTileDirectly())
+	const int tileSize = static_cast<int>(TileSize);
+	return ReadPostProcessTileRegion(targetTile, tileSize, tileSize);
+}
+
+cv::Mat DownTool::DownToolBase::ReadPostProcessTileRegion(
+	const Tile& targetTile,
+	int outputWidth,
+	int outputHeight) const
+{
+	return ReadPostProcessTileRegion(targetTile, targetTile.Zoom, outputWidth, outputHeight);
+}
+
+cv::Mat DownTool::DownToolBase::ReadPostProcessTileRegion(
+	const Tile& targetTile,
+	uint32_t sourceZoom,
+	int outputWidth,
+	int outputHeight) const
+{
+	if (sourceZoom < targetTile.Zoom)
+	{
+		return {};
+	}
+
+	if (CanCopyPostProcessTileDirectly() && sourceZoom == targetTile.Zoom)
 	{
 		const std::filesystem::path sourcePath =
 			GetPostProcessSourceTileFilePath(targetTile);
 		if (!IsValidImageFile(sourcePath) || IsUnavailableTileFile(sourcePath, targetTile))
 		{
-			return false;
+			return {};
 		}
 
-		return CopyFileReplacing(sourcePath, outputPath);
+		return ResizeImageToSize(ReadBgraTile(sourcePath, TileSize), outputWidth, outputHeight);
 	}
 
 	const int tileSize = static_cast<int>(TileSize);
-	if (tileSize <= 0)
+	if (tileSize <= 0 || outputWidth <= 0 || outputHeight <= 0)
 	{
-		return false;
+		return {};
 	}
 
-	std::vector<TileSample> samples(static_cast<size_t>(tileSize * tileSize));
+	std::vector<TileSample> samples(
+		static_cast<size_t>(outputWidth) * static_cast<size_t>(outputHeight));
 	std::unordered_set<Tile, TileHash, TileEqual> sourceTiles;
 	sourceTiles.reserve(8);
 
-	for (int y = 0; y < tileSize; y++)
+	for (int y = 0; y < outputHeight; y++)
 	{
-		for (int x = 0; x < tileSize; x++)
+		for (int x = 0; x < outputWidth; x++)
 		{
+			const double targetPixelX =
+				(static_cast<double>(x) + 0.5) * tileSize / outputWidth;
+			const double targetPixelY =
+				(static_cast<double>(y) + 0.5) * tileSize / outputHeight;
 			LonLat targetLonLat;
 			if (!TryGetLonLatForTilePixel(
-				targetTile, x + 0.5, y + 0.5, targetLonLat))
+				targetTile, targetPixelX, targetPixelY, targetLonLat))
 			{
 				continue;
 			}
@@ -1732,12 +1964,12 @@ bool DownTool::DownToolBase::WritePostProcessMaxZoomTile(
 			double sourcePixelX = 0.;
 			double sourcePixelY = 0.;
 			if (!TryGetTilePixelForLonLat(
-				sourceLonLat, targetTile.Zoom, sourceTile, sourcePixelX, sourcePixelY))
+				sourceLonLat, sourceZoom, sourceTile, sourcePixelX, sourcePixelY))
 			{
 				continue;
 			}
 
-			const size_t sampleIndex = static_cast<size_t>(y * tileSize + x);
+			const size_t sampleIndex = static_cast<size_t>(y * outputWidth + x);
 			samples[sampleIndex] = TileSample{
 				sourceTile,
 				sourcePixelX,
@@ -1750,7 +1982,7 @@ bool DownTool::DownToolBase::WritePostProcessMaxZoomTile(
 
 	if (sourceTiles.empty())
 	{
-		return false;
+		return {};
 	}
 
 	std::unordered_map<Tile, cv::Mat, TileHash, TileEqual> sourceImages;
@@ -1773,16 +2005,16 @@ bool DownTool::DownToolBase::WritePostProcessMaxZoomTile(
 
 	if (sourceImages.empty())
 	{
-		return false;
+		return {};
 	}
 
-	cv::Mat outputImage(tileSize, tileSize, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+	cv::Mat outputImage(outputHeight, outputWidth, CV_8UC4, cv::Scalar(0, 0, 0, 0));
 	bool hasPixel = false;
-	for (int y = 0; y < tileSize; y++)
+	for (int y = 0; y < outputHeight; y++)
 	{
-		for (int x = 0; x < tileSize; x++)
+		for (int x = 0; x < outputWidth; x++)
 		{
-			const TileSample& sample = samples[static_cast<size_t>(y * tileSize + x)];
+			const TileSample& sample = samples[static_cast<size_t>(y * outputWidth + x)];
 			if (!sample.valid)
 			{
 				continue;
@@ -1800,7 +2032,241 @@ bool DownTool::DownToolBase::WritePostProcessMaxZoomTile(
 		}
 	}
 
-	return hasPixel && WriteImage(outputPath, outputImage);
+	if (!hasPixel)
+	{
+		return {};
+	}
+
+	return outputImage;
+}
+
+bool DownTool::DownToolBase::GeneratePostProcessMergedImage() const
+{
+	const uint32_t resolution = PostProcessMergedImageResolution;
+	if (resolution == 0 || resolution > static_cast<uint32_t>(std::numeric_limits<int>::max()))
+	{
+		fmt::print("合并大图失败：分辨率参数无效。\n");
+		return false;
+	}
+
+	const uint64_t xCount = static_cast<uint64_t>(MaxTile.X) - MinTile.X + 1;
+	const uint64_t yCount = static_cast<uint64_t>(MaxTile.Y) - MinTile.Y + 1;
+	if (xCount == 0 || yCount == 0)
+	{
+		fmt::print("合并大图失败：瓦片范围为空。\n");
+		return false;
+	}
+
+	const int outputSize = static_cast<int>(resolution);
+	cv::Mat mergedImage(
+		outputSize, outputSize, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+
+	const uint32_t sampleZoom = SelectPostProcessMergedImageSampleZoom();
+	std::vector<Tile> sampleTiles;
+	BuildRequestedTilesAtZoom(sampleZoom, sampleTiles);
+	if (sampleTiles.empty())
+	{
+		fmt::print("合并大图失败：采样层级瓦片范围为空。\n");
+		return false;
+	}
+
+	fmt::print("合并大图采样层级：z{}，瓦片数 {}，输出分辨率 {}x{}\n",
+		sampleZoom, sampleTiles.size(), resolution, resolution);
+
+	const uint32_t zoomOffset = Zoom - sampleZoom;
+	const uint64_t sampleScale = uint64_t{ 1 } << zoomOffset;
+	const uint64_t requestMinX = MinTile.X;
+	const uint64_t requestMinY = MinTile.Y;
+	const uint64_t requestMaxX = static_cast<uint64_t>(MaxTile.X) + 1;
+	const uint64_t requestMaxY = static_cast<uint64_t>(MaxTile.Y) + 1;
+	const int tileSize = static_cast<int>(TileSize);
+
+	auto isSampleTileFullyCovered = [&](const Tile& tile)
+	{
+		const uint64_t sampleMinX = static_cast<uint64_t>(tile.X) * sampleScale;
+		const uint64_t sampleMinY = static_cast<uint64_t>(tile.Y) * sampleScale;
+		const uint64_t sampleMaxX = sampleMinX + sampleScale;
+		const uint64_t sampleMaxY = sampleMinY + sampleScale;
+		return sampleMinX >= requestMinX &&
+			sampleMinY >= requestMinY &&
+			sampleMaxX <= requestMaxX &&
+			sampleMaxY <= requestMaxY;
+	};
+
+	std::vector<Tile> cacheableSampleTiles;
+	cacheableSampleTiles.reserve(sampleTiles.size());
+	for (const Tile& tile : sampleTiles)
+	{
+		if (isSampleTileFullyCovered(tile))
+		{
+			cacheableSampleTiles.push_back(tile);
+		}
+	}
+
+	fmt::print("大图采样层可缓存瓦片：{} / {}\n",
+		cacheableSampleTiles.size(), sampleTiles.size());
+	if (!GeneratePostProcessTilesAtZoom(
+		cacheableSampleTiles, Zoom, "大图采样层后处理"))
+	{
+		return false;
+	}
+
+	std::atomic_uint32_t processedCount = 0;
+	std::atomic_uint32_t failedCount = 0;
+	const int stripeCount = GetTileRepairStripeCount(sampleTiles.size(), MaxDownQueue);
+
+	cv::parallel_for_(
+		cv::Range(0, static_cast<int>(sampleTiles.size())),
+		[&](const cv::Range& range)
+		{
+			for (int index = range.start; index < range.end; index++)
+			{
+				const Tile& tile = sampleTiles[static_cast<size_t>(index)];
+				const uint64_t sampleMinX = static_cast<uint64_t>(tile.X) * sampleScale;
+				const uint64_t sampleMinY = static_cast<uint64_t>(tile.Y) * sampleScale;
+				const uint64_t sampleMaxX = sampleMinX + sampleScale;
+				const uint64_t sampleMaxY = sampleMinY + sampleScale;
+				const uint64_t overlapMinX = std::max(sampleMinX, requestMinX);
+				const uint64_t overlapMinY = std::max(sampleMinY, requestMinY);
+				const uint64_t overlapMaxX = std::min(sampleMaxX, requestMaxX);
+				const uint64_t overlapMaxY = std::min(sampleMaxY, requestMaxY);
+
+				if (overlapMaxX <= overlapMinX || overlapMaxY <= overlapMinY)
+				{
+					const uint32_t currentCount =
+						processedCount.fetch_add(1, std::memory_order_relaxed) + 1;
+					if (currentCount % 1024 == 0 || currentCount == sampleTiles.size())
+					{
+						fmt::print("\r大图合并: {}/{}",
+							currentCount, sampleTiles.size());
+					}
+					continue;
+				}
+
+				const int x0 = static_cast<int>(
+					((overlapMinX - requestMinX) * resolution) / xCount);
+				const int x1 = static_cast<int>(
+					((overlapMaxX - requestMinX) * resolution) / xCount);
+				const int y0 = static_cast<int>(
+					((overlapMinY - requestMinY) * resolution) / yCount);
+				const int y1 = static_cast<int>(
+					((overlapMaxY - requestMinY) * resolution) / yCount);
+
+				if (x1 <= x0 || y1 <= y0)
+				{
+					const uint32_t currentCount =
+						processedCount.fetch_add(1, std::memory_order_relaxed) + 1;
+					if (currentCount % 1024 == 0 || currentCount == sampleTiles.size())
+					{
+						fmt::print("\r大图合并: {}/{}",
+							currentCount, sampleTiles.size());
+					}
+					continue;
+				}
+
+				const bool useCachedTile = isSampleTileFullyCovered(tile);
+				const cv::Mat tileImage = useCachedTile ?
+					ReadBgraTile(GetPostProcessTileFilePath(tile), TileSize) :
+					ReadPostProcessTileRegion(tile, Zoom, tileSize, tileSize);
+				if (tileImage.empty())
+				{
+					failedCount.fetch_add(1, std::memory_order_relaxed);
+					const uint32_t currentCount =
+						processedCount.fetch_add(1, std::memory_order_relaxed) + 1;
+					if (currentCount % 1024 == 0 || currentCount == sampleTiles.size())
+					{
+						fmt::print("\r大图合并: {}/{}",
+							currentCount, sampleTiles.size());
+					}
+					continue;
+				}
+
+				const double cropX0 =
+					static_cast<double>(overlapMinX - sampleMinX) *
+					tileSize / static_cast<double>(sampleScale);
+				const double cropY0 =
+					static_cast<double>(overlapMinY - sampleMinY) *
+					tileSize / static_cast<double>(sampleScale);
+				const double cropX1 =
+					static_cast<double>(overlapMaxX - sampleMinX) *
+					tileSize / static_cast<double>(sampleScale);
+				const double cropY1 =
+					static_cast<double>(overlapMaxY - sampleMinY) *
+					tileSize / static_cast<double>(sampleScale);
+				const int cropLeft =
+					std::clamp(static_cast<int>(std::floor(cropX0)), 0, tileSize - 1);
+				const int cropTop =
+					std::clamp(static_cast<int>(std::floor(cropY0)), 0, tileSize - 1);
+				const int cropRight =
+					std::clamp(static_cast<int>(std::ceil(cropX1)), cropLeft + 1, tileSize);
+				const int cropBottom =
+					std::clamp(static_cast<int>(std::ceil(cropY1)), cropTop + 1, tileSize);
+				const cv::Mat croppedTile = tileImage(cv::Rect(
+					cropLeft,
+					cropTop,
+					cropRight - cropLeft,
+					cropBottom - cropTop));
+				cv::Mat targetRoi = mergedImage(cv::Rect(x0, y0, x1 - x0, y1 - y0));
+				const cv::InterpolationFlags interpolation =
+					(croppedTile.cols > targetRoi.cols || croppedTile.rows > targetRoi.rows) ?
+					cv::INTER_AREA : cv::INTER_LINEAR;
+				cv::resize(croppedTile, targetRoi, targetRoi.size(), 0., 0., interpolation);
+
+				const uint32_t currentCount =
+					processedCount.fetch_add(1, std::memory_order_relaxed) + 1;
+				if (currentCount % 1024 == 0 || currentCount == sampleTiles.size())
+				{
+					fmt::print("\r大图合并: {}/{}",
+						currentCount, sampleTiles.size());
+				}
+			}
+		},
+		stripeCount);
+
+	fmt::print("\r大图合并: {}/{}，失败 {}\n",
+		sampleTiles.size(), sampleTiles.size(), failedCount.load());
+	if (failedCount.load() != 0)
+	{
+		return false;
+	}
+
+	const std::filesystem::path outputPath = GetPostProcessMergedImagePath();
+	const bool writeSuccess = WriteImage(outputPath, mergedImage);
+	if (writeSuccess)
+	{
+		fmt::print("合并大图输出：{}\n", PathToUtf8String(outputPath));
+	}
+	return writeSuccess;
+}
+
+bool DownTool::DownToolBase::WritePostProcessTileFromSourceZoom(
+	const Tile& targetTile,
+	const std::filesystem::path& outputPath,
+	uint32_t sourceZoom) const
+{
+	if (CanCopyPostProcessTileDirectly() && sourceZoom == targetTile.Zoom)
+	{
+		const std::filesystem::path sourcePath =
+			GetPostProcessSourceTileFilePath(targetTile);
+		if (!IsValidImageFile(sourcePath) || IsUnavailableTileFile(sourcePath, targetTile))
+		{
+			return false;
+		}
+
+		return CopyFileReplacing(sourcePath, outputPath);
+	}
+
+	const int tileSize = static_cast<int>(TileSize);
+	return WriteImage(
+		outputPath,
+		ReadPostProcessTileRegion(targetTile, sourceZoom, tileSize, tileSize));
+}
+
+bool DownTool::DownToolBase::WritePostProcessMaxZoomTile(
+	const Tile& targetTile,
+	const std::filesystem::path& outputPath) const
+{
+	return WritePostProcessTileFromSourceZoom(targetTile, outputPath, targetTile.Zoom);
 }
 
 bool DownTool::DownToolBase::WritePostProcessMetadata() const
