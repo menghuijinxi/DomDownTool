@@ -1,5 +1,74 @@
 #include "GaoDeDown.h"
 
+#include <cctype>
+#include <string>
+
+namespace
+{
+	constexpr const char* GaoDeUnavailableTileEtag =
+		"a85b8640d75d21ca31aa928225590f50";
+
+	std::string TrimAsciiWhitespace(const std::string& text)
+	{
+		size_t begin = 0;
+		while (begin < text.size() &&
+			std::isspace(static_cast<unsigned char>(text[begin])) != 0)
+		{
+			begin++;
+		}
+
+		size_t end = text.size();
+		while (end > begin &&
+			std::isspace(static_cast<unsigned char>(text[end - 1])) != 0)
+		{
+			end--;
+		}
+
+		return text.substr(begin, end - begin);
+	}
+
+	std::string NormalizeEtagValue(std::string etag)
+	{
+		etag = TrimAsciiWhitespace(etag);
+		if (etag.size() >= 2 &&
+			(etag[0] == 'W' || etag[0] == 'w') &&
+			etag[1] == '/')
+		{
+			etag = TrimAsciiWhitespace(etag.substr(2));
+		}
+
+		if (etag.size() >= 2 &&
+			etag.front() == '"' &&
+			etag.back() == '"')
+		{
+			etag = etag.substr(1, etag.size() - 2);
+		}
+
+		for (char& character : etag)
+		{
+			character = static_cast<char>(
+				std::tolower(static_cast<unsigned char>(character)));
+		}
+
+		return etag;
+	}
+}
+
+bool DownTool::GaoDeDown::IsUnavailableTileResponseHeader(
+	const std::map<std::string, std::string>& responseHeaders,
+	const Tile& tile) const
+{
+	(void)tile;
+
+	const auto etagIt = responseHeaders.find("etag");
+	if (etagIt == responseHeaders.end())
+	{
+		return false;
+	}
+
+	return NormalizeEtagValue(etagIt->second) == GaoDeUnavailableTileEtag;
+}
+
 DownTool::GaoDeDown::GaoDeDown()
 {
 	//SetUrlTemplate("https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}");

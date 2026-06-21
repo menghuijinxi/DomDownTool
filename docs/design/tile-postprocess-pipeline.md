@@ -152,14 +152,15 @@ OpenCV 可使用 `remap`：
 ### 输出定义
 
 - 默认输出路径：`GetPostProcessRootPath()/merged.png`。
-- 默认输出分辨率：`16384 x 16384`。
+- 默认输出目标最大边：`16384`。
 - 可通过 `SetPostProcessMergedImageEnabled(true)` 启用。
-- 可通过 `SetPostProcessMergedImageResolution(...)` 设置方形输出边长。
+- 可通过 `SetPostProcessMergedImageResolution(...)` 设置输出目标最大边。
+- 输出保持瓦片范围原始宽高比；真实范围像素数小于目标最大边时不放大。
 - 可通过 `SetPostProcessMergedImageOutputPath(...)` 覆盖输出路径。
 
 ### 生成流程
 
-1. 根据 `MinTile..MaxTile` 的最高层级范围和最终大图分辨率，自动选择一个采样层级。
+1. 根据 `MinTile..MaxTile` 的最高层级范围和目标最大边，自动选择一个采样层级。
    - 采样层级的像素规模尽量贴近最终输出分辨率。
    - 例如最高层级是 19，但 16K 输出只需要 16 或 17 级精度时，不再遍历 19 级全部瓦片。
 2. 使用 `BuildRequestedTilesAtZoom(sampleZoom)` 取得采样层级瓦片，不遍历缓存目录。

@@ -48,6 +48,7 @@ namespace DownTool
 		std::string url;
 		std::filesystem::path filePath;
 		std::ofstream fileStream;
+		std::map<std::string, std::string> responseHeaders;
 	};
 
 	class DownToolBase
@@ -100,7 +101,7 @@ namespace DownTool
 		//是否在下载完成后把请求范围合并成一张大图
 		bool PostProcessMergedImageEnabled = false;
 
-		//合并大图的方形输出分辨率
+		//合并大图的目标最大边分辨率，小于真实范围时不会放大
 		uint32_t PostProcessMergedImageResolution = 16384;
 
 		//合并大图输出路径，空字符串时默认输出到 GetPostProcessRootPath()/merged.png
@@ -151,9 +152,15 @@ namespace DownTool
 			const std::filesystem::path& tilePath,
 			uint32_t startParentZoom);
 
+		bool RepairTileFromExistingLowerZoom(const Tile& tile);
+
+		bool RepairTileFromExistingLowerZoom(const Tile& tile, uint32_t startParentZoom);
+
 		bool RepairTilesFromParent(const Tile& parentTile, uint32_t targetZoom);
 
 		bool IsTileDownloading(const Tile& tile) const;
+
+		bool IsCoveredByPendingLowerZoomRepair(const Tile& tile) const;
 
 		uint32_t CancelPendingChildDownloads(const Tile& parentTile, uint32_t childZoom);
 
@@ -162,6 +169,8 @@ namespace DownTool
 		bool GeneratePostProcessMaxZoomTiles(const std::vector<Tile>& targetTiles);
 
 		void GeneratePostProcessLowerZoomTiles(std::vector<Tile> currentLevelTiles);
+
+		bool IsPostProcessLowerZoomTileFresh(const Tile& parentTile) const;
 
 		uint32_t SelectPostProcessMergedImageSampleZoom() const;
 
@@ -172,7 +181,7 @@ namespace DownTool
 			uint32_t sourceZoom,
 			const std::string& phaseName) const;
 
-		bool GeneratePostProcessMergedImage() const;
+		bool GeneratePostProcessMergedImage(bool postProcessTilesAvailable) const;
 
 		cv::Mat ReadPostProcessMaxZoomTile(const Tile& targetTile) const;
 
@@ -237,6 +246,15 @@ namespace DownTool
 
 		virtual bool IsUnavailableTileFile(
 			const std::filesystem::path& tilePath, const Tile& tile) const { return false; }
+
+		virtual bool IsUnavailableTileResponseHeader(
+			const std::map<std::string, std::string>& responseHeaders,
+			const Tile& tile) const
+		{
+			(void)responseHeaders;
+			(void)tile;
+			return false;
+		}
 
 		virtual uint32_t GetMinFallbackZoom() const { return 0; }
 

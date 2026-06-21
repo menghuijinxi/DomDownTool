@@ -19,13 +19,14 @@ int main()
 	SetConsoleOutputCP(CP_UTF8);
 #endif
 
-	DownTool::TencentDown base;
+	DownTool::GaoDeDown base;
 	//base.SetRadius(30000.);
 	//base.SetZoom(19);
 	//base.SetCenterLonLat(DownTool::LonLat(116.927549, 36.712797));
 	base.SetRadius(1000.);
 	base.SetCenterLonLat(DownTool::LonLat(116.468067, 39.912247));
 	base.SetPostProcessEnabled(true);
+	base.SetPostProcessMergedImageEnabled(true);
 	base.StartDown();
 
 	return 0;
