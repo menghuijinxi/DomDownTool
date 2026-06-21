@@ -5,7 +5,7 @@
 下载器完成最高层级瓦片下载后，需要增加两类后处理能力：
 
 1. 重新整理瓦片金字塔，生成低层级瓦片、`meta.json` 和 `tilemapresource.xml`。
-2. 将高德、腾讯等 GCJ02 源瓦片转换成去火星偏移后的 Google Mercator 瓦片，并按 4096 或 8192 大纹理生成 FBX 网格。
+2. 将高德、腾讯等 GCJ02 源瓦片转换成去火星偏移后的 Google Mercator 瓦片，并按目标贴图大小生成中心锚定贴图和 FBX 网格。
 
 这里的“转换成 WGS84”定义为：输出瓦片仍使用 Google/XYZ 瓦片编号规则，瓦片代表的经纬度语义为 WGS84，不再带 GCJ02 火星偏移。元数据字段以 `GaoDeTiffTileDownloadComponent::StartDownloadGenerateGoogleTile` 为准。
 
@@ -27,7 +27,7 @@
 父类只负责通用流程：
 
 - 任务初始化、目录组织、并发调度、缓存管理。
-- 目标瓦片范围计算、低层级回推、4096/8192 纹理分组。
+- 目标瓦片范围计算、低层级回推、中心锚定 FBX 纹理分组。
 - 统一的 FBX 导出流程。
 - 统一的 `meta.json` / `tilemapresource.xml` 写入流程。
 
@@ -175,41 +175,102 @@ OpenCV 可使用 `remap`：
    - 裁剪结果直接 `cv::resize` 到最终大图 ROI，缩小时使用 `INTER_AREA`，放大时使用 `INTER_LINEAR`。
 7. 不做圆形 mask，范围外缓存瓦片不会参与合并。
 
-## 4096/8192 大纹理生成
+## FBX 贴图生成
 
-### 纹理分组
+### 输入参数
 
-`TextureTileSize` 必须是 `TileSize` 的整数倍：
+FBX 导出使用独立的贴图参数，不复用请求范围合并大图的 `PostProcessMergedImageResolution`。
 
-- 4096 对应 `16 x 16` 个 256 瓦片。
-- 8192 对应 `32 x 32` 个 256 瓦片。
+- `FbxTextureSize`：目标贴图大小，默认 `4096`。
+- `FbxTextureSize` 必须是 2 的次幂，且不能大于 `16384`。
+- `FbxTextureSize` 必须大于等于 `TileSize`，并且应是 `TileSize` 的整数倍。
+- `TextureDistanceOffsets`：距离贴图降级参数，兼容 `GaoDeTiffTileDownloadComponent` 里的 `FTiffTileLoad_TextureDistanceOffset` 语义。
+- `MeshTileSize`：网格细分数，默认沿用现有设计里的 64。
 
-生成方式：
+如果用户传入非法贴图大小，流程应直接报错并停止 FBX 导出，不隐式向上或向下修正。显卡兼容性以 16K 为硬上限。
 
-1. 在最高层级输出瓦片目录上按 group size 分组。
-2. 每组生成一张大纹理。
-3. 大纹理的经纬度范围由组内瓦片外边界决定。
-4. 缺失瓦片填透明，整组都缺失则不生成。
+### 前置瓦片生成
 
-分组可以提供两种模式：
+FBX 贴图依赖后处理后的最高层级瓦片，原因是这一步已经完成地图源适配和 GCJ02 去偏移：
 
-- `TileRangeAligned`：按瓦片范围从左上角对齐分组，结果稳定，适合离线输出。
-- `CenterAligned`：按下载中心向四周分组，兼容 `GaoDeTiffTileDownloadComponent` 现有思路，适合和 UE 旧流程对齐。
+1. 构建下载任务指定最高层级 `Zoom` 的目标瓦片范围。
+2. 调用后处理最高层级生成逻辑，生成 `Zoom/x/y.png`。
+3. FBX 导出只需要最高层级后处理瓦片，不生成低层级金字塔。
+4. 如果用户同时启用了普通金字塔瓦片输出，再由普通后处理流程单独生成低层级。
 
-默认建议使用 `TileRangeAligned`，旧工程兼容场景再使用 `CenterAligned`。
+这样 FBX 贴图合并可以复用标准地图、GCJ02 地图、腾讯/高德占位图修复等已有逻辑，同时避免为了 FBX 额外生成低层级瓦片造成大量耗时。
 
-### 大纹理元数据
+### 中心锚定分组
 
-每个大纹理记录：
+FBX 贴图分组不按下载范围左上角对齐，而是以项目中心为第一张贴图的锚点。参考 `GaoDeTiffTileDownloadComponent::GetGenerateTextureInfo()`，但这里要明确采用中心像素语义：
+
+1. 将项目中心 WGS84 经纬度转换到最高层级 Google/XYZ 全局像素坐标：
+   - `centerPixelX`
+   - `centerPixelY`
+   - `centerTileX = floor(centerPixelX / TileSize)`
+   - `centerTileY = floor(centerPixelY / TileSize)`
+2. 第一张贴图的逻辑坐标为 `(0, 0)`。
+3. 第一张贴图覆盖的全局像素范围为：
+   - `minPixelX = centerPixelX - FbxTextureSize / 2`
+   - `minPixelY = centerPixelY - FbxTextureSize / 2`
+   - `maxPixelX = minPixelX + FbxTextureSize`
+   - `maxPixelY = minPixelY + FbxTextureSize`
+4. 因此项目中心点落在第一张贴图的中心像素位置。
+5. 其他贴图从中心向外辐射，逻辑坐标 `(gx, gy)` 的像素范围为：
+   - `minPixelX = centerPixelX + gx * FbxTextureSize - FbxTextureSize / 2`
+   - `minPixelY = centerPixelY + gy * FbxTextureSize - FbxTextureSize / 2`
+6. 生成顺序按 `ring = max(abs(gx), abs(gy))` 从小到大遍历，便于后续按距离提前停止或输出进度。
+
+这里不强制贴图边界对齐 256 瓦片边界。`centerPixelX/Y` 可以是小数，采样时以全局像素坐标为准，不先取整到瓦片边界。每张 FBX 贴图从最高层级后处理瓦片中按全局像素范围采样，边缘可以跨瓦片裁剪。这样才能保证项目中心严格落在中心贴图的中心像素，而不是只落在中心瓦片附近。
+
+### 覆盖范围
+
+FBX 贴图覆盖下载任务的方形瓦片范围，不做圆形裁剪：
+
+1. 先用下载半径和最高层级得到 `MinTile..MaxTile`。
+2. 将 `MinTile..MaxTile` 转换为最高层级全局像素范围。
+3. 从中心贴图开始向外枚举贴图组。
+4. 与下载范围没有交集的贴图组跳过。
+5. 与下载范围有交集但超出下载范围的部分填透明。
+6. 整张贴图没有任何有效像素时不输出。
+
+贴图的 WGS84 bounds 由它覆盖的全局像素范围反算，而不是由参与采样的瓦片外边界推导。这样纹理、网格和 UV 的边界完全一致。
+
+### 距离降级
+
+`TextureDistanceOffsets` 用来减少远距离贴图的尺寸，降低硬盘和显存占用。语义沿用参考脚本：
+
+- `Distance`：距离阈值，单位厘米，使用贴图网格 bounds 的 UE 空间中心到项目中心的距离。
+- `Offset`：贴图降级级别，`0` 表示不降级，`1` 表示边长减半，`2` 表示边长变为四分之一。
+
+处理规则：
+
+1. 对每张贴图，用其四角 WGS84 bounds 通过 `FGISToolGeoReferencingData` 转换到 UE 坐标。
+2. 计算四角 bounds 的中心点到项目中心的距离。
+3. 在所有 `Distance <= 当前距离` 的规则中选择 `Distance` 最大的一条。
+4. 输出贴图边长为 `FbxTextureSize >> Offset`。
+5. 输出边长最低不小于 `128`，且必须保持 2 的次幂。
+6. 降级只改变输出 PNG 的像素尺寸，不改变该贴图覆盖的地理范围、UV 和 mesh bounds。
+
+### FBX 贴图元数据
+
+每张 FBX 贴图记录：
 
 - 文件路径。
+- 逻辑贴图坐标：`gridX`、`gridY`，中心贴图为 `(0, 0)`。
+- `ring = max(abs(gridX), abs(gridY))`。
+- 项目中心瓦片：`centerTileX`、`centerTileY`。
+- 最高层级全局像素范围。
 - 覆盖的最高层级瓦片范围。
 - WGS84 经纬度范围：west、south、east、north。
-- zoom。
-- texture size。
-- tile size。
+- `zoom`。
+- `tileSize`。
+- `sourceTextureSize`，即 `FbxTextureSize`。
+- `outputTextureSize`，即距离降级后的实际 PNG 边长。
+- `distanceOffset`。
+- 是否含透明边缘或部分超出下载范围。
 
-这些信息同时用于 FBX 网格生成和后续高度图绑定。
+这些信息同时用于 FBX 网格生成、后续高度图绑定和增量重跑。
 
 ## FBX 网格生成
 
@@ -219,7 +280,7 @@ FBX 网格生成不直接写死平面或球面算法，而是抽象为：
 WGS84 lon/lat/alt -> FGISToolGeoReferencingData -> UE position
 ```
 
-也就是说，大纹理只提供 WGS84 bounds 和 UV；具体落到 UE 中是平面还是球面，由 `FGISToolGeoReferencingData::PlanetShape` 决定。
+也就是说，FBX 贴图只提供 WGS84 bounds 和 UV；具体落到 UE 中是平面还是球面，由 `FGISToolGeoReferencingData::PlanetShape` 决定。
 
 ### GeoReferencing 参数
 
@@ -273,6 +334,16 @@ WGS84 lon/lat/alt -> FGISToolGeoReferencingData -> UE position
 
 高度图兼容时，只需要在顶点生成阶段把 `alt = 0` 替换为高度采样值。纹理分组和经纬度范围不需要改变。
 
+### FBX 输出组织
+
+默认输出单个 FBX，内部每张贴图对应一个 mesh node：
+
+- node 名称使用 `tile_{gridX}_{gridY}`。
+- 每个 node 绑定自己的材质和纹理路径。
+- 中心贴图 node 为 `tile_0_0`。
+
+如果后续发现 DCC 或 UE 导入单个超大 FBX 的性能较差，可以增加“每张贴图一个 FBX”的输出模式，但不作为默认方案。
+
 ## 输出结构建议
 
 ```text
@@ -282,12 +353,11 @@ output/
     ...
     {maxZoom}/
   textures/
-    4096/
-      {groupX}_{groupY}.png
-      {groupX}_{groupY}.json
-    8192/
-      {groupX}_{groupY}.png
-      {groupX}_{groupY}.json
+    fbx/
+      4096/
+        manifest.json
+        {gridX}_{gridY}.png
+        {gridX}_{gridY}.json
   mesh/
     plane/
       tiles.fbx
@@ -308,21 +378,26 @@ output/
    - 图片可解码。
    - 不是已知占位图。
    - 尺寸等于 tile size。
-4. 用 4096 和 8192 分别生成大纹理，检查边界无缝。
+4. 用 4096、8192、16384 分别生成 FBX 贴图，检查中心贴图锚定、边界无缝和 16K 上限校验。
+   - `0_0` 贴图中心像素反算经纬度应等于项目中心。
+   - `centerTileX/Y` 必须是包含项目中心的最高层级瓦片。
 5. 生成 Plane 和 Sphere 两套 FBX：
    - 平面模式检查局部尺寸是否和投影米制距离一致。
    - 球面模式检查大范围边缘是否贴合曲面，不出现直线跨越。
-6. 和 `GaoDeTiffTileDownloadComponent` 在同一范围下对比：
+6. 检查 `TextureDistanceOffsets`：
+   - 距离阈值命中规则是否正确。
+   - 降级贴图尺寸是否为 2 的次幂。
+   - 降级不改变 mesh bounds 和 UV。
+7. 和 `GaoDeTiffTileDownloadComponent` 在同一范围下对比：
    - tile range。
    - texture bounds。
    - mesh bounds。
 
 ## 待确认项
 
-1. FBX 是否需要每张大纹理一个 mesh，还是合并成单个 FBX 多个 mesh node。
+1. FBX 默认单文件多 mesh node；是否还需要补充“每张贴图一个 FBX”的兼容模式。
 2. Plane/Sphere 是否一次都生成，还是按参数选择。
-3. 大纹理分组默认使用 `TileRangeAligned` 还是兼容旧逻辑的 `CenterAligned`。
-4. 高度图接口先预留字段，还是这次只保留设计不落代码。
+3. 高度图接口先预留字段，还是这次只保留设计不落代码。
 
 ## 参考资料
 
