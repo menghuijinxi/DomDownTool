@@ -64,6 +64,29 @@ namespace DownTool
 		Tile MaxTile;
 	};
 
+	enum class FbxPlanetShape
+	{
+		Plane,
+		Sphere,
+		Both
+	};
+
+	struct FbxTextureDistanceOffset
+	{
+		FbxTextureDistanceOffset() = default;
+
+		FbxTextureDistanceOffset(double newDistance, uint32_t newOffset)
+			: Distance(newDistance), Offset(newOffset)
+		{
+		}
+
+		//单位厘米。距离项目中心超过该值时应用 Offset。
+		double Distance = 0.;
+
+		//贴图降级级别，1 表示边长减半。
+		uint32_t Offset = 0;
+	};
+
 	struct GetDownServerIndex
 	{
 		GetDownServerIndex() = default;

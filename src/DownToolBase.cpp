@@ -1,24 +1,38 @@
 ﻿#include "DownToolBase.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <numbers>
 #include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
+#if defined(_WIN32)
+#include <windows.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#endif
+
+#include "assimp/Exporter.hpp"
+#include "assimp/material.h"
+#include "assimp/metadata.h"
+#include "assimp/scene.h"
 #include "cpl_json.h"
 #include "fmt/format.h"
 #include "libxml/tree.h"
@@ -74,6 +88,68 @@ namespace
 		uint32_t height = 0;
 	};
 
+	struct FbxGlobalPixelBounds
+	{
+		double minX = 0.;
+		double minY = 0.;
+		double maxX = 0.;
+		double maxY = 0.;
+	};
+
+	struct FbxTextureOutputInfo
+	{
+		int32_t gridX = 0;
+		int32_t gridY = 0;
+		uint32_t ring = 0;
+		uint32_t zoom = 0;
+		uint32_t tileSize = 256;
+		uint32_t sourceTextureSize = 4096;
+		uint32_t outputTextureSize = 4096;
+		uint32_t distanceOffset = 0;
+		uint32_t centerTileX = 0;
+		uint32_t centerTileY = 0;
+		double centerPixelX = 0.;
+		double centerPixelY = 0.;
+		double distanceCm = 0.;
+		bool partial = false;
+		FbxGlobalPixelBounds pixelBounds;
+		DownTool::TileRange tileRange;
+		PostProcessBounds bounds;
+		std::filesystem::path texturePath;
+		std::filesystem::path metadataPath;
+	};
+
+	struct FbxMeshVertex
+	{
+		double x = 0.;
+		double y = 0.;
+		double z = 0.;
+		double u = 0.;
+		double v = 0.;
+	};
+
+	struct FbxMeshData
+	{
+		std::string name;
+		std::filesystem::path texturePath;
+		std::vector<FbxMeshVertex> vertices;
+		std::vector<uint32_t> indices;
+	};
+
+	struct FbxCoordinateContext
+	{
+		DownTool::LonLat centerLonLat;
+		double centerMercatorX = 0.;
+		double centerMercatorY = 0.;
+		std::array<double, 3> centerEcef = { 0., 0., 0. };
+		double sinCenterLon = 0.;
+		double cosCenterLon = 1.;
+		double sinCenterLat = 0.;
+		double cosCenterLat = 1.;
+	};
+
+	bool WriteImage(const std::filesystem::path& path, const cv::Mat& image);
+
 	bool IsSameTile(const DownTool::Tile& left, const DownTool::Tile& right)
 	{
 		return left.X == right.X && left.Y == right.Y && left.Zoom == right.Zoom;
@@ -109,6 +185,47 @@ namespace
 			std::min(configuredQueueCount, hardwareThreadCount);
 		return static_cast<uint32_t>(
 			std::min<uint64_t>(itemCount, std::max(1u, queueCount)));
+	}
+
+	uint64_t GetAvailablePhysicalMemoryBytes()
+	{
+#if defined(_WIN32)
+		MEMORYSTATUSEX memoryStatus{};
+		memoryStatus.dwLength = sizeof(memoryStatus);
+		if (GlobalMemoryStatusEx(&memoryStatus) != 0)
+		{
+			return memoryStatus.ullAvailPhys;
+		}
+#elif defined(__linux__)
+		const long availablePages = sysconf(_SC_AVPHYS_PAGES);
+		const long pageSize = sysconf(_SC_PAGESIZE);
+		if (availablePages > 0 && pageSize > 0)
+		{
+			return static_cast<uint64_t>(availablePages) *
+				static_cast<uint64_t>(pageSize);
+		}
+#endif
+
+		return 0;
+	}
+
+	uint32_t GetFbxTextureWorkerCount(uint32_t textureSize, uint32_t configuredQueueCount)
+	{
+		const uint64_t textureBytes =
+			static_cast<uint64_t>(textureSize) * textureSize * 4 * 2;
+		const uint64_t availableMemoryBytes = GetAvailablePhysicalMemoryBytes();
+		constexpr uint64_t fallbackWorkingSetBytes = 1024ull * 1024ull * 1024ull;
+		const uint64_t targetWorkingSetBytes = availableMemoryBytes == 0 ?
+			fallbackWorkingSetBytes :
+			std::max<uint64_t>(
+				availableMemoryBytes / 2,
+				std::min<uint64_t>(availableMemoryBytes, textureBytes));
+		const uint32_t memoryLimitedWorkers = static_cast<uint32_t>(
+			std::max<uint64_t>(1, targetWorkingSetBytes / std::max<uint64_t>(1, textureBytes)));
+		const uint32_t configuredWorkers = configuredQueueCount == 0 ?
+			GetHardwareThreadCount() :
+			std::max(1u, configuredQueueCount);
+		return std::min(configuredWorkers, memoryLimitedWorkers);
 	}
 
 	template<typename Function>
@@ -535,6 +652,29 @@ namespace
 		return fileStream.good();
 	}
 
+	bool WriteBinaryFile(
+		const std::filesystem::path& path,
+		const void* data,
+		size_t dataSize)
+	{
+		std::error_code createDirectoryError;
+		std::filesystem::create_directories(path.parent_path(), createDirectoryError);
+		if (createDirectoryError)
+		{
+			return false;
+		}
+
+		std::ofstream fileStream(path, std::ios::binary);
+		if (!fileStream.is_open())
+		{
+			return false;
+		}
+
+		fileStream.write(
+			static_cast<const char*>(data), static_cast<std::streamsize>(dataSize));
+		return fileStream.good();
+	}
+
 	bool ReadTextFile(const std::filesystem::path& path, std::string& content)
 	{
 		std::ifstream fileStream(path, std::ios::binary);
@@ -585,6 +725,194 @@ namespace
 			std::clamp(latitude, -maxMercatorLatitude, maxMercatorLatitude);
 		const double latitudeRadians = clampedLatitude * pi / 180.;
 		return earthRadius * std::log(std::tan(pi / 4. + latitudeRadians / 2.));
+	}
+
+	DownTool::LonLat WebMercatorToLonLat(double mercatorX, double mercatorY)
+	{
+		constexpr double earthRadius = 6378137.;
+		const double longitude = mercatorX / earthRadius * 180. / std::numbers::pi;
+		const double latitude =
+			(2. * std::atan(std::exp(mercatorY / earthRadius)) -
+				std::numbers::pi / 2.) *
+			180. / std::numbers::pi;
+		return DownTool::LonLat(longitude, latitude);
+	}
+
+	bool IsPowerOfTwo(uint32_t value)
+	{
+		return value != 0 && (value & (value - 1)) == 0;
+	}
+
+	uint32_t CalculateRing(int32_t gridX, int32_t gridY)
+	{
+		const int64_t absX = std::llabs(static_cast<int64_t>(gridX));
+		const int64_t absY = std::llabs(static_cast<int64_t>(gridY));
+		return static_cast<uint32_t>(std::max(absX, absY));
+	}
+
+	uint32_t CalculateFbxOutputTextureSize(
+		uint32_t sourceTextureSize,
+		uint32_t distanceOffset)
+	{
+		uint32_t outputSize = sourceTextureSize;
+		for (uint32_t index = 0; index < distanceOffset && outputSize > 128; index++)
+		{
+			outputSize /= 2;
+		}
+
+		return std::max(128u, outputSize);
+	}
+
+	double ConvertImageVToFbxV(double imageV)
+	{
+		return 1. - imageV;
+	}
+
+	std::string MakeFbxTextureName(int32_t gridX, int32_t gridY)
+	{
+		return fmt::format("{}_{}", gridX, gridY);
+	}
+
+	std::string MakeFbxMeshName(int32_t gridX, int32_t gridY)
+	{
+		return fmt::format("tile_{}_{}", gridX, gridY);
+	}
+
+	std::string ToPortableRelativePath(
+		const std::filesystem::path& path,
+		const std::filesystem::path& basePath)
+	{
+		std::error_code relativeError;
+		std::filesystem::path relativePath =
+			std::filesystem::relative(path, basePath, relativeError);
+		if (relativeError)
+		{
+			relativePath = path;
+		}
+
+		std::string text = PathToUtf8String(relativePath);
+		std::replace(text.begin(), text.end(), '\\', '/');
+		return text;
+	}
+
+	FbxCoordinateContext BuildFbxCoordinateContext(const DownTool::LonLat& centerLonLat)
+	{
+		constexpr double semiMajorAxis = 6378137.;
+		constexpr double firstEccentricitySquared = 6.69437999014e-3;
+		const double centerLonRadians = centerLonLat.lon * std::numbers::pi / 180.;
+		const double centerLatRadians = centerLonLat.lat * std::numbers::pi / 180.;
+		const double sinCenterLat = std::sin(centerLatRadians);
+		const double cosCenterLat = std::cos(centerLatRadians);
+		const double sinCenterLon = std::sin(centerLonRadians);
+		const double cosCenterLon = std::cos(centerLonRadians);
+		const double primeVerticalRadius =
+			semiMajorAxis /
+			std::sqrt(1. - firstEccentricitySquared * sinCenterLat * sinCenterLat);
+
+		FbxCoordinateContext context;
+		context.centerLonLat = centerLonLat;
+		context.centerMercatorX = LongitudeToWebMercatorX(centerLonLat.lon);
+		context.centerMercatorY = LatitudeToWebMercatorY(centerLonLat.lat);
+		context.centerEcef = {
+			primeVerticalRadius * cosCenterLat * cosCenterLon,
+			primeVerticalRadius * cosCenterLat * sinCenterLon,
+			primeVerticalRadius * (1. - firstEccentricitySquared) * sinCenterLat
+		};
+		context.sinCenterLon = sinCenterLon;
+		context.cosCenterLon = cosCenterLon;
+		context.sinCenterLat = sinCenterLat;
+		context.cosCenterLat = cosCenterLat;
+		return context;
+	}
+
+	std::array<double, 3> LonLatToEcef(const DownTool::LonLat& lonLat)
+	{
+		constexpr double semiMajorAxis = 6378137.;
+		constexpr double firstEccentricitySquared = 6.69437999014e-3;
+		const double lonRadians = lonLat.lon * std::numbers::pi / 180.;
+		const double latRadians = lonLat.lat * std::numbers::pi / 180.;
+		const double sinLat = std::sin(latRadians);
+		const double cosLat = std::cos(latRadians);
+		const double cosLon = std::cos(lonRadians);
+		const double sinLon = std::sin(lonRadians);
+		const double primeVerticalRadius =
+			semiMajorAxis / std::sqrt(1. - firstEccentricitySquared * sinLat * sinLat);
+		return {
+			primeVerticalRadius * cosLat * cosLon,
+			primeVerticalRadius * cosLat * sinLon,
+			primeVerticalRadius * (1. - firstEccentricitySquared) * sinLat
+		};
+	}
+
+	FbxMeshVertex MakePlaneVertex(
+		const DownTool::LonLat& lonLat,
+		const FbxCoordinateContext& context,
+		double u,
+		double v)
+	{
+		const double mercatorX = LongitudeToWebMercatorX(lonLat.lon);
+		const double mercatorY = LatitudeToWebMercatorY(lonLat.lat);
+		return FbxMeshVertex{
+			(mercatorX - context.centerMercatorX) * 100.,
+			(mercatorY - context.centerMercatorY) * 100.,
+			0.,
+			u,
+			v
+		};
+	}
+
+	FbxMeshVertex MakeSphereVertex(
+		const DownTool::LonLat& lonLat,
+		const FbxCoordinateContext& context,
+		double u,
+		double v)
+	{
+		const std::array<double, 3> ecef = LonLatToEcef(lonLat);
+		const double dx = ecef[0] - context.centerEcef[0];
+		const double dy = ecef[1] - context.centerEcef[1];
+		const double dz = ecef[2] - context.centerEcef[2];
+		const double east =
+			-context.sinCenterLon * dx + context.cosCenterLon * dy;
+		const double north =
+			-context.sinCenterLat * context.cosCenterLon * dx -
+			context.sinCenterLat * context.sinCenterLon * dy +
+			context.cosCenterLat * dz;
+		const double up =
+			context.cosCenterLat * context.cosCenterLon * dx +
+			context.cosCenterLat * context.sinCenterLon * dy +
+			context.sinCenterLat * dz;
+		return FbxMeshVertex{ east * 100., north * 100., up * 100., u, v };
+	}
+
+	PostProcessBounds BoundsFromCorners(
+		const DownTool::LonLat& northWest,
+		const DownTool::LonLat& southEast)
+	{
+		return PostProcessBounds{
+			std::min(northWest.lon, southEast.lon),
+			std::max(northWest.lon, southEast.lon),
+			std::min(northWest.lat, southEast.lat),
+			std::max(northWest.lat, southEast.lat)
+		};
+	}
+
+	DownTool::Tile PixelBoundsToTile(
+		double globalPixelX,
+		double globalPixelY,
+		uint32_t zoom,
+		uint32_t tileSize)
+	{
+		const uint64_t tileCount = uint64_t{ 1 } << zoom;
+		const double maxPixel =
+			static_cast<double>(tileCount) * static_cast<double>(tileSize);
+		const double x = std::clamp(
+			globalPixelX, 0., std::nextafter(maxPixel, 0.));
+		const double y = std::clamp(
+			globalPixelY, 0., std::nextafter(maxPixel, 0.));
+		return DownTool::Tile(
+			static_cast<uint32_t>(std::floor(x / tileSize)),
+			static_cast<uint32_t>(std::floor(y / tileSize)),
+			zoom);
 	}
 
 	const xmlChar* ToXmlChar(const char* text)
@@ -679,6 +1007,446 @@ namespace
 		root.Add("version", 2);
 		root.Add("zoom", static_cast<int>(zoom));
 		return root.Format(CPLJSONObject::PrettyFormat::Plain);
+	}
+
+	CPLJSONObject BuildFbxGlobalPixelBoundsJson(const FbxGlobalPixelBounds& bounds)
+	{
+		CPLJSONObject root;
+		root.Add("maxx", bounds.maxX);
+		root.Add("maxy", bounds.maxY);
+		root.Add("minx", bounds.minX);
+		root.Add("miny", bounds.minY);
+		return root;
+	}
+
+	CPLJSONObject BuildFbxTileJson(const DownTool::Tile& tile)
+	{
+		CPLJSONObject root;
+		root.Add("x", static_cast<int>(tile.X));
+		root.Add("y", static_cast<int>(tile.Y));
+		root.Add("z", static_cast<int>(tile.Zoom));
+		return root;
+	}
+
+	CPLJSONObject BuildFbxTileRangeJson(const DownTool::TileRange& tileRange)
+	{
+		CPLJSONObject root;
+		root.Add("max", BuildFbxTileJson(tileRange.MaxTile));
+		root.Add("min", BuildFbxTileJson(tileRange.MinTile));
+		return root;
+	}
+
+	CPLJSONObject BuildFbxTextureJson(
+		const FbxTextureOutputInfo& textureInfo,
+		const std::filesystem::path& basePath)
+	{
+		CPLJSONObject root;
+		root.Add("bounds", BuildBoundsJson(textureInfo.bounds));
+		root.Add("centerpixelx", textureInfo.centerPixelX);
+		root.Add("centerpixely", textureInfo.centerPixelY);
+		root.Add("centertilex", static_cast<int>(textureInfo.centerTileX));
+		root.Add("centertiley", static_cast<int>(textureInfo.centerTileY));
+		root.Add("distancecm", textureInfo.distanceCm);
+		root.Add("distanceoffset", static_cast<int>(textureInfo.distanceOffset));
+		root.Add("gridx", textureInfo.gridX);
+		root.Add("gridy", textureInfo.gridY);
+		root.Add("partial", textureInfo.partial);
+		root.Add("path", ToPortableRelativePath(textureInfo.texturePath, basePath));
+		root.Add("pixelbounds", BuildFbxGlobalPixelBoundsJson(textureInfo.pixelBounds));
+		root.Add("ring", static_cast<int>(textureInfo.ring));
+		root.Add("sourcetexturesize", static_cast<int>(textureInfo.sourceTextureSize));
+		root.Add("outputtexturesize", static_cast<int>(textureInfo.outputTextureSize));
+		root.Add("tilerange", BuildFbxTileRangeJson(textureInfo.tileRange));
+		root.Add("tilesize", static_cast<int>(textureInfo.tileSize));
+		root.Add("zoom", static_cast<int>(textureInfo.zoom));
+		root.Add("version", 1);
+		return root;
+	}
+
+	std::string BuildFbxTextureMetadataJson(
+		const FbxTextureOutputInfo& textureInfo,
+		const std::filesystem::path& basePath)
+	{
+		return BuildFbxTextureJson(textureInfo, basePath).Format(
+			CPLJSONObject::PrettyFormat::Plain);
+	}
+
+	std::string BuildFbxManifestJson(
+		const std::vector<FbxTextureOutputInfo>& textureInfos,
+		const std::filesystem::path& basePath,
+		const std::string& meshMode,
+		uint32_t textureSize,
+		uint32_t zoom,
+		uint32_t tileSize)
+	{
+		CPLJSONArray textures;
+		for (const FbxTextureOutputInfo& textureInfo : textureInfos)
+		{
+			textures.Add(BuildFbxTextureJson(textureInfo, basePath));
+		}
+
+		CPLJSONObject root;
+		root.Add("meshmode", meshMode);
+		root.Add("texturecount", static_cast<int>(textureInfos.size()));
+		root.Add("textures", textures);
+		root.Add("texturesize", static_cast<int>(textureSize));
+		root.Add("tilesize", static_cast<int>(tileSize));
+		root.Add("version", 1);
+		root.Add("zoom", static_cast<int>(zoom));
+		return root.Format(CPLJSONObject::PrettyFormat::Plain);
+	}
+
+	bool IsFbxTextureCacheReady(
+		const std::filesystem::path& texturePath,
+		const std::filesystem::path& metadataPath,
+		const std::string& expectedMetadata)
+	{
+		if (!IsValidImageFile(texturePath))
+		{
+			return false;
+		}
+
+		std::string actualMetadata;
+		return ReadTextFile(metadataPath, actualMetadata) &&
+			actualMetadata == expectedMetadata;
+	}
+
+	uint32_t SelectFbxDistanceOffset(
+		double distanceCm,
+		const std::vector<DownTool::FbxTextureDistanceOffset>& offsets)
+	{
+		uint32_t selectedOffset = 0;
+		double selectedDistance = -std::numeric_limits<double>::infinity();
+		for (const DownTool::FbxTextureDistanceOffset& offset : offsets)
+		{
+			if (offset.Distance <= distanceCm && offset.Distance >= selectedDistance)
+			{
+				selectedDistance = offset.Distance;
+				selectedOffset = offset.Offset;
+			}
+		}
+
+		return selectedOffset;
+	}
+
+	void FillFbxTextureFromTile(
+		cv::Mat& textureImage,
+		const cv::Mat& sourceTileImage,
+		const FbxGlobalPixelBounds& textureBounds,
+		const FbxGlobalPixelBounds& sourceTileBounds,
+		const FbxGlobalPixelBounds& requestBounds,
+		uint32_t tileSize)
+	{
+		const double overlapMinX = std::max({
+			textureBounds.minX, sourceTileBounds.minX, requestBounds.minX });
+		const double overlapMinY = std::max({
+			textureBounds.minY, sourceTileBounds.minY, requestBounds.minY });
+		const double overlapMaxX = std::min({
+			textureBounds.maxX, sourceTileBounds.maxX, requestBounds.maxX });
+		const double overlapMaxY = std::min({
+			textureBounds.maxY, sourceTileBounds.maxY, requestBounds.maxY });
+		if (overlapMaxX <= overlapMinX || overlapMaxY <= overlapMinY)
+		{
+			return;
+		}
+
+		const int destX0 = std::clamp(
+			static_cast<int>(std::floor(overlapMinX - textureBounds.minX)),
+			0,
+			textureImage.cols - 1);
+		const int destY0 = std::clamp(
+			static_cast<int>(std::floor(overlapMinY - textureBounds.minY)),
+			0,
+			textureImage.rows - 1);
+		const int destX1 = std::clamp(
+			static_cast<int>(std::ceil(overlapMaxX - textureBounds.minX)),
+			destX0 + 1,
+			textureImage.cols);
+		const int destY1 = std::clamp(
+			static_cast<int>(std::ceil(overlapMaxY - textureBounds.minY)),
+			destY0 + 1,
+			textureImage.rows);
+
+		const int sourceX0 = std::clamp(
+			static_cast<int>(std::floor(overlapMinX - sourceTileBounds.minX)),
+			0,
+			static_cast<int>(tileSize) - 1);
+		const int sourceY0 = std::clamp(
+			static_cast<int>(std::floor(overlapMinY - sourceTileBounds.minY)),
+			0,
+			static_cast<int>(tileSize) - 1);
+		const int sourceX1 = std::clamp(
+			static_cast<int>(std::ceil(overlapMaxX - sourceTileBounds.minX)),
+			sourceX0 + 1,
+			static_cast<int>(tileSize));
+		const int sourceY1 = std::clamp(
+			static_cast<int>(std::ceil(overlapMaxY - sourceTileBounds.minY)),
+			sourceY0 + 1,
+			static_cast<int>(tileSize));
+
+		const cv::Mat sourceRoi = sourceTileImage(cv::Rect(
+			sourceX0,
+			sourceY0,
+			sourceX1 - sourceX0,
+			sourceY1 - sourceY0));
+		cv::Mat targetRoi = textureImage(cv::Rect(
+			destX0,
+			destY0,
+			destX1 - destX0,
+			destY1 - destY0));
+		const cv::InterpolationFlags interpolation =
+			(sourceRoi.cols > targetRoi.cols || sourceRoi.rows > targetRoi.rows) ?
+			cv::INTER_AREA : cv::INTER_LINEAR;
+		cv::resize(sourceRoi, targetRoi, targetRoi.size(), 0., 0., interpolation);
+	}
+
+	bool WriteFbxTextureImage(
+		const FbxTextureOutputInfo& textureInfo,
+		const FbxGlobalPixelBounds& requestBounds,
+		uint32_t tileSize,
+		const std::function<cv::Mat(const DownTool::Tile&)>& readTileImage)
+	{
+		const int textureSize = static_cast<int>(textureInfo.sourceTextureSize);
+		cv::Mat textureImage(textureSize, textureSize, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+		bool hasPixel = false;
+
+		for (uint32_t x = textureInfo.tileRange.MinTile.X;
+			x <= textureInfo.tileRange.MaxTile.X; x++)
+		{
+			for (uint32_t y = textureInfo.tileRange.MinTile.Y;
+				y <= textureInfo.tileRange.MaxTile.Y; y++)
+			{
+				const DownTool::Tile sourceTile(x, y, textureInfo.zoom);
+				const cv::Mat sourceTileImage = readTileImage(sourceTile);
+				if (sourceTileImage.empty())
+				{
+					return false;
+				}
+
+				const double tileMinX = static_cast<double>(x) * tileSize;
+				const double tileMinY = static_cast<double>(y) * tileSize;
+				const FbxGlobalPixelBounds sourceTileBounds{
+					tileMinX,
+					tileMinY,
+					tileMinX + tileSize,
+					tileMinY + tileSize
+				};
+				FillFbxTextureFromTile(
+					textureImage,
+					sourceTileImage,
+					textureInfo.pixelBounds,
+					sourceTileBounds,
+					requestBounds,
+					tileSize);
+				hasPixel = true;
+			}
+		}
+
+		if (!hasPixel)
+		{
+			return false;
+		}
+
+		const cv::Mat outputImage =
+			textureInfo.outputTextureSize == textureInfo.sourceTextureSize ?
+			textureImage :
+			ResizeImageToSize(
+				textureImage,
+				static_cast<int>(textureInfo.outputTextureSize),
+				static_cast<int>(textureInfo.outputTextureSize));
+		return WriteImage(textureInfo.texturePath, outputImage);
+	}
+
+	std::vector<FbxMeshVertex> BuildFbxMeshVertices(
+		const FbxTextureOutputInfo& textureInfo,
+		const FbxCoordinateContext& coordinateContext,
+		DownTool::FbxPlanetShape shape,
+		uint32_t subdivision)
+	{
+		const uint32_t gridCount =
+			shape == DownTool::FbxPlanetShape::Sphere ?
+			std::max(1u, subdivision) : 1u;
+		std::vector<FbxMeshVertex> vertices;
+		vertices.reserve(static_cast<size_t>(gridCount + 1) * (gridCount + 1));
+
+		for (uint32_t y = 0; y <= gridCount; y++)
+		{
+			const double imageV = static_cast<double>(y) / gridCount;
+			const double fbxV = ConvertImageVToFbxV(imageV);
+			const double lat =
+				textureInfo.bounds.north +
+				(textureInfo.bounds.south - textureInfo.bounds.north) * imageV;
+			for (uint32_t x = 0; x <= gridCount; x++)
+			{
+				const double u = static_cast<double>(x) / gridCount;
+				const double lon =
+					textureInfo.bounds.west +
+					(textureInfo.bounds.east - textureInfo.bounds.west) * u;
+				const DownTool::LonLat lonLat(lon, lat);
+				if (shape == DownTool::FbxPlanetShape::Sphere)
+				{
+					vertices.push_back(MakeSphereVertex(lonLat, coordinateContext, u, fbxV));
+				}
+				else
+				{
+					vertices.push_back(MakePlaneVertex(lonLat, coordinateContext, u, fbxV));
+				}
+			}
+		}
+
+		return vertices;
+	}
+
+	std::vector<uint32_t> BuildFbxMeshIndices(uint32_t subdivision)
+	{
+		const uint32_t gridCount = std::max(1u, subdivision);
+		std::vector<uint32_t> indices;
+		indices.reserve(static_cast<size_t>(gridCount) * gridCount * 6);
+		const uint32_t stride = gridCount + 1;
+		for (uint32_t y = 0; y < gridCount; y++)
+		{
+			for (uint32_t x = 0; x < gridCount; x++)
+			{
+				const uint32_t northWest = y * stride + x;
+				const uint32_t northEast = northWest + 1;
+				const uint32_t southWest = northWest + stride;
+				const uint32_t southEast = southWest + 1;
+				indices.push_back(northWest);
+				indices.push_back(southWest);
+				indices.push_back(northEast);
+				indices.push_back(northEast);
+				indices.push_back(southWest);
+				indices.push_back(southEast);
+			}
+		}
+
+		return indices;
+	}
+
+	aiMesh* CreateAssimpMesh(const FbxMeshData& meshData, uint32_t materialIndex)
+	{
+		aiMesh* mesh = new aiMesh();
+		mesh->mName = aiString(meshData.name);
+		mesh->mPrimitiveTypes = aiPrimitiveType_TRIANGLE;
+		mesh->mMaterialIndex = materialIndex;
+		mesh->mNumVertices = static_cast<unsigned int>(meshData.vertices.size());
+		mesh->mVertices = new aiVector3D[mesh->mNumVertices];
+		mesh->mTextureCoords[0] = new aiVector3D[mesh->mNumVertices];
+		mesh->mNumUVComponents[0] = 2;
+
+		for (unsigned int index = 0; index < mesh->mNumVertices; index++)
+		{
+			const FbxMeshVertex& vertex = meshData.vertices[index];
+			mesh->mVertices[index] = aiVector3D(
+				static_cast<float>(vertex.x),
+				static_cast<float>(vertex.y),
+				static_cast<float>(vertex.z));
+			mesh->mTextureCoords[0][index] = aiVector3D(
+				static_cast<float>(vertex.u),
+				static_cast<float>(vertex.v),
+				0.f);
+		}
+
+		mesh->mNumFaces =
+			static_cast<unsigned int>(meshData.indices.size() / 3);
+		mesh->mFaces = new aiFace[mesh->mNumFaces];
+		for (unsigned int faceIndex = 0; faceIndex < mesh->mNumFaces; faceIndex++)
+		{
+			aiFace& face = mesh->mFaces[faceIndex];
+			face.mNumIndices = 3;
+			face.mIndices = new unsigned int[3];
+			for (unsigned int index = 0; index < 3; index++)
+			{
+				face.mIndices[index] =
+					meshData.indices[static_cast<size_t>(faceIndex) * 3 + index];
+			}
+		}
+
+		return mesh;
+	}
+
+	aiMaterial* CreateAssimpMaterial(
+		const FbxMeshData& meshData,
+		const std::filesystem::path& fbxPath)
+	{
+		aiMaterial* material = new aiMaterial();
+		const aiString materialName(meshData.name);
+		material->AddProperty(&materialName, AI_MATKEY_NAME);
+
+		const std::string texturePath = ToPortableRelativePath(
+			meshData.texturePath, fbxPath.parent_path());
+		const aiString diffuseTexture(texturePath);
+		material->AddProperty(&diffuseTexture, AI_MATKEY_TEXTURE_DIFFUSE(0));
+
+		aiColor3D diffuseColor(1.f, 1.f, 1.f);
+		material->AddProperty(&diffuseColor, 1, AI_MATKEY_COLOR_DIFFUSE);
+		return material;
+	}
+
+	void SetAssimpFbxGlobalSettings(aiScene& scene)
+	{
+		scene.mMetaData = aiMetadata::Alloc(10);
+		scene.mMetaData->Set(0, "UpAxis", int32_t{ 2 });
+		scene.mMetaData->Set(1, "UpAxisSign", int32_t{ 1 });
+		scene.mMetaData->Set(2, "FrontAxis", int32_t{ 1 });
+		scene.mMetaData->Set(3, "FrontAxisSign", int32_t{ -1 });
+		scene.mMetaData->Set(4, "CoordAxis", int32_t{ 0 });
+		scene.mMetaData->Set(5, "CoordAxisSign", int32_t{ 1 });
+		scene.mMetaData->Set(6, "OriginalUpAxis", int32_t{ 2 });
+		scene.mMetaData->Set(7, "OriginalUpAxisSign", int32_t{ 1 });
+		scene.mMetaData->Set(8, "UnitScaleFactor", 1.);
+		scene.mMetaData->Set(9, "OriginalUnitScaleFactor", 1.);
+	}
+
+	bool ExportAssimpFbx(
+		const std::vector<FbxMeshData>& meshDatas,
+		const std::filesystem::path& fbxPath)
+	{
+		if (meshDatas.empty())
+		{
+			return false;
+		}
+
+		aiScene scene;
+		SetAssimpFbxGlobalSettings(scene);
+		scene.mRootNode = new aiNode("RootNode");
+		scene.mNumMeshes = static_cast<unsigned int>(meshDatas.size());
+		scene.mMeshes = new aiMesh * [scene.mNumMeshes];
+		scene.mNumMaterials = scene.mNumMeshes;
+		scene.mMaterials = new aiMaterial * [scene.mNumMaterials];
+
+		scene.mRootNode->mNumChildren = scene.mNumMeshes;
+		scene.mRootNode->mChildren = new aiNode * [scene.mRootNode->mNumChildren];
+
+		for (unsigned int index = 0; index < scene.mNumMeshes; index++)
+		{
+			const FbxMeshData& meshData = meshDatas[index];
+			scene.mMeshes[index] = CreateAssimpMesh(meshData, index);
+			scene.mMaterials[index] = CreateAssimpMaterial(meshData, fbxPath);
+
+			aiNode* childNode = new aiNode(meshData.name);
+			childNode->mParent = scene.mRootNode;
+			childNode->mNumMeshes = 1;
+			childNode->mMeshes = new unsigned int[1];
+			childNode->mMeshes[0] = index;
+			scene.mRootNode->mChildren[index] = childNode;
+		}
+
+		Assimp::Exporter exporter;
+		const aiExportDataBlob* blob = exporter.ExportToBlob(&scene, "fbx");
+		if (!blob || !blob->data || blob->size == 0)
+		{
+			fmt::print("FBX 导出失败：{}\n", exporter.GetErrorString());
+			return false;
+		}
+
+		if (!WriteBinaryFile(fbxPath, blob->data, blob->size))
+		{
+			fmt::print("FBX 文件写入失败：{}\n", PathToUtf8String(fbxPath));
+			return false;
+		}
+
+		return true;
 	}
 
 	MergedImageOutputSize CalculateMergedImageOutputSize(
@@ -1099,7 +1867,8 @@ void DownTool::DownToolBase::StartDown()
 		fmt::print("下载结束后仍有 {} 个瓦片不可用，请查看上面的缓存检测明细。\n",
 			failedTiles.size());
 	}
-	else if (!bStop && (PostProcessEnabled || PostProcessMergedImageEnabled))
+	else if (!bStop && (PostProcessEnabled || PostProcessMergedImageEnabled ||
+		PostProcessFbxEnabled))
 	{
 		RunPostProcess();
 	}
@@ -1536,6 +2305,16 @@ std::filesystem::path DownTool::DownToolBase::GetPostProcessMergedImagePath() co
 	}
 
 	return GetPostProcessRootPath() / "merged.png";
+}
+
+std::filesystem::path DownTool::DownToolBase::GetFbxRootPath() const
+{
+	if (!FbxOutputPath.empty())
+	{
+		return std::filesystem::u8path(FbxOutputPath);
+	}
+
+	return GetPostProcessRootPath();
 }
 
 bool DownTool::DownToolBase::QueueTileDownload(
@@ -1992,14 +2771,18 @@ void DownTool::DownToolBase::RunPostProcess()
 
 	fmt::print("开始瓦片后处理，输出目录：{}\n", PathToUtf8String(GetPostProcessRootPath()));
 	bool maxZoomTilesReady = false;
-	if (PostProcessEnabled)
+	if (PostProcessEnabled || PostProcessFbxEnabled)
 	{
 		auto phaseStartTime = std::chrono::steady_clock::now();
 		maxZoomTilesReady = GeneratePostProcessMaxZoomTiles(targetTiles);
 		fmt::print("最高层级后处理耗时：{:.2f}s\n", SecondsSince(phaseStartTime));
+	}
+
+	if (PostProcessEnabled)
+	{
 		if (maxZoomTilesReady)
 		{
-			phaseStartTime = std::chrono::steady_clock::now();
+			auto phaseStartTime = std::chrono::steady_clock::now();
 			GeneratePostProcessLowerZoomTiles(targetTiles);
 			fmt::print("低层级金字塔后处理耗时：{:.2f}s\n", SecondsSince(phaseStartTime));
 			phaseStartTime = std::chrono::steady_clock::now();
@@ -2024,6 +2807,16 @@ void DownTool::DownToolBase::RunPostProcess()
 			fmt::print("后处理警告：合并大图生成失败或不完整。\n");
 		}
 		fmt::print("合并大图后处理耗时：{:.2f}s\n", SecondsSince(phaseStartTime));
+	}
+
+	if (PostProcessFbxEnabled)
+	{
+		const auto phaseStartTime = std::chrono::steady_clock::now();
+		if (!GeneratePostProcessFbx(maxZoomTilesReady))
+		{
+			fmt::print("后处理警告：FBX 导出失败或不完整。\n");
+		}
+		fmt::print("FBX 后处理耗时：{:.2f}s\n", SecondsSince(phaseStartTime));
 	}
 
 	fmt::print("瓦片后处理完成，总耗时：{:.2f}s\n", SecondsSince(postProcessStartTime));
@@ -2665,7 +3458,8 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 				return;
 			}
 
-			const bool useCachedTile = isSampleTileFullyCovered(tile);
+			const bool useCachedTile =
+				postProcessTilesAvailable || isSampleTileFullyCovered(tile);
 			const cv::Mat tileImage = useCachedTile ?
 				ReadBgraTile(GetPostProcessTileFilePath(tile), TileSize) :
 				ReadPostProcessTileRegion(tile, Zoom, tileSize, tileSize);
@@ -2743,6 +3537,348 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 	}
 	fmt::print("合并大图函数总耗时：{:.2f}s\n", SecondsSince(totalStartTime));
 	return writeSuccess;
+}
+
+bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailable) const
+{
+	const auto totalStartTime = std::chrono::steady_clock::now();
+	if (!postProcessTilesAvailable)
+	{
+		fmt::print("FBX 导出失败：最高层级后处理瓦片不可用。\n");
+		return false;
+	}
+
+	if (!IsPowerOfTwo(FbxTextureSize) || FbxTextureSize > 16384 ||
+		FbxTextureSize < TileSize || FbxTextureSize % TileSize != 0)
+	{
+		fmt::print(
+			"FBX 导出失败：贴图尺寸必须是 2 的次幂、不能超过 16384，且必须是瓦片尺寸的整数倍。\n");
+		return false;
+	}
+
+	Tile centerTile;
+	double centerTilePixelX = 0.;
+	double centerTilePixelY = 0.;
+	if (!TryGetTilePixelForLonLat(
+		CenterLonLat, Zoom, centerTile, centerTilePixelX, centerTilePixelY))
+	{
+		fmt::print("FBX 导出失败：无法把项目中心转换为瓦片像素坐标。\n");
+		return false;
+	}
+
+	const double tileSize = static_cast<double>(TileSize);
+	const double centerPixelX = static_cast<double>(centerTile.X) * tileSize +
+		centerTilePixelX;
+	const double centerPixelY = static_cast<double>(centerTile.Y) * tileSize +
+		centerTilePixelY;
+	const FbxGlobalPixelBounds requestBounds{
+		static_cast<double>(MinTile.X) * tileSize,
+		static_cast<double>(MinTile.Y) * tileSize,
+		(static_cast<double>(MaxTile.X) + 1.) * tileSize,
+		(static_cast<double>(MaxTile.Y) + 1.) * tileSize
+	};
+
+	const double textureSize = static_cast<double>(FbxTextureSize);
+	const int32_t minGridX = static_cast<int32_t>(
+		std::floor((requestBounds.minX - centerPixelX - textureSize / 2.) /
+			textureSize)) - 1;
+	const int32_t maxGridX = static_cast<int32_t>(
+		std::ceil((requestBounds.maxX - centerPixelX + textureSize / 2.) /
+			textureSize)) + 1;
+	const int32_t minGridY = static_cast<int32_t>(
+		std::floor((requestBounds.minY - centerPixelY - textureSize / 2.) /
+			textureSize)) - 1;
+	const int32_t maxGridY = static_cast<int32_t>(
+		std::ceil((requestBounds.maxY - centerPixelY + textureSize / 2.) /
+			textureSize)) + 1;
+
+	const std::filesystem::path outputRoot = GetFbxRootPath();
+	const std::filesystem::path textureRoot =
+		outputRoot / "textures" / "fbx" / std::to_string(FbxTextureSize);
+	const FbxCoordinateContext coordinateContext =
+		BuildFbxCoordinateContext(CenterLonLat);
+
+	std::vector<FbxTextureOutputInfo> textureInfos;
+	textureInfos.reserve(static_cast<size_t>(std::max(0, maxGridX - minGridX + 1)) *
+		static_cast<size_t>(std::max(0, maxGridY - minGridY + 1)));
+
+	for (int32_t gridY = minGridY; gridY <= maxGridY; gridY++)
+	{
+		for (int32_t gridX = minGridX; gridX <= maxGridX; gridX++)
+		{
+			const double minPixelX =
+				centerPixelX + static_cast<double>(gridX) * textureSize -
+				textureSize / 2.;
+			const double minPixelY =
+				centerPixelY + static_cast<double>(gridY) * textureSize -
+				textureSize / 2.;
+			const FbxGlobalPixelBounds textureBounds{
+				minPixelX,
+				minPixelY,
+				minPixelX + textureSize,
+				minPixelY + textureSize
+			};
+			if (textureBounds.maxX <= requestBounds.minX ||
+				textureBounds.maxY <= requestBounds.minY ||
+				textureBounds.minX >= requestBounds.maxX ||
+				textureBounds.minY >= requestBounds.maxY)
+			{
+				continue;
+			}
+
+			Tile northWestTile;
+			double northWestPixelX = 0.;
+			double northWestPixelY = 0.;
+			northWestTile = PixelBoundsToTile(
+				textureBounds.minX, textureBounds.minY, Zoom, TileSize);
+			northWestPixelX = textureBounds.minX -
+				static_cast<double>(northWestTile.X) * tileSize;
+			northWestPixelY = textureBounds.minY -
+				static_cast<double>(northWestTile.Y) * tileSize;
+
+			Tile southEastTile;
+			double southEastPixelX = 0.;
+			double southEastPixelY = 0.;
+			southEastTile = PixelBoundsToTile(
+				std::nextafter(textureBounds.maxX, textureBounds.minX),
+				std::nextafter(textureBounds.maxY, textureBounds.minY),
+				Zoom,
+				TileSize);
+			southEastPixelX = textureBounds.maxX -
+				static_cast<double>(southEastTile.X) * tileSize;
+			southEastPixelY = textureBounds.maxY -
+				static_cast<double>(southEastTile.Y) * tileSize;
+
+			LonLat northWestLonLat;
+			LonLat southEastLonLat;
+			if (!TryGetLonLatForTilePixel(
+				northWestTile,
+				northWestPixelX,
+				northWestPixelY,
+				northWestLonLat) ||
+				!TryGetLonLatForTilePixel(
+					southEastTile,
+					southEastPixelX,
+					southEastPixelY,
+					southEastLonLat))
+			{
+				continue;
+			}
+
+			const double centerMercatorX =
+				(LongitudeToWebMercatorX(northWestLonLat.lon) +
+					LongitudeToWebMercatorX(southEastLonLat.lon)) /
+				2.;
+			const double centerMercatorY =
+				(LatitudeToWebMercatorY(northWestLonLat.lat) +
+					LatitudeToWebMercatorY(southEastLonLat.lat)) /
+				2.;
+			const LonLat textureCenterLonLat =
+				WebMercatorToLonLat(centerMercatorX, centerMercatorY);
+			const FbxMeshVertex textureCenterPosition =
+				MakePlaneVertex(textureCenterLonLat, coordinateContext, 0.5, 0.5);
+			const double distanceCm = std::hypot(
+				textureCenterPosition.x, textureCenterPosition.y);
+			const uint32_t distanceOffset =
+				SelectFbxDistanceOffset(distanceCm, FbxTextureDistanceOffsets);
+			const uint32_t outputTextureSize =
+				CalculateFbxOutputTextureSize(FbxTextureSize, distanceOffset);
+			const std::string textureName = MakeFbxTextureName(gridX, gridY);
+			const uint32_t minTileX = static_cast<uint32_t>(std::max<double>(
+				static_cast<double>(MinTile.X),
+				std::floor(textureBounds.minX / tileSize)));
+			const uint32_t minTileY = static_cast<uint32_t>(std::max<double>(
+				static_cast<double>(MinTile.Y),
+				std::floor(textureBounds.minY / tileSize)));
+			const uint32_t maxTileX = static_cast<uint32_t>(std::min<double>(
+				static_cast<double>(MaxTile.X),
+				std::floor(std::nextafter(textureBounds.maxX, textureBounds.minX) /
+					tileSize)));
+			const uint32_t maxTileY = static_cast<uint32_t>(std::min<double>(
+				static_cast<double>(MaxTile.Y),
+				std::floor(std::nextafter(textureBounds.maxY, textureBounds.minY) /
+					tileSize)));
+
+			FbxTextureOutputInfo textureInfo;
+			textureInfo.gridX = gridX;
+			textureInfo.gridY = gridY;
+			textureInfo.ring = CalculateRing(gridX, gridY);
+			textureInfo.zoom = Zoom;
+			textureInfo.tileSize = TileSize;
+			textureInfo.sourceTextureSize = FbxTextureSize;
+			textureInfo.outputTextureSize = outputTextureSize;
+			textureInfo.distanceOffset = distanceOffset;
+			textureInfo.centerTileX = centerTile.X;
+			textureInfo.centerTileY = centerTile.Y;
+			textureInfo.centerPixelX = centerPixelX;
+			textureInfo.centerPixelY = centerPixelY;
+			textureInfo.distanceCm = distanceCm;
+			textureInfo.partial =
+				textureBounds.minX < requestBounds.minX ||
+				textureBounds.minY < requestBounds.minY ||
+				textureBounds.maxX > requestBounds.maxX ||
+				textureBounds.maxY > requestBounds.maxY;
+			textureInfo.pixelBounds = textureBounds;
+			textureInfo.tileRange = TileRange(
+				Tile(minTileX, minTileY, Zoom),
+				Tile(maxTileX, maxTileY, Zoom));
+			textureInfo.bounds = BoundsFromCorners(northWestLonLat, southEastLonLat);
+			textureInfo.texturePath = textureRoot / fmt::format("{}.png", textureName);
+			textureInfo.metadataPath = textureRoot / fmt::format("{}.json", textureName);
+			textureInfos.push_back(std::move(textureInfo));
+		}
+	}
+
+	std::sort(
+		textureInfos.begin(),
+		textureInfos.end(),
+		[](const FbxTextureOutputInfo& left, const FbxTextureOutputInfo& right)
+		{
+			if (left.ring != right.ring)
+			{
+				return left.ring < right.ring;
+			}
+			if (left.gridY != right.gridY)
+			{
+				return left.gridY < right.gridY;
+			}
+			return left.gridX < right.gridX;
+		});
+
+	if (textureInfos.empty())
+	{
+		fmt::print("FBX 导出失败：没有任何贴图与下载范围相交。\n");
+		return false;
+	}
+
+	fmt::print("FBX 贴图生成：{} 张，贴图尺寸 {}，输出目录 {}\n",
+		textureInfos.size(),
+		FbxTextureSize,
+		PathToUtf8String(textureRoot));
+
+	auto readTileImage = [&](const Tile& tile)
+	{
+		return ReadBgraTile(GetPostProcessTileFilePath(tile), TileSize);
+	};
+
+	std::atomic_uint32_t processedCount = 0;
+	std::atomic_uint32_t skippedCount = 0;
+	std::atomic_uint32_t failedCount = 0;
+	const uint32_t fbxTextureWorkerCount =
+		GetFbxTextureWorkerCount(FbxTextureSize, MaxDownQueue);
+	fmt::print("FBX 贴图生成 worker：{}\n", fbxTextureWorkerCount);
+	ParallelForIndex(
+		textureInfos.size(),
+		fbxTextureWorkerCount,
+		[&](size_t index)
+		{
+			const FbxTextureOutputInfo& textureInfo = textureInfos[index];
+			const std::string metadata =
+				BuildFbxTextureMetadataJson(textureInfo, textureRoot);
+			bool success = false;
+			if (IsFbxTextureCacheReady(
+				textureInfo.texturePath, textureInfo.metadataPath, metadata))
+			{
+				success = true;
+				skippedCount.fetch_add(1, std::memory_order_relaxed);
+			}
+			else
+			{
+				success = WriteFbxTextureImage(
+					textureInfo,
+					requestBounds,
+					TileSize,
+					readTileImage);
+				if (success && !WriteTextFile(textureInfo.metadataPath, metadata))
+				{
+					success = false;
+				}
+			}
+
+			if (!success)
+			{
+				failedCount.fetch_add(1, std::memory_order_relaxed);
+			}
+			const uint32_t currentCount =
+				processedCount.fetch_add(1, std::memory_order_relaxed) + 1;
+			if (currentCount % 64 == 0 || currentCount == textureInfos.size())
+			{
+				fmt::print("\rFBX 贴图生成: {}/{}",
+					currentCount,
+					textureInfos.size());
+			}
+		});
+	fmt::print("\rFBX 贴图生成: {}/{}，跳过 {}，失败 {}\n",
+		textureInfos.size(),
+		textureInfos.size(),
+		skippedCount.load(),
+		failedCount.load());
+	if (failedCount.load() != 0)
+	{
+		return false;
+	}
+
+	if (!WriteTextFile(
+		textureRoot / "manifest.json",
+		BuildFbxManifestJson(
+			textureInfos,
+			textureRoot,
+			FbxShape == FbxPlanetShape::Plane ? "plane" :
+				FbxShape == FbxPlanetShape::Sphere ? "sphere" : "both",
+			FbxTextureSize,
+			Zoom,
+			TileSize)))
+	{
+		fmt::print("FBX 警告：manifest.json 写入失败。\n");
+	}
+
+	auto buildMeshDatas = [&](FbxPlanetShape shape)
+	{
+		const uint32_t subdivision =
+			shape == FbxPlanetShape::Sphere ? FbxMeshSubdivision : 1u;
+		std::vector<FbxMeshData> meshDatas;
+		meshDatas.reserve(textureInfos.size());
+		const std::vector<uint32_t> indices = BuildFbxMeshIndices(subdivision);
+		for (const FbxTextureOutputInfo& textureInfo : textureInfos)
+		{
+			FbxMeshData meshData;
+			meshData.name = MakeFbxMeshName(textureInfo.gridX, textureInfo.gridY);
+			meshData.texturePath = textureInfo.texturePath;
+			meshData.vertices = BuildFbxMeshVertices(
+				textureInfo,
+				coordinateContext,
+				shape,
+				subdivision);
+			meshData.indices = indices;
+			meshDatas.push_back(std::move(meshData));
+		}
+		return meshDatas;
+	};
+
+	bool meshSuccess = true;
+	if (FbxShape == FbxPlanetShape::Plane || FbxShape == FbxPlanetShape::Both)
+	{
+		const std::filesystem::path planePath = outputRoot / "mesh" / "plane" / "tiles.fbx";
+		const auto phaseStartTime = std::chrono::steady_clock::now();
+		meshSuccess = ExportAssimpFbx(buildMeshDatas(FbxPlanetShape::Plane), planePath) &&
+			meshSuccess;
+		fmt::print("Plane FBX 输出：{}，耗时 {:.2f}s\n",
+			PathToUtf8String(planePath),
+			SecondsSince(phaseStartTime));
+	}
+	if (FbxShape == FbxPlanetShape::Sphere || FbxShape == FbxPlanetShape::Both)
+	{
+		const std::filesystem::path spherePath = outputRoot / "mesh" / "sphere" / "tiles.fbx";
+		const auto phaseStartTime = std::chrono::steady_clock::now();
+		meshSuccess = ExportAssimpFbx(buildMeshDatas(FbxPlanetShape::Sphere), spherePath) &&
+			meshSuccess;
+		fmt::print("Sphere FBX 输出：{}，耗时 {:.2f}s\n",
+			PathToUtf8String(spherePath),
+			SecondsSince(phaseStartTime));
+	}
+
+	fmt::print("FBX 后处理总耗时：{:.2f}s\n", SecondsSince(totalStartTime));
+	return meshSuccess;
 }
 
 bool DownTool::DownToolBase::WritePostProcessTileFromSourceZoom(

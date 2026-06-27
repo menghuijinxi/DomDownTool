@@ -74,13 +74,9 @@ find_package(fmt CONFIG REQUIRED)
 find_package(CURL REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(assimp CONFIG REQUIRED)
 
-# 将源代码添加到此项目的可执行文件。
-aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR}/src DIR_SRCS)
-add_executable (DomDownTool ${DIR_SRCS})
-target_include_directories(DomDownTool PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
-target_link_libraries(DomDownTool PRIVATE
+set(DOMDOWNTOOL_LIBRARIES
     httplib::httplib
     GDAL::GDAL
     LibXml2::LibXml2
@@ -88,14 +84,55 @@ target_link_libraries(DomDownTool PRIVATE
     fmt::fmt-header-only
     CURL::libcurl
     ${OpenCV_LIBS}
-    OpenSSL::Crypto)
+    OpenSSL::Crypto
+    assimp::assimp)
+
+file(GLOB DOMDOWNTOOL_CORE_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
+list(REMOVE_ITEM DOMDOWNTOOL_CORE_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
+
+add_library(DomDownToolCore STATIC ${DOMDOWNTOOL_CORE_SOURCES})
+target_include_directories(DomDownToolCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(DomDownToolCore PUBLIC ${DOMDOWNTOOL_LIBRARIES})
+
+# 将源代码添加到此项目的可执行文件。
+add_executable(DomDownTool ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
+target_link_libraries(DomDownTool PRIVATE DomDownToolCore)
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
+  set_property(TARGET DomDownToolCore PROPERTY CXX_STANDARD 20)
   set_property(TARGET DomDownTool PROPERTY CXX_STANDARD 20)
 endif()
 
 if(MSVC)
+  target_compile_definitions(DomDownToolCore PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
   target_compile_definitions(DomDownTool PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
-# TODO: 如有需要，请添加测试并安装目标。
+enable_testing()
+
+function(add_domdown_test target_name source_file)
+  add_executable(${target_name} ${source_file})
+  target_link_libraries(${target_name} PRIVATE DomDownToolCore)
+  target_compile_definitions(${target_name} PRIVATE
+    DOMDOWNTOOL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  if (CMAKE_VERSION VERSION_GREATER 3.12)
+    set_property(TARGET ${target_name} PROPERTY CXX_STANDARD 20)
+  endif()
+  if(MSVC)
+    target_compile_definitions(${target_name} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+  endif()
+  add_test(NAME ${target_name} COMMAND ${target_name})
+endfunction()
+
+add_domdown_test(PostProcessPyramidTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/PostProcessPyramidTest.cpp)
+add_domdown_test(PostProcessMergedImageTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/PostProcessMergedImageTest.cpp)
+add_domdown_test(PostProcessFbxTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/PostProcessFbxTest.cpp)
+add_domdown_test(RealDataIntegrationTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/RealDataIntegrationTest.cpp)
+add_domdown_test(RealDataFbxIntegrationTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/RealDataFbxIntegrationTest.cpp)

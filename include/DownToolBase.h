@@ -107,6 +107,24 @@ namespace DownTool
 		//合并大图输出路径，空字符串时默认输出到 GetPostProcessRootPath()/merged.png
 		std::string PostProcessMergedImageOutputPath = "";
 
+		//是否在下载完成后生成 FBX 贴图和网格
+		bool PostProcessFbxEnabled = false;
+
+		//FBX 贴图目标边长，必须是 2 的次幂，最大 16384
+		uint32_t FbxTextureSize = 4096;
+
+		//FBX 后处理输出根路径，空字符串时默认输出到 GetPostProcessRootPath()
+		std::string FbxOutputPath = "";
+
+		//FBX 网格形态
+		FbxPlanetShape FbxShape = FbxPlanetShape::Plane;
+
+		//球面网格细分数
+		uint32_t FbxMeshSubdivision = 64;
+
+		//远距离贴图降级参数
+		std::vector<FbxTextureDistanceOffset> FbxTextureDistanceOffsets;
+
 		//瓦片像素大小
 		uint32_t TileSize = 256;
 
@@ -131,6 +149,8 @@ namespace DownTool
 		std::filesystem::path GetPostProcessTileFilePath(const Tile& tile) const;
 
 		std::filesystem::path GetPostProcessMergedImagePath() const;
+
+		std::filesystem::path GetFbxRootPath() const;
 
 		TileCacheState GetTileCacheState(const Tile& tile) const;
 
@@ -182,6 +202,8 @@ namespace DownTool
 			const std::string& phaseName) const;
 
 		bool GeneratePostProcessMergedImage(bool postProcessTilesAvailable) const;
+
+		bool GeneratePostProcessFbx(bool postProcessTilesAvailable) const;
 
 		cv::Mat ReadPostProcessMaxZoomTile(const Tile& targetTile) const;
 
@@ -281,7 +303,7 @@ namespace DownTool
 		//计算下载范围
 		virtual void CalculateDownRange();
 
-        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, TileSize)
+        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTextureDistanceOffsets, TileSize)
 		
 			//停止下载，正在下载的线程会尽快停止下载
 		void StopDown()
