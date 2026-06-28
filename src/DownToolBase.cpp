@@ -55,8 +55,8 @@ namespace
 	struct TileRepairTask
 	{
 		DownTool::Tile childTile;
-		uint32_t childX = 0;
-		uint32_t childY = 0;
+		int32_t childX = 0;
+		int32_t childY = 0;
 	};
 
 	struct TileSample
@@ -106,8 +106,8 @@ namespace
 		uint32_t sourceTextureSize = 4096;
 		uint32_t outputTextureSize = 4096;
 		uint32_t distanceOffset = 0;
-		uint32_t centerTileX = 0;
-		uint32_t centerTileY = 0;
+		int32_t centerTileX = 0;
+		int32_t centerTileY = 0;
 		double centerPixelX = 0.;
 		double centerPixelY = 0.;
 		double distanceCm = 0.;
@@ -324,8 +324,10 @@ namespace
 
 		const uint64_t scale = uint64_t{ 1 } << zoomOffset;
 		return DownTool::Tile(
-			static_cast<uint32_t>(static_cast<uint64_t>(parentTile.X) * scale),
-			static_cast<uint32_t>(static_cast<uint64_t>(parentTile.Y) * scale),
+			static_cast<int32_t>(static_cast<int64_t>(parentTile.X) *
+				static_cast<int64_t>(scale)),
+			static_cast<int32_t>(static_cast<int64_t>(parentTile.Y) *
+				static_cast<int64_t>(scale)),
 			targetZoom);
 	}
 
@@ -364,13 +366,57 @@ namespace
 		return seed ^ (value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2));
 	}
 
+	int32_t FloorDiv(int32_t value, int32_t divisor)
+	{
+		const int32_t quotient = value / divisor;
+		const int32_t remainder = value % divisor;
+		if (remainder != 0 && ((remainder < 0) != (divisor < 0)))
+		{
+			return quotient - 1;
+		}
+
+		return quotient;
+	}
+
+	uint64_t TileRangeCount(int32_t minValue, int32_t maxValue)
+	{
+		if (maxValue < minValue)
+		{
+			return 0;
+		}
+
+		return static_cast<uint64_t>(
+			static_cast<int64_t>(maxValue) - static_cast<int64_t>(minValue) + 1);
+	}
+
+	bool TileInParentRange(
+		const DownTool::Tile& parentTile,
+		const DownTool::Tile& childTile,
+		uint32_t childZoom)
+	{
+		if (childZoom <= parentTile.Zoom || childTile.Zoom != childZoom)
+		{
+			return false;
+		}
+
+		const uint32_t zoomOffset = childZoom - parentTile.Zoom;
+		if (zoomOffset >= 31)
+		{
+			return false;
+		}
+
+		const int32_t scale = static_cast<int32_t>(1u << zoomOffset);
+		return FloorDiv(childTile.X, scale) == parentTile.X &&
+			FloorDiv(childTile.Y, scale) == parentTile.Y;
+	}
+
 	struct TileHash
 	{
 		size_t operator()(const DownTool::Tile& tile) const noexcept
 		{
 			size_t seed = std::hash<uint32_t>{}(tile.Zoom);
-			seed = HashCombine(seed, std::hash<uint32_t>{}(tile.X));
-			seed = HashCombine(seed, std::hash<uint32_t>{}(tile.Y));
+			seed = HashCombine(seed, std::hash<int32_t>{}(tile.X));
+			seed = HashCombine(seed, std::hash<int32_t>{}(tile.Y));
 			return seed;
 		}
 	};
@@ -984,17 +1030,17 @@ namespace
 		uint32_t targetMaxResolution,
 		uint32_t outputWidth,
 		uint32_t outputHeight,
-		uint32_t minTileX,
-		uint32_t minTileY,
-		uint32_t maxTileX,
-		uint32_t maxTileY,
+		int32_t minTileX,
+		int32_t minTileY,
+		int32_t maxTileX,
+		int32_t maxTileY,
 		const std::string& cachePath)
 	{
 		CPLJSONObject tileRange;
-		tileRange.Add("maxx", static_cast<int>(maxTileX));
-		tileRange.Add("maxy", static_cast<int>(maxTileY));
-		tileRange.Add("minx", static_cast<int>(minTileX));
-		tileRange.Add("miny", static_cast<int>(minTileY));
+		tileRange.Add("maxx", maxTileX);
+		tileRange.Add("maxy", maxTileY);
+		tileRange.Add("minx", minTileX);
+		tileRange.Add("miny", minTileY);
 
 		CPLJSONObject root;
 		root.Add("cachePath", cachePath);
@@ -1022,8 +1068,8 @@ namespace
 	CPLJSONObject BuildFbxTileJson(const DownTool::Tile& tile)
 	{
 		CPLJSONObject root;
-		root.Add("x", static_cast<int>(tile.X));
-		root.Add("y", static_cast<int>(tile.Y));
+		root.Add("x", tile.X);
+		root.Add("y", tile.Y);
 		root.Add("z", static_cast<int>(tile.Zoom));
 		return root;
 	}
@@ -1044,8 +1090,8 @@ namespace
 		root.Add("bounds", BuildBoundsJson(textureInfo.bounds));
 		root.Add("centerpixelx", textureInfo.centerPixelX);
 		root.Add("centerpixely", textureInfo.centerPixelY);
-		root.Add("centertilex", static_cast<int>(textureInfo.centerTileX));
-		root.Add("centertiley", static_cast<int>(textureInfo.centerTileY));
+		root.Add("centertilex", textureInfo.centerTileX);
+		root.Add("centertiley", textureInfo.centerTileY);
 		root.Add("distancecm", textureInfo.distanceCm);
 		root.Add("distanceoffset", static_cast<int>(textureInfo.distanceOffset));
 		root.Add("gridx", textureInfo.gridX);
@@ -1210,10 +1256,10 @@ namespace
 		cv::Mat textureImage(textureSize, textureSize, CV_8UC4, cv::Scalar(0, 0, 0, 0));
 		bool hasPixel = false;
 
-		for (uint32_t x = textureInfo.tileRange.MinTile.X;
+		for (int32_t x = textureInfo.tileRange.MinTile.X;
 			x <= textureInfo.tileRange.MaxTile.X; x++)
 		{
-			for (uint32_t y = textureInfo.tileRange.MinTile.Y;
+			for (int32_t y = textureInfo.tileRange.MinTile.Y;
 				y <= textureInfo.tileRange.MaxTile.Y; y++)
 			{
 				const DownTool::Tile sourceTile(x, y, textureInfo.zoom);
@@ -1884,8 +1930,8 @@ void DownTool::DownToolBase::StartDown()
 void DownTool::DownToolBase::BuildTargetTiles(std::vector<Tile>& targetTiles)
 {
 	targetTiles.clear();
-	const uint64_t xCount = static_cast<uint64_t>(MaxTile.X) - MinTile.X + 1;
-	const uint64_t yCount = static_cast<uint64_t>(MaxTile.Y) - MinTile.Y + 1;
+	const uint64_t xCount = TileRangeCount(MinTile.X, MaxTile.X);
+	const uint64_t yCount = TileRangeCount(MinTile.Y, MaxTile.Y);
 	const uint64_t estimatedTileCount = xCount * yCount * (IsTileOffset() ? 4 : 1);
 	targetTiles.reserve(static_cast<size_t>(estimatedTileCount));
 
@@ -1900,19 +1946,19 @@ void DownTool::DownToolBase::BuildTargetTiles(std::vector<Tile>& targetTiles)
 		}
 	};
 
-	for (uint32_t xBase = MinTile.X; xBase <= MaxTile.X; xBase++)
+	for (int32_t xBase = MinTile.X; xBase <= MaxTile.X; xBase++)
 	{
 		if (bStop) break;
-		for (uint32_t yBase = MinTile.Y; yBase <= MaxTile.Y; yBase++)
+		for (int32_t yBase = MinTile.Y; yBase <= MaxTile.Y; yBase++)
 		{
 			if (bStop) break;
 
 			if (IsTileOffset())
 			{
 				const TileRange offsetTiles = GetOffsetTiles(Tile(xBase, yBase, Zoom));
-				for (uint32_t x = offsetTiles.MinTile.X; x <= offsetTiles.MaxTile.X; x++)
+				for (int32_t x = offsetTiles.MinTile.X; x <= offsetTiles.MaxTile.X; x++)
 				{
-					for (uint32_t y = offsetTiles.MinTile.Y; y <= offsetTiles.MaxTile.Y; y++)
+					for (int32_t y = offsetTiles.MinTile.Y; y <= offsetTiles.MaxTile.Y; y++)
 					{
 						addTile(Tile(x, y, Zoom));
 					}
@@ -1929,13 +1975,13 @@ void DownTool::DownToolBase::BuildTargetTiles(std::vector<Tile>& targetTiles)
 void DownTool::DownToolBase::BuildRequestedTiles(std::vector<Tile>& targetTiles) const
 {
 	targetTiles.clear();
-	const uint64_t xCount = static_cast<uint64_t>(MaxTile.X) - MinTile.X + 1;
-	const uint64_t yCount = static_cast<uint64_t>(MaxTile.Y) - MinTile.Y + 1;
+	const uint64_t xCount = TileRangeCount(MinTile.X, MaxTile.X);
+	const uint64_t yCount = TileRangeCount(MinTile.Y, MaxTile.Y);
 	targetTiles.reserve(static_cast<size_t>(xCount * yCount));
 
-	for (uint32_t x = MinTile.X; x <= MaxTile.X; x++)
+	for (int32_t x = MinTile.X; x <= MaxTile.X; x++)
 	{
-		for (uint32_t y = MinTile.Y; y <= MaxTile.Y; y++)
+		for (int32_t y = MinTile.Y; y <= MaxTile.Y; y++)
 		{
 			targetTiles.emplace_back(x, y, Zoom);
 		}
@@ -1958,17 +2004,18 @@ void DownTool::DownToolBase::BuildRequestedTilesAtZoom(
 	}
 
 	const uint64_t scale = uint64_t{ 1 } << zoomOffset;
-	const uint32_t minX = static_cast<uint32_t>(static_cast<uint64_t>(MinTile.X) / scale);
-	const uint32_t maxX = static_cast<uint32_t>(static_cast<uint64_t>(MaxTile.X) / scale);
-	const uint32_t minY = static_cast<uint32_t>(static_cast<uint64_t>(MinTile.Y) / scale);
-	const uint32_t maxY = static_cast<uint32_t>(static_cast<uint64_t>(MaxTile.Y) / scale);
-	const uint64_t xCount = static_cast<uint64_t>(maxX) - minX + 1;
-	const uint64_t yCount = static_cast<uint64_t>(maxY) - minY + 1;
+	const int32_t scaleInt = static_cast<int32_t>(scale);
+	const int32_t minX = FloorDiv(MinTile.X, scaleInt);
+	const int32_t maxX = FloorDiv(MaxTile.X, scaleInt);
+	const int32_t minY = FloorDiv(MinTile.Y, scaleInt);
+	const int32_t maxY = FloorDiv(MaxTile.Y, scaleInt);
+	const uint64_t xCount = TileRangeCount(minX, maxX);
+	const uint64_t yCount = TileRangeCount(minY, maxY);
 	targetTiles.reserve(static_cast<size_t>(xCount * yCount));
 
-	for (uint32_t x = minX; x <= maxX; x++)
+	for (int32_t x = minX; x <= maxX; x++)
 	{
-		for (uint32_t y = minY; y <= maxY; y++)
+		for (int32_t y = minY; y <= maxY; y++)
 		{
 			targetTiles.emplace_back(x, y, zoom);
 		}
@@ -2205,7 +2252,7 @@ std::vector<DownTool::Tile> DownTool::DownToolBase::ScanCacheAndCollectPendingTi
 	return pendingTiles;
 }
 
-void DownTool::DownToolBase::DownloadTile(uint32_t x, uint32_t y)
+void DownTool::DownToolBase::DownloadTile(int32_t x, int32_t y)
 {
 	// 等待至少一个下载完成
 	while (curlEasyHandles.size() >= GetEffectiveQueueCount(MaxDownQueue))
@@ -2405,27 +2452,9 @@ bool DownTool::DownToolBase::IsCoveredByPendingLowerZoomRepair(const Tile& tile)
 	for (const auto& [easy, context] : curlEasyHandles)
 	{
 		(void)easy;
-		if (context.requestType != CurlRequestType::RepairParent ||
-			context.repairTargetZoom != tile.Zoom ||
-			context.tile.Zoom >= tile.Zoom)
-		{
-			continue;
-		}
-
-		const uint32_t zoomOffset = tile.Zoom - context.tile.Zoom;
-		if (zoomOffset >= 31)
-		{
-			continue;
-		}
-
-		const uint64_t scale = uint64_t{ 1 } << zoomOffset;
-		const uint64_t minX = static_cast<uint64_t>(context.tile.X) * scale;
-		const uint64_t minY = static_cast<uint64_t>(context.tile.Y) * scale;
-		const uint64_t maxX = minX + scale;
-		const uint64_t maxY = minY + scale;
-		const uint64_t tileX = tile.X;
-		const uint64_t tileY = tile.Y;
-		if (minX <= tileX && tileX < maxX && minY <= tileY && tileY < maxY)
+		if (context.requestType == CurlRequestType::RepairParent &&
+			context.repairTargetZoom == tile.Zoom &&
+			TileInParentRange(context.tile, tile, tile.Zoom))
 		{
 			return true;
 		}
@@ -2448,21 +2477,11 @@ uint32_t DownTool::DownToolBase::CancelPendingChildDownloads(
 		return 0;
 	}
 
-	const uint64_t scale = uint64_t{ 1 } << zoomOffset;
-	const uint64_t minX = static_cast<uint64_t>(parentTile.X) * scale;
-	const uint64_t minY = static_cast<uint64_t>(parentTile.Y) * scale;
-	const uint64_t maxX = minX + scale;
-	const uint64_t maxY = minY + scale;
-
 	std::vector<CURL*> handlesToCancel;
 	for (const auto& [easy, context] : curlEasyHandles)
 	{
-		const uint64_t tileX = context.tile.X;
-		const uint64_t tileY = context.tile.Y;
 		if (context.requestType == CurlRequestType::Tile &&
-			context.tile.Zoom == childZoom &&
-			minX <= tileX && tileX < maxX &&
-			minY <= tileY && tileY < maxY)
+			TileInParentRange(parentTile, context.tile, childZoom))
 		{
 			handlesToCancel.push_back(easy);
 		}
@@ -2523,8 +2542,11 @@ bool DownTool::DownToolBase::RepairTileFromLowerZoom(
 			return false;
 		}
 
-		const uint32_t scale = 1u << zoomOffset;
-		const Tile parentTile(tile.X / scale, tile.Y / scale, parentZoom);
+		const int32_t scale = static_cast<int32_t>(1u << zoomOffset);
+		const Tile parentTile(
+			FloorDiv(tile.X, scale),
+			FloorDiv(tile.Y, scale),
+			parentZoom);
 		const std::filesystem::path parentPath = GetTileFilePath(parentTile);
 		std::error_code parentExistsError;
 		const bool parentExists = std::filesystem::exists(parentPath, parentExistsError);
@@ -2606,8 +2628,11 @@ bool DownTool::DownToolBase::RepairTileFromExistingLowerZoom(
 			return false;
 		}
 
-		const uint32_t scale = 1u << zoomOffset;
-		const Tile parentTile(tile.X / scale, tile.Y / scale, parentZoom);
+		const int32_t scale = static_cast<int32_t>(1u << zoomOffset);
+		const Tile parentTile(
+			FloorDiv(tile.X, scale),
+			FloorDiv(tile.Y, scale),
+			parentZoom);
 		const std::filesystem::path parentPath = GetTileFilePath(parentTile);
 		std::error_code parentExistsError;
 		const bool parentExists = std::filesystem::exists(parentPath, parentExistsError);
@@ -2669,7 +2694,7 @@ bool DownTool::DownToolBase::RepairTilesFromParent(
 		return false;
 	}
 
-	auto writeRepairedTile = [&](const Tile& childTile, uint32_t childX, uint32_t childY)
+	auto writeRepairedTile = [&](const Tile& childTile, int32_t childX, int32_t childY)
 		-> TileRepairWriteResult
 	{
 		const std::filesystem::path childPath = GetTileFilePath(childTile);
@@ -2705,9 +2730,9 @@ bool DownTool::DownToolBase::RepairTilesFromParent(
 
 	std::vector<TileRepairTask> repairTasks;
 	repairTasks.reserve(static_cast<size_t>(batchTileCount));
-	for (uint32_t childX = 0; childX < scale; childX++)
+	for (int32_t childX = 0; childX < static_cast<int32_t>(scale); childX++)
 	{
-		for (uint32_t childY = 0; childY < scale; childY++)
+		for (int32_t childY = 0; childY < static_cast<int32_t>(scale); childY++)
 		{
 			const Tile childTile(
 				parentTile.X * scale + childX,
@@ -2901,12 +2926,13 @@ uint32_t DownTool::DownToolBase::SelectPostProcessMergedImageSampleZoom() const
 		}
 
 		const uint64_t scale = uint64_t{ 1 } << zoomOffset;
-		const uint64_t minX = static_cast<uint64_t>(MinTile.X) / scale;
-		const uint64_t maxX = static_cast<uint64_t>(MaxTile.X) / scale;
-		const uint64_t minY = static_cast<uint64_t>(MinTile.Y) / scale;
-		const uint64_t maxY = static_cast<uint64_t>(MaxTile.Y) / scale;
-		const uint64_t xCount = maxX - minX + 1;
-		const uint64_t yCount = maxY - minY + 1;
+		const int32_t scaleInt = static_cast<int32_t>(scale);
+		const int32_t minX = FloorDiv(MinTile.X, scaleInt);
+		const int32_t maxX = FloorDiv(MaxTile.X, scaleInt);
+		const int32_t minY = FloorDiv(MinTile.Y, scaleInt);
+		const int32_t maxY = FloorDiv(MaxTile.Y, scaleInt);
+		const uint64_t xCount = TileRangeCount(minX, maxX);
+		const uint64_t yCount = TileRangeCount(minY, maxY);
 		const double sourcePixels =
 			static_cast<double>(std::max(xCount, yCount)) * TileSize;
 		if (sourcePixels <= 0.)
@@ -3010,9 +3036,9 @@ bool DownTool::DownToolBase::IsPostProcessLowerZoomTileFresh(const Tile& parentT
 	}
 
 	bool hasChildFile = false;
-	for (uint32_t childX = 0; childX < 2; childX++)
+	for (int32_t childX = 0; childX < 2; childX++)
 	{
-		for (uint32_t childY = 0; childY < 2; childY++)
+		for (int32_t childY = 0; childY < 2; childY++)
 		{
 			const Tile childTile(
 				parentTile.X * 2 + childX,
@@ -3055,7 +3081,10 @@ void DownTool::DownToolBase::GeneratePostProcessLowerZoomTiles(
 
 		for (const Tile& childTile : currentLevelTiles)
 		{
-			Tile parentTile(childTile.X / 2, childTile.Y / 2, childTile.Zoom - 1);
+			Tile parentTile(
+				FloorDiv(childTile.X, 2),
+				FloorDiv(childTile.Y, 2),
+				childTile.Zoom - 1);
 			if (uniqueParents.insert(parentTile).second)
 			{
 				parentTiles.push_back(parentTile);
@@ -3081,9 +3110,9 @@ void DownTool::DownToolBase::GeneratePostProcessLowerZoomTiles(
 					tileSize * 2, tileSize * 2, CV_8UC4, cv::Scalar(0, 0, 0, 0));
 				bool hasChildImage = false;
 
-				for (uint32_t childX = 0; childX < 2; childX++)
+				for (int32_t childX = 0; childX < 2; childX++)
 				{
-					for (uint32_t childY = 0; childY < 2; childY++)
+					for (int32_t childY = 0; childY < 2; childY++)
 					{
 						const Tile childTile(
 							parentTile.X * 2 + childX,
@@ -3201,7 +3230,7 @@ cv::Mat DownTool::DownToolBase::ReadPostProcessTileRegion(
 			Tile sourceTile;
 			double sourcePixelX = 0.;
 			double sourcePixelY = 0.;
-			if (!TryGetTilePixelForLonLat(
+			if (!TryGetSourceTilePixelForLonLat(
 				sourceLonLat, sourceZoom, sourceTile, sourcePixelX, sourcePixelY))
 			{
 				continue;
@@ -3290,8 +3319,8 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 		return false;
 	}
 
-	const uint64_t xCount = static_cast<uint64_t>(MaxTile.X) - MinTile.X + 1;
-	const uint64_t yCount = static_cast<uint64_t>(MaxTile.Y) - MinTile.Y + 1;
+	const uint64_t xCount = TileRangeCount(MinTile.X, MaxTile.X);
+	const uint64_t yCount = TileRangeCount(MinTile.Y, MaxTile.Y);
 	if (xCount == 0 || yCount == 0)
 	{
 		fmt::print("合并大图失败：瓦片范围为空。\n");
@@ -3349,19 +3378,19 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 	}
 
 	const uint32_t zoomOffset = Zoom - sampleZoom;
-	const uint64_t sampleScale = uint64_t{ 1 } << zoomOffset;
-	const uint64_t requestMinX = MinTile.X;
-	const uint64_t requestMinY = MinTile.Y;
-	const uint64_t requestMaxX = static_cast<uint64_t>(MaxTile.X) + 1;
-	const uint64_t requestMaxY = static_cast<uint64_t>(MaxTile.Y) + 1;
+	const int64_t sampleScale = static_cast<int64_t>(uint64_t{ 1 } << zoomOffset);
+	const int64_t requestMinX = MinTile.X;
+	const int64_t requestMinY = MinTile.Y;
+	const int64_t requestMaxX = static_cast<int64_t>(MaxTile.X) + 1;
+	const int64_t requestMaxY = static_cast<int64_t>(MaxTile.Y) + 1;
 	const int tileSize = static_cast<int>(TileSize);
 
 	auto isSampleTileFullyCovered = [&](const Tile& tile)
 	{
-		const uint64_t sampleMinX = static_cast<uint64_t>(tile.X) * sampleScale;
-		const uint64_t sampleMinY = static_cast<uint64_t>(tile.Y) * sampleScale;
-		const uint64_t sampleMaxX = sampleMinX + sampleScale;
-		const uint64_t sampleMaxY = sampleMinY + sampleScale;
+		const int64_t sampleMinX = static_cast<int64_t>(tile.X) * sampleScale;
+		const int64_t sampleMinY = static_cast<int64_t>(tile.Y) * sampleScale;
+		const int64_t sampleMaxX = sampleMinX + sampleScale;
+		const int64_t sampleMaxY = sampleMinY + sampleScale;
 		return sampleMinX >= requestMinX &&
 			sampleMinY >= requestMinY &&
 			sampleMaxX <= requestMaxX &&
@@ -3416,14 +3445,14 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 		[&](size_t index)
 		{
 			const Tile& tile = sampleTiles[index];
-			const uint64_t sampleMinX = static_cast<uint64_t>(tile.X) * sampleScale;
-			const uint64_t sampleMinY = static_cast<uint64_t>(tile.Y) * sampleScale;
-			const uint64_t sampleMaxX = sampleMinX + sampleScale;
-			const uint64_t sampleMaxY = sampleMinY + sampleScale;
-			const uint64_t overlapMinX = std::max(sampleMinX, requestMinX);
-			const uint64_t overlapMinY = std::max(sampleMinY, requestMinY);
-			const uint64_t overlapMaxX = std::min(sampleMaxX, requestMaxX);
-			const uint64_t overlapMaxY = std::min(sampleMaxY, requestMaxY);
+			const int64_t sampleMinX = static_cast<int64_t>(tile.X) * sampleScale;
+			const int64_t sampleMinY = static_cast<int64_t>(tile.Y) * sampleScale;
+			const int64_t sampleMaxX = sampleMinX + sampleScale;
+			const int64_t sampleMaxY = sampleMinY + sampleScale;
+			const int64_t overlapMinX = std::max(sampleMinX, requestMinX);
+			const int64_t overlapMinY = std::max(sampleMinY, requestMinY);
+			const int64_t overlapMaxX = std::min(sampleMaxX, requestMaxX);
+			const int64_t overlapMaxY = std::min(sampleMaxY, requestMaxY);
 
 			if (overlapMaxX <= overlapMinX || overlapMaxY <= overlapMinY)
 			{
@@ -3684,17 +3713,17 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 			const uint32_t outputTextureSize =
 				CalculateFbxOutputTextureSize(FbxTextureSize, distanceOffset);
 			const std::string textureName = MakeFbxTextureName(gridX, gridY);
-			const uint32_t minTileX = static_cast<uint32_t>(std::max<double>(
+			const int32_t minTileX = static_cast<int32_t>(std::max<double>(
 				static_cast<double>(MinTile.X),
 				std::floor(textureBounds.minX / tileSize)));
-			const uint32_t minTileY = static_cast<uint32_t>(std::max<double>(
+			const int32_t minTileY = static_cast<int32_t>(std::max<double>(
 				static_cast<double>(MinTile.Y),
 				std::floor(textureBounds.minY / tileSize)));
-			const uint32_t maxTileX = static_cast<uint32_t>(std::min<double>(
+			const int32_t maxTileX = static_cast<int32_t>(std::min<double>(
 				static_cast<double>(MaxTile.X),
 				std::floor(std::nextafter(textureBounds.maxX, textureBounds.minX) /
 					tileSize)));
-			const uint32_t maxTileY = static_cast<uint32_t>(std::min<double>(
+			const int32_t maxTileY = static_cast<int32_t>(std::min<double>(
 				static_cast<double>(MaxTile.Y),
 				std::floor(std::nextafter(textureBounds.maxY, textureBounds.minY) /
 					tileSize)));
@@ -3938,8 +3967,8 @@ bool DownTool::DownToolBase::WritePostProcessMetadata() const
 
 std::string DownTool::DownToolBase::MakeUri(const Tile& tile)
 {
-	const uint32_t xValue = tile.X;
-	const uint32_t yValue = tile.Y;
+	const int32_t xValue = tile.X;
+	const int32_t yValue = tile.Y;
 	const uint32_t zValue = tile.Zoom;
 	const int32_t sValue = ServerRange.GetNextServerIndex();
 	auto x = fmt::arg("x", xValue);

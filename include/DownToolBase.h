@@ -142,7 +142,7 @@ namespace DownTool
 
 		void BuildRequestedTiles(std::vector<Tile>& targetTiles) const;
 
-		std::filesystem::path GetTileFilePath(const Tile& tile) const;
+		virtual std::filesystem::path GetTileFilePath(const Tile& tile) const;
 
 		std::filesystem::path GetPostProcessRootPath() const;
 
@@ -266,6 +266,16 @@ namespace DownTool
 			return false;
 		}
 
+		virtual bool TryGetSourceTilePixelForLonLat(
+			const LonLat& lonLat,
+			uint32_t zoom,
+			Tile& tile,
+			double& pixelX,
+			double& pixelY) const
+		{
+			return TryGetTilePixelForLonLat(lonLat, zoom, tile, pixelX, pixelY);
+		}
+
 		virtual bool IsUnavailableTileFile(
 			const std::filesystem::path& tilePath, const Tile& tile) const { return false; }
 
@@ -289,7 +299,7 @@ namespace DownTool
 		//开始下载，做一些准备工作
 		virtual void StartDown();
 
-		void DownloadTile(uint32_t x, uint32_t y);
+		void DownloadTile(int32_t x, int32_t y);
 
 		//对于经过了坐标偏移的瓦片来说，我们就可能会需要下载很多个瓦片了，比如火星偏移过的瓦片一般一个瓦片需要下载4个，然后再进行合并操作
 		virtual bool IsTileOffset() const { return false; }

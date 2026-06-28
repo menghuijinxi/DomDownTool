@@ -12,7 +12,7 @@ void DownTool::GoogleDownBase::CalculateDownRange()
 	//根据MinLonLat通过谷歌瓦片坐标计算公式计算得到MinTile
 	MinTile = LonLatToTile(GetMinLonLat(), GetZoom());
 	MaxTile = LonLatToTile(GetMaxLonLat(), GetZoom());
-	uint32_t temp = MinTile.Y;
+	int32_t temp = MinTile.Y;
 	MinTile.Y = MaxTile.Y;
 	MaxTile.Y = temp;
 }
@@ -70,8 +70,8 @@ bool DownTool::GoogleDownBase::TryGetTilePixelForLonLat(
 	globalY = std::clamp(globalY, 0., maxGlobal);
 
 	tile.Zoom = zoom;
-	tile.X = static_cast<uint32_t>(std::floor(globalX));
-	tile.Y = static_cast<uint32_t>(std::floor(globalY));
+	tile.X = static_cast<int32_t>(std::floor(globalX));
+	tile.Y = static_cast<int32_t>(std::floor(globalY));
 	pixelX = (globalX - tile.X) * tileSize;
 	pixelY = (globalY - tile.Y) * tileSize;
 	return true;
@@ -81,7 +81,12 @@ DownTool::Tile DownTool::GoogleDownBase::LonLatToTile(const LonLat& lonLat, uint
 {
 	Tile tile;
 	tile.Zoom = zoom;
-	tile.X = static_cast<uint32_t>(std::floor((lonLat.lon + 180.) / 360. * std::pow(2., zoom)));
-	tile.Y = static_cast<uint32_t>(std::floor((1. - std::log(std::tan(lonLat.lat * std::numbers::pi / 180.) + 1. / std::cos(lonLat.lat * std::numbers::pi / 180.)) / std::numbers::pi) / 2. * std::pow(2., zoom)));
+	tile.X = static_cast<int32_t>(
+		std::floor((lonLat.lon + 180.) / 360. * std::pow(2., zoom)));
+	tile.Y = static_cast<int32_t>(
+		std::floor((1. - std::log(
+			std::tan(lonLat.lat * std::numbers::pi / 180.) +
+			1. / std::cos(lonLat.lat * std::numbers::pi / 180.)) /
+			std::numbers::pi) / 2. * std::pow(2., zoom)));
 	return tile;
 }

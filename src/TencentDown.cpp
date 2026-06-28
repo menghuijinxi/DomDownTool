@@ -83,7 +83,8 @@ DownTool::TencentDown::TencentDown()
 std::string DownTool::TencentDown::MakeUri(const Tile& tile)
 {
 	const uint64_t tencentY = ToTencentY(tile);
-	const uint64_t x16 = tile.X / 16;
+	const uint64_t tileX = static_cast<uint64_t>(tile.X);
+	const uint64_t x16 = tileX / 16;
 	const uint64_t y16 = tencentY / 16;
 
 	return fmt::format(
@@ -92,7 +93,7 @@ std::string DownTool::TencentDown::MakeUri(const Tile& tile)
 		static_cast<uint32_t>(tile.Zoom),
 		x16,
 		y16,
-		tile.X,
+		tileX,
 		tencentY);
 }
 
@@ -120,5 +121,5 @@ bool DownTool::TencentDown::IsUnavailableTileFile(
 uint64_t DownTool::TencentDown::ToTencentY(const Tile& tile)
 {
 	const uint64_t tileCount = uint64_t{ 1 } << tile.Zoom;
-	return tileCount - 1 - tile.Y;
+	return tileCount - 1 - static_cast<uint64_t>(tile.Y);
 }

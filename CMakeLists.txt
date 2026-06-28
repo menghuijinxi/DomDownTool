@@ -132,6 +132,8 @@ add_domdown_test(PostProcessMergedImageTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/PostProcessMergedImageTest.cpp)
 add_domdown_test(PostProcessFbxTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/PostProcessFbxTest.cpp)
+add_domdown_test(BaiduProjectionTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/BaiduProjectionTest.cpp)
 add_domdown_test(RealDataIntegrationTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/RealDataIntegrationTest.cpp)
 add_domdown_test(RealDataFbxIntegrationTest

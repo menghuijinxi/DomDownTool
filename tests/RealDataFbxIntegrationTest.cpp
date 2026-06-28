@@ -11,6 +11,7 @@
 #include "windows.h"
 #endif
 
+#include "BaiduDown.h"
 #include "GaoDeDown.h"
 #include "TencentDown.h"
 
@@ -153,6 +154,11 @@ namespace
             success;
         success = RunRealFbxDownloadCase<DownTool::TencentDown>(
             "tencent",
+            DownTool::LonLat(116.468067, 39.912247),
+            16) &&
+            success;
+        success = RunRealFbxDownloadCase<DownTool::BaiduDown>(
+            "baidu",
             DownTool::LonLat(116.468067, 39.912247),
             16) &&
             success;

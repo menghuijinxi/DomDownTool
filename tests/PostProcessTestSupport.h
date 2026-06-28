@@ -20,6 +20,10 @@
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/imgproc.hpp"
 
+#if defined(_WIN32)
+#include "windows.h"
+#endif
+
 #include "GCJ02GoogleDownBase.h"
 #include "GoogleDownBase.h"
 
@@ -439,9 +443,9 @@ namespace postprocess_test
 
     inline bool WriteSourceTiles(TestPostProcessDown& tool)
     {
-        for (uint32_t x = tool.GetMinTile().X; x <= tool.GetMaxTile().X; x++)
+        for (int32_t x = tool.GetMinTile().X; x <= tool.GetMaxTile().X; x++)
         {
-            for (uint32_t y = tool.GetMinTile().Y; y <= tool.GetMaxTile().Y; y++)
+            for (int32_t y = tool.GetMinTile().Y; y <= tool.GetMaxTile().Y; y++)
             {
                 const cv::Scalar color(
                     static_cast<double>((x * 53) % 255),
@@ -466,17 +470,17 @@ namespace postprocess_test
     template<typename Tool>
     inline bool WriteOffsetSourceTiles(Tool& tool)
     {
-        for (uint32_t x = tool.GetMinTile().X; x <= tool.GetMaxTile().X; x++)
+        for (int32_t x = tool.GetMinTile().X; x <= tool.GetMaxTile().X; x++)
         {
-            for (uint32_t y = tool.GetMinTile().Y; y <= tool.GetMaxTile().Y; y++)
+            for (int32_t y = tool.GetMinTile().Y; y <= tool.GetMaxTile().Y; y++)
             {
                 const DownTool::Tile targetTile(x, y, tool.GetZoom());
                 const DownTool::TileRange offsetTiles = tool.GetOffsetTiles(targetTile);
-                for (uint32_t sourceX = offsetTiles.MinTile.X;
+                for (int32_t sourceX = offsetTiles.MinTile.X;
                     sourceX <= offsetTiles.MaxTile.X;
                     sourceX++)
                 {
-                    for (uint32_t sourceY = offsetTiles.MinTile.Y;
+                    for (int32_t sourceY = offsetTiles.MinTile.Y;
                         sourceY <= offsetTiles.MaxTile.Y;
                         sourceY++)
                     {
@@ -516,8 +520,17 @@ namespace postprocess_test
         tool.SetMaxDownQueue(4);
     }
 
+    inline void ConfigureUtf8Console()
+    {
+#if defined(_WIN32)
+        SetConsoleOutputCP(CP_UTF8);
+#endif
+    }
+
     inline int RunGuarded(bool (*testFunction)())
     {
+        ConfigureUtf8Console();
+
         try
         {
             return testFunction() ? 0 : 1;

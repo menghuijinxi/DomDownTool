@@ -25,9 +25,9 @@ namespace
         tool.RunPostProcessForTest();
 
         const int tileSize = static_cast<int>(tool.GetTileSize());
-        for (uint32_t x = tool.GetMinTile().X; x <= tool.GetMaxTile().X; x++)
+        for (int32_t x = tool.GetMinTile().X; x <= tool.GetMaxTile().X; x++)
         {
-            for (uint32_t y = tool.GetMinTile().Y; y <= tool.GetMaxTile().Y; y++)
+            for (int32_t y = tool.GetMinTile().Y; y <= tool.GetMaxTile().Y; y++)
             {
                 if (!postprocess_test::RequireImageSize(
                     tool.PostProcessTilePath(DownTool::Tile(x, y, tool.GetZoom())),
