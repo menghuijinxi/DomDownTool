@@ -11,11 +11,18 @@
 
 #include "fmt/format.h"
 
+#include "FileDigest.h"
+
 namespace
 {
 	constexpr double Pi = 3.141592653589793238462643383279502884;
 	constexpr double BaiduCoordinatePi = Pi * 3000. / 180.;
 	constexpr uintmax_t BaiduMinImageFileSize = 128;
+	constexpr uintmax_t BaiduUnavailableTileSize = 2506;
+	constexpr std::array<unsigned char, 16> BaiduUnavailableTileMd5 = {
+		0x31, 0x07, 0xA2, 0xAF, 0x9F, 0x8D, 0xF9, 0x75,
+		0x56, 0x08, 0x22, 0x28, 0xEF, 0x2A, 0x61, 0xBD
+	};
 
 	using BaiduCoeff = std::array<double, 10>;
 
@@ -251,7 +258,19 @@ bool DownTool::BaiduDown::IsUnavailableTileFile(
 		return false;
 	}
 
-	return tileSize < BaiduMinImageFileSize;
+	if (tileSize < BaiduMinImageFileSize)
+	{
+		return true;
+	}
+
+	if (tileSize != BaiduUnavailableTileSize)
+	{
+		return false;
+	}
+
+	const std::optional<std::array<unsigned char, 16>> digest =
+		CalculateFileMd5(tilePath);
+	return digest.has_value() && digest.value() == BaiduUnavailableTileMd5;
 }
 
 DownTool::LonLat DownTool::BaiduDown::BD09ToGCJ02(const LonLat& lonLat)

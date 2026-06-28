@@ -1,6 +1,7 @@
 #include "PostProcessTestSupport.h"
 
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -13,6 +14,7 @@ namespace
     public:
         using DownTool::BaiduDown::GetOffsetTiles;
         using DownTool::BaiduDown::GetTileFilePath;
+        using DownTool::BaiduDown::IsUnavailableTileFile;
         using DownTool::BaiduDown::ReadPostProcessTileRegion;
         using DownTool::BaiduDown::TryGetSourceTilePixelForLonLat;
     };
@@ -189,6 +191,42 @@ namespace
                 postprocess_test::PathToUtf8String(defaultTilePath),
                 "百度地图"),
             "Baidu default cache path did not preserve UTF-8 text"))
+        {
+            return false;
+        }
+
+        const std::filesystem::path unavailableTestRoot =
+            postprocess_test::MakeTestRoot("baidu-unavailable-detection");
+        if (!postprocess_test::ResetDirectory(unavailableTestRoot))
+        {
+            return false;
+        }
+
+        const std::filesystem::path tinyTilePath = unavailableTestRoot / "tiny.jpg";
+        {
+            std::ofstream tinyTileStream(tinyTilePath, std::ios::binary);
+            tinyTileStream << "x";
+        }
+        if (!postprocess_test::Require(
+            tool.IsUnavailableTileFile(tinyTilePath, DownTool::Tile(0, 0, 18)),
+            "Baidu tiny error response was not treated as unavailable"))
+        {
+            return false;
+        }
+
+        const std::filesystem::path sameSizeDifferentMd5Path =
+            unavailableTestRoot / "same-size-different-md5.jpg";
+        {
+            std::ofstream tileStream(sameSizeDifferentMd5Path, std::ios::binary);
+            std::string content(2506, '\0');
+            content[0] = static_cast<char>(0xFF);
+            content[1] = static_cast<char>(0xD8);
+            tileStream.write(content.data(), static_cast<std::streamsize>(content.size()));
+        }
+        if (!postprocess_test::Require(
+            !tool.IsUnavailableTileFile(
+                sameSizeDifferentMd5Path, DownTool::Tile(0, 0, 18)),
+            "Baidu unavailable detection used file size without MD5"))
         {
             return false;
         }
