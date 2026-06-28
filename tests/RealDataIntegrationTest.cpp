@@ -16,6 +16,7 @@
 
 #include "BaiduDown.h"
 #include "GaoDeDown.h"
+#include "TianDiTuDown.h"
 #include "TencentDown.h"
 
 namespace
@@ -138,6 +139,11 @@ namespace
             success;
         success = RunRealDownloadCase<DownTool::BaiduDown>(
             "baidu",
+            DownTool::LonLat(116.468067, 39.912247),
+            16) &&
+            success;
+        success = RunRealDownloadCase<DownTool::TianDiTuDown>(
+            "tianditu",
             DownTool::LonLat(116.468067, 39.912247),
             16) &&
             success;

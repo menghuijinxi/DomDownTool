@@ -48,6 +48,7 @@ namespace DownTool
 		std::string url;
 		std::filesystem::path filePath;
 		std::ofstream fileStream;
+		curl_slist* requestHeaders = nullptr;
 		std::map<std::string, std::string> responseHeaders;
 	};
 
@@ -286,6 +287,12 @@ namespace DownTool
 			(void)responseHeaders;
 			(void)tile;
 			return false;
+		}
+
+		virtual std::vector<std::string> GetRequestHeaders(const Tile& tile) const
+		{
+			(void)tile;
+			return {};
 		}
 
 		virtual uint32_t GetMinFallbackZoom() const { return 0; }

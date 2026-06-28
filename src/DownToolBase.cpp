@@ -1709,6 +1709,20 @@ namespace
 		fileStream.close();
 		return writeSuccess && !fileStream.fail();
 	}
+
+	void ReleaseCurlContext(CURL* easy, DownTool::CurlMultiHandle& context)
+	{
+		if (context.fileStream.is_open())
+		{
+			context.fileStream.close();
+		}
+		if (context.requestHeaders)
+		{
+			curl_slist_free_all(context.requestHeaders);
+			context.requestHeaders = nullptr;
+		}
+		curl_easy_cleanup(easy);
+	}
 }
 
 void DownTool::DownToolBase::WaitDown()
@@ -1768,10 +1782,14 @@ void DownTool::DownToolBase::WaitDown()
 			}
 			// 清理 easy handle（重要！）
 			curl_multi_remove_handle(curlMulti, easy);
-			curl_easy_cleanup(easy);
 			if (handleIt != curlEasyHandles.end())
 			{
+				ReleaseCurlContext(easy, handleIt->second);
 				curlEasyHandles.erase(handleIt);
+			}
+			else
+			{
+				curl_easy_cleanup(easy);
 			}
 			if (!hasContext)
 			{
@@ -1848,6 +1866,16 @@ void DownTool::DownToolBase::WaitDown()
 DownTool::DownToolBase::~DownToolBase()
 {
 	StopDown();
+
+	for (auto& [easy, context] : curlEasyHandles)
+	{
+		if (curlMulti)
+		{
+			curl_multi_remove_handle(curlMulti, easy);
+		}
+		ReleaseCurlContext(easy, context);
+	}
+	curlEasyHandles.clear();
 
 	if (curlMulti)
 	{
@@ -2404,6 +2432,18 @@ bool DownTool::DownToolBase::QueueTileDownload(
 
 	std::string url = MakeUri(multiHandle.tile);
 	multiHandle.url = url;
+	for (const std::string& header : GetRequestHeaders(multiHandle.tile))
+	{
+		curl_slist* nextHeaders = curl_slist_append(
+			multiHandle.requestHeaders, header.c_str());
+		if (!nextHeaders)
+		{
+			fmt::print("无法创建 CURL 请求头: {}\n", header);
+			ReleaseCurlContext(easy, multiHandle);
+			return false;
+		}
+		multiHandle.requestHeaders = nextHeaders;
+	}
 	//downTileCount[url.substr(0, 20)]++;
 	curlEasyHandles[easy] = std::move(multiHandle);
 	//避免高速下载被服务器拒绝，设置最大连接数为6（根据服务器限制调整）
@@ -2421,12 +2461,15 @@ bool DownTool::DownToolBase::QueueTileDownload(
 	curl_easy_setopt(easy, CURLOPT_WRITEDATA, &curlEasyHandles[easy]);
 	curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, WriteTileHeaderData);
 	curl_easy_setopt(easy, CURLOPT_HEADERDATA, &curlEasyHandles[easy]);
+	if (curlEasyHandles[easy].requestHeaders)
+	{
+		curl_easy_setopt(easy, CURLOPT_HTTPHEADER, curlEasyHandles[easy].requestHeaders);
+	}
 	if (curl_multi_add_handle(curlMulti, easy) != CURLM_OK)
 	{
 		fmt::print("无法将 CURL easy handle 添加到 multi handle\n");
-		curlEasyHandles[easy].fileStream.close();
+		ReleaseCurlContext(easy, curlEasyHandles[easy]);
 		curlEasyHandles.erase(easy);
-		curl_easy_cleanup(easy);
 		return false;
 	}
 
@@ -2496,9 +2539,8 @@ uint32_t DownTool::DownToolBase::CancelPendingChildDownloads(
 			continue;
 		}
 
-		handleIt->second.fileStream.close();
 		curl_multi_remove_handle(curlMulti, easy);
-		curl_easy_cleanup(easy);
+		ReleaseCurlContext(easy, handleIt->second);
 		curlEasyHandles.erase(handleIt);
 		canceledCount++;
 	}

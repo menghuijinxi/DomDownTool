@@ -6,7 +6,7 @@
 #if defined(_WIN32)
 #include "windows.h"
 #endif
-#include "BaiduDown.h"
+#include "TianDiTuDown.h"
 #include "curl/curl.h"
 #include <TencentDown.h>
 
@@ -19,7 +19,7 @@ int main()
 	SetConsoleOutputCP(CP_UTF8);
 #endif
 
-	DownTool::BaiduDown base;
+	DownTool::TianDiTuDown base;
 	//base.SetRadius(30000.);
 	//base.SetZoom(19);
 	//base.SetCenterLonLat(DownTool::LonLat(116.927549, 36.712797));
