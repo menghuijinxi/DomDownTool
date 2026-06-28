@@ -2,11 +2,10 @@
 
 #include <iostream>
 #include "DownToolBase.h"
-#include "TianDiTuDown.h"
 #if defined(_WIN32)
 #include "windows.h"
 #endif
-#include "TianDiTuDown.h"
+#include "TianDiTuMultidateDown.h"
 #include "curl/curl.h"
 #include <TencentDown.h>
 
@@ -19,7 +18,7 @@ int main()
 	SetConsoleOutputCP(CP_UTF8);
 #endif
 
-	DownTool::TianDiTuDown base;
+	DownTool::TianDiTuMultidateDown base;
 	//base.SetRadius(30000.);
 	//base.SetZoom(19);
 	//base.SetCenterLonLat(DownTool::LonLat(116.927549, 36.712797));
