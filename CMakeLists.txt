@@ -4,6 +4,7 @@
 cmake_minimum_required (VERSION 3.24)
 
 option(IS_AUTODOWNLOAD_VCPKG "是否自动下载vcpkg，并配置vcpkg为工具链" ON)
+option(DOMDOWNTOOL_BUILD_UI "是否构建 WebView UI 预览界面" ON)
 
 message(设置代理：127.0.0.1:10090)
 set(ENV{https_proxy} "127.0.0.1:10090")
@@ -56,6 +57,19 @@ ENDIF()
 
 project ("DomDownTool")
 
+if(MSVC)
+    # 混合工具链环境中，CMake 可能误用 PATH 里的 GNU ar/ld。
+    get_filename_component(DOMDOWNTOOL_MSVC_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    set(DOMDOWNTOOL_MSVC_LIBRARIAN "${DOMDOWNTOOL_MSVC_BIN_DIR}/lib.exe")
+    set(DOMDOWNTOOL_MSVC_LINKER "${DOMDOWNTOOL_MSVC_BIN_DIR}/link.exe")
+    if(EXISTS "${DOMDOWNTOOL_MSVC_LIBRARIAN}")
+        set(CMAKE_AR "${DOMDOWNTOOL_MSVC_LIBRARIAN}")
+    endif()
+    if(EXISTS "${DOMDOWNTOOL_MSVC_LINKER}")
+        set(CMAKE_LINKER "${DOMDOWNTOOL_MSVC_LINKER}")
+    endif()
+endif()
+
 find_package(httplib CONFIG REQUIRED)
 find_package(GDAL CONFIG REQUIRED)
 find_package(LibXml2 REQUIRED)
@@ -90,7 +104,8 @@ set(DOMDOWNTOOL_LIBRARIES
 file(GLOB DOMDOWNTOOL_CORE_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 list(REMOVE_ITEM DOMDOWNTOOL_CORE_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_main.cpp)
 
 add_library(DomDownToolCore STATIC ${DOMDOWNTOOL_CORE_SOURCES})
 target_include_directories(DomDownToolCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -110,10 +125,46 @@ if(MSVC)
   target_compile_definitions(DomDownTool PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
+if(DOMDOWNTOOL_BUILD_UI)
+  include(FetchContent)
+
+  set(WEBVIEW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+  set(WEBVIEW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(WEBVIEW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(WEBVIEW_ENABLE_CHECKS OFF CACHE BOOL "" FORCE)
+
+  FetchContent_Declare(
+    webview
+    GIT_REPOSITORY https://github.com/webview/webview
+    GIT_TAG 0.12.0)
+  FetchContent_MakeAvailable(webview)
+
+  if(WIN32)
+    add_executable(DomDownToolUi WIN32
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_main.cpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/UiBridge.cpp)
+  else()
+    add_executable(DomDownToolUi
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_main.cpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/UiBridge.cpp)
+  endif()
+
+  target_link_libraries(DomDownToolUi PRIVATE webview::core DomDownToolCore)
+  target_compile_definitions(DomDownToolUi PRIVATE
+    DOMDOWNTOOL_UI_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources/ui")
+  if (CMAKE_VERSION VERSION_GREATER 3.12)
+    set_property(TARGET DomDownToolUi PROPERTY CXX_STANDARD 20)
+  endif()
+  if(MSVC)
+    target_compile_definitions(DomDownToolUi PRIVATE NOMINMAX)
+    target_compile_options(DomDownToolUi PRIVATE /EHsc)
+  endif()
+endif()
+
 enable_testing()
 
-function(add_domdown_test target_name source_file)
-  add_executable(${target_name} ${source_file})
+function(add_domdown_test target_name)
+  add_executable(${target_name} ${ARGN})
   target_link_libraries(${target_name} PRIVATE DomDownToolCore)
   target_compile_definitions(${target_name} PRIVATE
     DOMDOWNTOOL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -142,3 +193,6 @@ add_domdown_test(RealDataIntegrationTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/RealDataIntegrationTest.cpp)
 add_domdown_test(RealDataFbxIntegrationTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/RealDataFbxIntegrationTest.cpp)
+add_domdown_test(UiBridgeSmokeTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/UiBridgeSmokeTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/UiBridge.cpp)
