@@ -2461,6 +2461,10 @@ bool DownTool::DownToolBase::QueueTileDownload(
 	curl_easy_setopt(easy, CURLOPT_WRITEDATA, &curlEasyHandles[easy]);
 	curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, WriteTileHeaderData);
 	curl_easy_setopt(easy, CURLOPT_HEADERDATA, &curlEasyHandles[easy]);
+    if (!Proxy.empty())
+    {
+        curl_easy_setopt(easy, CURLOPT_PROXY, Proxy.c_str());
+    }
 	if (curlEasyHandles[easy].requestHeaders)
 	{
 		curl_easy_setopt(easy, CURLOPT_HTTPHEADER, curlEasyHandles[easy].requestHeaders);

@@ -8,6 +8,11 @@
 #include "TianDiTuMultidateDown.h"
 #include "curl/curl.h"
 #include <BaiduDown.h>
+#include <GaoDeDown.h>
+#include <TencentDown.h>
+#include <BingDown.h>
+#include <ArcGISDown.h>
+#include <GoogleDown.h>
 
 int main()
 {
@@ -18,7 +23,7 @@ int main()
 	SetConsoleOutputCP(CP_UTF8);
 #endif
 
-	DownTool::BaiduDown base;
+	DownTool::GoogleDown base;
 	//base.SetRadius(30000.);
 	base.SetZoom(15);
 	//base.SetCenterLonLat(DownTool::LonLat(116.927549, 36.712797));

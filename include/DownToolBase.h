@@ -71,6 +71,9 @@ namespace DownTool
 		//下载URL模板
 		std::string UrlTemplate = "";
 
+        //下载请求使用的代理，空字符串表示直连
+        std::string Proxy = "";
+
 		//计算得到的左上角和右下角经纬度
 		LonLat MinLonLat, MaxLonLat;
 		//计算得到的左上角和右下角瓦片坐标
@@ -320,7 +323,7 @@ namespace DownTool
 		//计算下载范围
 		virtual void CalculateDownRange();
 
-        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTextureDistanceOffsets, TileSize)
+        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Proxy, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTextureDistanceOffsets, TileSize)
 		
 			//停止下载，正在下载的线程会尽快停止下载
 		void StopDown()
