@@ -3,6 +3,7 @@
 
 #include "ArcGISDown.h"
 #include "BingDown.h"
+#include "GaoDeDown.h"
 #include "GoogleDown.h"
 
 namespace
@@ -19,6 +20,46 @@ namespace
     bool RunTest()
     {
         const DownTool::Tile beijingTile(215872, 99317, 18);
+        const DownTool::Tile gaodeSampleTile(107839, 49649, 17);
+
+        DownTool::GaoDeDown gaode;
+        if (!Require(
+                gaode.MakeUri(gaodeSampleTile) ==
+                    "http://webst01.is.autonavi.com/appmaptile?x=107839&y=49649&z=17&"
+                    "lang=zh_cn&size=1&scale=1&style=6",
+                "GaoDe satellite URL does not match the compatibility template") ||
+            !Require(
+                gaode.GetMapType() == DownTool::GaoDeMapType::Satellite,
+                "GaoDe must default to satellite maps"))
+        {
+            return false;
+        }
+
+        gaode.SetMapType(DownTool::GaoDeMapType::Electronic);
+        if (!Require(
+                gaode.MakeUri(gaodeSampleTile) ==
+                    "http://webst02.is.autonavi.com/appmaptile?x=107839&y=49649&z=17&"
+                    "lang=zh_cn&size=1&scale=1&style=7",
+                "GaoDe electronic URL does not match the selected map type") ||
+            !Require(
+                gaode.GetCachePath() == "cache/高德地图/电子地图",
+                "GaoDe electronic tiles must use a separate cache"))
+        {
+            return false;
+        }
+
+        gaode.SetMapType(DownTool::GaoDeMapType::RoadNetworkOverlay);
+        if (!Require(
+                gaode.MakeUri(gaodeSampleTile) ==
+                    "https://wprd03.is.autonavi.com/appmaptile?x=107839&y=49649&z=17&"
+                    "lang=zh_cn&size=1&scl=1&style=8&ltype=11",
+                "GaoDe road network overlay URL does not match the selected map type") ||
+            !Require(
+                gaode.GetCachePath() == "cache/高德地图/透明路网",
+                "GaoDe road network overlay tiles must use a separate cache"))
+        {
+            return false;
+        }
 
         DownTool::GoogleDown google;
         const std::string googleUrl = google.MakeUri(beijingTile);

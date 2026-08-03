@@ -23,13 +23,14 @@ int main()
 	SetConsoleOutputCP(CP_UTF8);
 #endif
 
-	DownTool::GoogleDown base;
+	DownTool::GaoDeDown base;
 	//base.SetRadius(30000.);
 	base.SetZoom(15);
 	//base.SetCenterLonLat(DownTool::LonLat(116.927549, 36.712797));
 	base.SetRadius(70000.);
 	base.SetCenterLonLat(DownTool::LonLat(116.41, 39.92));
 	//base.SetPostProcessEnabled(true);
+	base.SetMapType(DownTool::GaoDeMapType::Electronic);
 	base.SetPostProcessMergedImageEnabled(true);
 	base.StartDown();
 
