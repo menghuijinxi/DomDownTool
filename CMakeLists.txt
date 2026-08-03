@@ -6,9 +6,9 @@ cmake_minimum_required (VERSION 3.24)
 option(IS_AUTODOWNLOAD_VCPKG "是否自动下载vcpkg，并配置vcpkg为工具链" ON)
 option(DOMDOWNTOOL_BUILD_UI "是否构建 WebView UI 预览界面" ON)
 
-message(设置代理：127.0.0.1:10090)
-set(ENV{https_proxy} "127.0.0.1:10090")
-set(ENV{http_proxy} "127.0.0.1:10090")
+message(设置代理：127.0.0.1:7897)
+set(ENV{https_proxy} "127.0.0.1:7897")
+set(ENV{http_proxy} "127.0.0.1:7897")
 
 IF(IS_AUTODOWNLOAD_VCPKG)
     set(Vcpkg_DownloadPath ${CMAKE_CURRENT_SOURCE_DIR}/../out/vcpkg)
