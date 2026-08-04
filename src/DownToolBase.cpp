@@ -721,20 +721,6 @@ namespace
 		return fileStream.good();
 	}
 
-	bool ReadTextFile(const std::filesystem::path& path, std::string& content)
-	{
-		std::ifstream fileStream(path, std::ios::binary);
-		if (!fileStream.is_open())
-		{
-			return false;
-		}
-
-		content.assign(
-			std::istreambuf_iterator<char>(fileStream),
-			std::istreambuf_iterator<char>());
-		return fileStream.good() || fileStream.eof();
-	}
-
 	std::string PathToUtf8String(const std::filesystem::path& path)
 	{
 		const std::u8string utf8Path = path.u8string();
@@ -746,13 +732,6 @@ namespace
 		}
 
 		return result;
-	}
-
-	std::filesystem::path MakePathWithUtf8Suffix(
-		const std::filesystem::path& path,
-		const std::string& suffix)
-	{
-		return std::filesystem::u8path(PathToUtf8String(path) + suffix);
 	}
 
 	double LongitudeToWebMercatorX(double longitude)
@@ -1023,38 +1002,6 @@ namespace
 		return root.Format(CPLJSONObject::PrettyFormat::Plain);
 	}
 
-	std::string BuildMergedImageCacheMetadata(
-		uint32_t zoom,
-		uint32_t sampleZoom,
-		uint32_t tileSize,
-		uint32_t targetMaxResolution,
-		uint32_t outputWidth,
-		uint32_t outputHeight,
-		int32_t minTileX,
-		int32_t minTileY,
-		int32_t maxTileX,
-		int32_t maxTileY,
-		const std::string& cachePath)
-	{
-		CPLJSONObject tileRange;
-		tileRange.Add("maxx", maxTileX);
-		tileRange.Add("maxy", maxTileY);
-		tileRange.Add("minx", minTileX);
-		tileRange.Add("miny", minTileY);
-
-		CPLJSONObject root;
-		root.Add("cachePath", cachePath);
-		root.Add("outputheight", static_cast<int>(outputHeight));
-		root.Add("outputwidth", static_cast<int>(outputWidth));
-		root.Add("samplezoom", static_cast<int>(sampleZoom));
-		root.Add("targetmaxresolution", static_cast<int>(targetMaxResolution));
-		root.Add("tilerange", tileRange);
-		root.Add("tilesize", static_cast<int>(tileSize));
-		root.Add("version", 2);
-		root.Add("zoom", static_cast<int>(zoom));
-		return root.Format(CPLJSONObject::PrettyFormat::Plain);
-	}
-
 	CPLJSONObject BuildFbxGlobalPixelBoundsJson(const FbxGlobalPixelBounds& bounds)
 	{
 		CPLJSONObject root;
@@ -1140,21 +1087,6 @@ namespace
 		root.Add("version", 1);
 		root.Add("zoom", static_cast<int>(zoom));
 		return root.Format(CPLJSONObject::PrettyFormat::Plain);
-	}
-
-	bool IsFbxTextureCacheReady(
-		const std::filesystem::path& texturePath,
-		const std::filesystem::path& metadataPath,
-		const std::string& expectedMetadata)
-	{
-		if (!IsValidImageFile(texturePath))
-		{
-			return false;
-		}
-
-		std::string actualMetadata;
-		return ReadTextFile(metadataPath, actualMetadata) &&
-			actualMetadata == expectedMetadata;
 	}
 
 	uint32_t SelectFbxDistanceOffset(
@@ -1547,28 +1479,6 @@ namespace
 			scaleToTarget(sourceWidth),
 			scaleToTarget(sourceHeight)
 		};
-	}
-
-	bool IsMergedImageCacheReady(
-		const std::filesystem::path& imagePath,
-		const std::filesystem::path& metadataPath,
-		const std::string& expectedMetadata)
-	{
-		std::error_code existsError;
-		if (!std::filesystem::exists(imagePath, existsError) || existsError)
-		{
-			return false;
-		}
-
-		std::error_code fileSizeError;
-		if (std::filesystem::file_size(imagePath, fileSizeError) == 0 || fileSizeError)
-		{
-			return false;
-		}
-
-		std::string actualMetadata;
-		return ReadTextFile(metadataPath, actualMetadata) &&
-			actualMetadata == expectedMetadata;
 	}
 
 	std::string BuildTileMapResourceXml(const PostProcessMetadata& metadata)
@@ -2897,7 +2807,6 @@ bool DownTool::DownToolBase::GeneratePostProcessMaxZoomTiles(
 	const std::vector<Tile>& targetTiles)
 {
 	std::atomic_uint32_t processedCount = 0;
-	std::atomic_uint32_t skippedCount = 0;
 	std::atomic_uint32_t failedCount = 0;
 
 	ParallelForIndex(
@@ -2908,31 +2817,17 @@ bool DownTool::DownToolBase::GeneratePostProcessMaxZoomTiles(
 			const Tile& tile = targetTiles[index];
 			const std::filesystem::path outputPath = GetPostProcessTileFilePath(tile);
 			bool writeSuccess = false;
-			std::error_code existsError;
-			const bool outputExists = std::filesystem::exists(outputPath, existsError);
-			const bool reusableOutput =
-				!existsError &&
-				outputExists &&
-				IsValidImageFile(outputPath);
-			if (reusableOutput)
+			try
 			{
-				writeSuccess = true;
-				skippedCount.fetch_add(1, std::memory_order_relaxed);
+				writeSuccess = WritePostProcessMaxZoomTile(tile, outputPath);
 			}
-			else
+			catch (const std::exception&)
 			{
-				try
-				{
-					writeSuccess = WritePostProcessMaxZoomTile(tile, outputPath);
-				}
-				catch (const std::exception&)
-				{
-					writeSuccess = false;
-				}
-				catch (...)
-				{
-					writeSuccess = false;
-				}
+				writeSuccess = false;
+			}
+			catch (...)
+			{
+				writeSuccess = false;
 			}
 
 			if (!writeSuccess)
@@ -2948,10 +2843,9 @@ bool DownTool::DownToolBase::GeneratePostProcessMaxZoomTiles(
 			}
 		});
 
-	fmt::print("\r最高层级后处理: {}/{}，跳过 {}，失败 {}\n",
+	fmt::print("\r最高层级后处理: {}/{}，失败 {}\n",
 		targetTiles.size(),
 		targetTiles.size(),
-		skippedCount.load(),
 		failedCount.load());
 	return failedCount.load() == 0;
 }
@@ -3008,7 +2902,6 @@ bool DownTool::DownToolBase::GeneratePostProcessTilesAtZoom(
 	}
 
 	std::atomic_uint32_t processedCount = 0;
-	std::atomic_uint32_t skippedCount = 0;
 	std::atomic_uint32_t failedCount = 0;
 
 	ParallelForIndex(
@@ -3019,28 +2912,18 @@ bool DownTool::DownToolBase::GeneratePostProcessTilesAtZoom(
 			const Tile& tile = targetTiles[index];
 			const std::filesystem::path outputPath = GetPostProcessTileFilePath(tile);
 			bool writeSuccess = false;
-			std::error_code existsError;
-			const bool outputExists = std::filesystem::exists(outputPath, existsError);
-			if (!existsError && outputExists && IsValidImageFile(outputPath))
+			try
 			{
-				writeSuccess = true;
-				skippedCount.fetch_add(1, std::memory_order_relaxed);
+				writeSuccess =
+					WritePostProcessTileFromSourceZoom(tile, outputPath, sourceZoom);
 			}
-			else
+			catch (const std::exception&)
 			{
-				try
-				{
-					writeSuccess =
-						WritePostProcessTileFromSourceZoom(tile, outputPath, sourceZoom);
-				}
-				catch (const std::exception&)
-				{
-					writeSuccess = false;
-				}
-				catch (...)
-				{
-					writeSuccess = false;
-				}
+				writeSuccess = false;
+			}
+			catch (...)
+			{
+				writeSuccess = false;
 			}
 
 			if (!writeSuccess)
@@ -3056,63 +2939,12 @@ bool DownTool::DownToolBase::GeneratePostProcessTilesAtZoom(
 			}
 		});
 
-	fmt::print("\r{}: {}/{}，跳过 {}，失败 {}\n",
+	fmt::print("\r{}: {}/{}，失败 {}\n",
 		phaseName,
 		targetTiles.size(),
 		targetTiles.size(),
-		skippedCount.load(),
 		failedCount.load());
 	return failedCount.load() == 0;
-}
-
-bool DownTool::DownToolBase::IsPostProcessLowerZoomTileFresh(const Tile& parentTile) const
-{
-	const std::filesystem::path parentPath = GetPostProcessTileFilePath(parentTile);
-	if (!IsValidImageFile(parentPath))
-	{
-		return false;
-	}
-
-	std::error_code parentTimeError;
-	const std::filesystem::file_time_type parentWriteTime =
-		std::filesystem::last_write_time(parentPath, parentTimeError);
-	if (parentTimeError)
-	{
-		return false;
-	}
-
-	bool hasChildFile = false;
-	for (int32_t childX = 0; childX < 2; childX++)
-	{
-		for (int32_t childY = 0; childY < 2; childY++)
-		{
-			const Tile childTile(
-				parentTile.X * 2 + childX,
-				parentTile.Y * 2 + childY,
-				parentTile.Zoom + 1);
-			const std::filesystem::path childPath = GetPostProcessTileFilePath(childTile);
-			std::error_code childExistsError;
-			if (!std::filesystem::exists(childPath, childExistsError) || childExistsError)
-			{
-				continue;
-			}
-			if (!IsValidImageFile(childPath))
-			{
-				return false;
-			}
-
-			std::error_code childTimeError;
-			const std::filesystem::file_time_type childWriteTime =
-				std::filesystem::last_write_time(childPath, childTimeError);
-			if (childTimeError || childWriteTime > parentWriteTime)
-			{
-				return false;
-			}
-			hasChildFile = true;
-		}
-	}
-
-	return hasChildFile;
 }
 
 void DownTool::DownToolBase::GeneratePostProcessLowerZoomTiles(
@@ -3120,6 +2952,8 @@ void DownTool::DownToolBase::GeneratePostProcessLowerZoomTiles(
 {
 	while (!currentLevelTiles.empty() && currentLevelTiles.front().Zoom > 0)
 	{
+		const std::unordered_set<Tile, TileHash, TileEqual> currentLevelTileSet(
+			currentLevelTiles.begin(), currentLevelTiles.end());
 		std::vector<Tile> parentTiles;
 		parentTiles.reserve(currentLevelTiles.size() / 4 + 1);
 		std::unordered_set<Tile, TileHash, TileEqual> uniqueParents;
@@ -3138,7 +2972,6 @@ void DownTool::DownToolBase::GeneratePostProcessLowerZoomTiles(
 		}
 
 		std::atomic_uint32_t writtenCount = 0;
-		std::atomic_uint32_t skippedCount = 0;
 		ParallelForIndex(
 			parentTiles.size(),
 			MaxDownQueue,
@@ -3146,12 +2979,6 @@ void DownTool::DownToolBase::GeneratePostProcessLowerZoomTiles(
 			{
 				const int tileSize = static_cast<int>(TileSize);
 				const Tile& parentTile = parentTiles[index];
-				if (IsPostProcessLowerZoomTileFresh(parentTile))
-				{
-					skippedCount.fetch_add(1, std::memory_order_relaxed);
-					return;
-				}
-
 				cv::Mat mergeImage(
 					tileSize * 2, tileSize * 2, CV_8UC4, cv::Scalar(0, 0, 0, 0));
 				bool hasChildImage = false;
@@ -3164,6 +2991,10 @@ void DownTool::DownToolBase::GeneratePostProcessLowerZoomTiles(
 							parentTile.X * 2 + childX,
 							parentTile.Y * 2 + childY,
 							parentTile.Zoom + 1);
+						if (!currentLevelTileSet.contains(childTile))
+						{
+							continue;
+						}
 						const cv::Mat childImage =
 							ReadBgraTile(GetPostProcessTileFilePath(childTile), TileSize);
 						if (childImage.empty())
@@ -3199,10 +3030,9 @@ void DownTool::DownToolBase::GeneratePostProcessLowerZoomTiles(
 				}
 			});
 
-		fmt::print("生成低层级 z{}：写入 {}，跳过 {}，总 {} 张\n",
+		fmt::print("生成低层级 z{}：写入 {}，总 {} 张\n",
 			parentTiles.front().Zoom,
 			writtenCount.load(),
-			skippedCount.load(),
 			parentTiles.size());
 		currentLevelTiles = std::move(parentTiles);
 	}
@@ -3403,26 +3233,6 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 		outputSize.height);
 
 	const std::filesystem::path outputPath = GetPostProcessMergedImagePath();
-	const std::filesystem::path metadataPath =
-		MakePathWithUtf8Suffix(outputPath, ".meta.json");
-	const std::string cacheMetadata = BuildMergedImageCacheMetadata(
-		Zoom,
-		sampleZoom,
-		TileSize,
-		targetMaxResolution,
-		outputSize.width,
-		outputSize.height,
-		MinTile.X,
-		MinTile.Y,
-		MaxTile.X,
-		MaxTile.Y,
-		CachePath);
-	if (IsMergedImageCacheReady(outputPath, metadataPath, cacheMetadata))
-	{
-		fmt::print("合并大图跳过：输出已存在且参数匹配。\n");
-		return true;
-	}
-
 	const uint32_t zoomOffset = Zoom - sampleZoom;
 	const int64_t sampleScale = static_cast<int64_t>(uint64_t{ 1 } << zoomOffset);
 	const int64_t requestMinX = MinTile.X;
@@ -3443,28 +3253,28 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 			sampleMaxY <= requestMaxY;
 	};
 
-	std::vector<Tile> cacheableSampleTiles;
-	cacheableSampleTiles.reserve(sampleTiles.size());
+	std::vector<Tile> generatedSampleTiles;
+	generatedSampleTiles.reserve(sampleTiles.size());
 	for (const Tile& tile : sampleTiles)
 	{
 		if (isSampleTileFullyCovered(tile))
 		{
-			cacheableSampleTiles.push_back(tile);
+			generatedSampleTiles.push_back(tile);
 		}
 	}
 
-	fmt::print("大图采样层可缓存瓦片：{} / {}\n",
-		cacheableSampleTiles.size(), sampleTiles.size());
+	fmt::print("大图采样层生成瓦片：{} / {}\n",
+		generatedSampleTiles.size(), sampleTiles.size());
 	auto phaseStartTime = std::chrono::steady_clock::now();
 	if (postProcessTilesAvailable)
 	{
-		fmt::print("大图采样层后处理跳过：复用已生成的金字塔瓦片。\n");
+		fmt::print("大图采样层使用本次生成的金字塔瓦片。\n");
 	}
 	else
 	{
 		phaseStartTime = std::chrono::steady_clock::now();
 		if (!GeneratePostProcessTilesAtZoom(
-			cacheableSampleTiles, Zoom, "大图采样层后处理"))
+			generatedSampleTiles, Zoom, "大图采样层后处理"))
 		{
 			return false;
 		}
@@ -3533,9 +3343,9 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 				return;
 			}
 
-			const bool useCachedTile =
+			const bool useGeneratedTile =
 				postProcessTilesAvailable || isSampleTileFullyCovered(tile);
-			const cv::Mat tileImage = useCachedTile ?
+			const cv::Mat tileImage = useGeneratedTile ?
 				ReadBgraTile(GetPostProcessTileFilePath(tile), TileSize) :
 				ReadPostProcessTileRegion(tile, Zoom, tileSize, tileSize);
 			if (tileImage.empty())
@@ -3604,10 +3414,6 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 	fmt::print("合并大图写入耗时：{:.2f}s\n", SecondsSince(phaseStartTime));
 	if (writeSuccess)
 	{
-		if (!WriteTextFile(metadataPath, cacheMetadata))
-		{
-			fmt::print("合并大图警告：缓存元数据写入失败。\n");
-		}
 		fmt::print("合并大图输出：{}\n", PathToUtf8String(outputPath));
 	}
 	fmt::print("合并大图函数总耗时：{:.2f}s\n", SecondsSince(totalStartTime));
@@ -3837,7 +3643,6 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 	};
 
 	std::atomic_uint32_t processedCount = 0;
-	std::atomic_uint32_t skippedCount = 0;
 	std::atomic_uint32_t failedCount = 0;
 	const uint32_t fbxTextureWorkerCount =
 		GetFbxTextureWorkerCount(FbxTextureSize, MaxDownQueue);
@@ -3850,24 +3655,14 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 			const FbxTextureOutputInfo& textureInfo = textureInfos[index];
 			const std::string metadata =
 				BuildFbxTextureMetadataJson(textureInfo, textureRoot);
-			bool success = false;
-			if (IsFbxTextureCacheReady(
-				textureInfo.texturePath, textureInfo.metadataPath, metadata))
+			bool success = WriteFbxTextureImage(
+				textureInfo,
+				requestBounds,
+				TileSize,
+				readTileImage);
+			if (success && !WriteTextFile(textureInfo.metadataPath, metadata))
 			{
-				success = true;
-				skippedCount.fetch_add(1, std::memory_order_relaxed);
-			}
-			else
-			{
-				success = WriteFbxTextureImage(
-					textureInfo,
-					requestBounds,
-					TileSize,
-					readTileImage);
-				if (success && !WriteTextFile(textureInfo.metadataPath, metadata))
-				{
-					success = false;
-				}
+				success = false;
 			}
 
 			if (!success)
@@ -3883,10 +3678,9 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 					textureInfos.size());
 			}
 		});
-	fmt::print("\rFBX 贴图生成: {}/{}，跳过 {}，失败 {}\n",
+	fmt::print("\rFBX 贴图生成: {}/{}，失败 {}\n",
 		textureInfos.size(),
 		textureInfos.size(),
-		skippedCount.load(),
 		failedCount.load());
 	if (failedCount.load() != 0)
 	{

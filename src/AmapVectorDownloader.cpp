@@ -1,10 +1,16 @@
 #include "AmapVectorDownloader.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <exception>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
 #include <string>
+#include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -145,6 +151,101 @@ namespace
             std::to_string(tile.zoom);
     }
 
+    std::filesystem::path GetRawTileCacheFilePath(
+        const DownTool::AmapVectorDownloadOptions& options,
+        const DownTool::AmapVectorTile& tile,
+        uint32_t type)
+    {
+        const std::filesystem::path layerDirectory = type == 1 ?
+            std::filesystem::u8path("基础图层") :
+            std::filesystem::u8path("标注图层");
+        return options.rawTileCachePath /
+            layerDirectory /
+            std::to_string(tile.zoom) /
+            std::to_string(tile.x) /
+            (std::to_string(tile.y) + ".pbf");
+    }
+
+    bool ReadRawTileCache(
+        const std::filesystem::path& cachePath,
+        std::string& envelope,
+        std::string& error)
+    {
+        std::error_code existsError;
+        if (!std::filesystem::exists(cachePath, existsError))
+        {
+            if (existsError)
+            {
+                error = "无法检查高德矢量缓存：" + existsError.message();
+            }
+            return false;
+        }
+
+        std::ifstream input(cachePath, std::ios::binary);
+        if (!input)
+        {
+            error = "无法读取高德矢量缓存。";
+            return false;
+        }
+        envelope.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+        if (input.bad() || envelope.empty())
+        {
+            error = "高德矢量缓存为空或读取失败。";
+            return false;
+        }
+        return true;
+    }
+
+    bool WriteRawTileCache(
+        const std::filesystem::path& cachePath,
+        const std::string& envelope,
+        std::string& error)
+    {
+        std::error_code createError;
+        std::filesystem::create_directories(cachePath.parent_path(), createError);
+        if (createError)
+        {
+            error = "无法创建高德矢量缓存目录：" + createError.message();
+            return false;
+        }
+
+        static std::atomic_uint64_t temporaryFileSequence = 0;
+        const uint64_t temporaryFileId =
+            temporaryFileSequence.fetch_add(1, std::memory_order_relaxed);
+        std::filesystem::path temporaryPath = cachePath;
+        temporaryPath += ".tmp." + std::to_string(temporaryFileId);
+        {
+            std::ofstream output(temporaryPath, std::ios::binary | std::ios::trunc);
+            if (!output)
+            {
+                error = "无法写入高德矢量缓存。";
+                return false;
+            }
+            output.write(envelope.data(), static_cast<std::streamsize>(envelope.size()));
+            if (!output)
+            {
+                error = "高德矢量缓存写入不完整。";
+                return false;
+            }
+        }
+
+        std::error_code replaceError;
+        std::filesystem::rename(temporaryPath, cachePath, replaceError);
+        if (replaceError)
+        {
+            std::filesystem::remove(cachePath, replaceError);
+            replaceError.clear();
+            std::filesystem::rename(temporaryPath, cachePath, replaceError);
+        }
+        if (replaceError)
+        {
+            std::filesystem::remove(temporaryPath, replaceError);
+            error = "无法提交高德矢量缓存：" + replaceError.message();
+            return false;
+        }
+        return true;
+    }
+
     bool RequestSignedTileUrl(
         const DownTool::AmapVectorDownloadOptions& options,
         const DownTool::AmapVectorTile& tile,
@@ -208,7 +309,10 @@ namespace
         return true;
     }
 
-    bool DownloadTileEnvelope(const std::string& signedUrl, std::string& envelope, std::string& error)
+    bool DownloadTileEnvelope(
+        const std::string& signedUrl,
+        std::string& envelope,
+        std::string& error)
     {
         const std::vector<std::string> headers = {
             std::string("Referer: ") + kAmapWebReferer
@@ -248,9 +352,87 @@ namespace
             source.features.begin(),
             source.features.end());
     }
+
+    struct AmapVectorDownloadTask
+    {
+        DownTool::AmapVectorTile tile;
+        uint32_t type = 0;
+    };
+
+    struct AmapVectorDownloadTaskResult
+    {
+        bool success = false;
+        bool cacheHit = false;
+        std::string error;
+        DownTool::AmapVectorDecodedData decodedData;
+    };
+
+    size_t GetDownloadWorkerCount(uint32_t configuredCount, size_t taskCount)
+    {
+        if (taskCount == 0)
+        {
+            return 0;
+        }
+        const uint32_t hardwareCount = std::max(1u, std::thread::hardware_concurrency());
+        const uint32_t requestedCount = configuredCount == 0 ? hardwareCount :
+            std::min(configuredCount, hardwareCount);
+        return std::min<size_t>(taskCount, std::max(1u, requestedCount));
+    }
+
+    bool DownloadAmapVectorTask(
+        const DownTool::AmapVectorDownloadOptions& options,
+        const AmapVectorDownloadTask& task,
+        AmapVectorDownloadTaskResult& result)
+    {
+        std::string envelope;
+        const std::filesystem::path cachePath =
+            GetRawTileCacheFilePath(options, task.tile, task.type);
+        bool cacheHit = false;
+        std::string cacheError;
+        if (options.useRawTileCache && ReadRawTileCache(cachePath, envelope, cacheError))
+        {
+            cacheHit = true;
+        }
+
+        DownTool::AmapVectorDecodedData tileData;
+        if (cacheHit && !DownTool::AmapVectorDecoder::DecodeEnvelope(
+            envelope, tileData, cacheError))
+        {
+            cacheHit = false;
+            envelope.clear();
+        }
+
+        if (!cacheHit)
+        {
+            std::string signedUrl;
+            if (!RequestSignedTileUrl(options, task.tile, task.type, signedUrl, result.error))
+            {
+                return false;
+            }
+            if (!DownloadTileEnvelope(signedUrl, envelope, result.error))
+            {
+                return false;
+            }
+            if (!DownTool::AmapVectorDecoder::DecodeEnvelope(
+                envelope, tileData, result.error))
+            {
+                return false;
+            }
+            if (options.useRawTileCache &&
+                !WriteRawTileCache(cachePath, envelope, result.error))
+            {
+                return false;
+            }
+        }
+
+        result.cacheHit = cacheHit;
+        result.decodedData = std::move(tileData);
+        result.success = true;
+        return true;
+    }
 }
 
-DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadGeoJson(
+DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::Download(
     const AmapVectorDownloadOptions& options) const
 {
     AmapVectorDownloadResult result;
@@ -262,11 +444,6 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadGeoJs
     if (options.webApiVersion.empty())
     {
         result.error = "下载高德矢量数据需要 Web JSAPI 版本。";
-        return result;
-    }
-    if (options.geoJsonOutputPath.empty())
-    {
-        result.error = "下载高德矢量数据需要 GeoJSON 输出路径。";
         return result;
     }
     if (!options.includeBaseLayers && !options.includeLabels)
@@ -282,10 +459,11 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadGeoJs
 
     try
     {
+        const uint32_t dataZoom = AmapVectorTileGrid::ResolveDataZoom(options.zoom);
         result.selectedTiles = AmapVectorTileGrid::SelectTilesForWgs84Radius(
             options.centerWgs84,
             options.radiusMeters,
-            options.zoom);
+            dataZoom);
     }
     catch (const std::exception& exception)
     {
@@ -303,40 +481,188 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadGeoJs
         tileTypes.push_back(2);
     }
 
-    AmapVectorDecodedData decodedData;
+    std::vector<AmapVectorDownloadTask> tasks;
+    tasks.reserve(result.selectedTiles.size() * tileTypes.size());
     for (const AmapVectorTile& tile : result.selectedTiles)
     {
         for (const uint32_t type : tileTypes)
         {
-            std::string signedUrl;
-            if (!RequestSignedTileUrl(options, tile, type, signedUrl, result.error))
-            {
-                return result;
-            }
-
-            std::string envelope;
-            if (!DownloadTileEnvelope(signedUrl, envelope, result.error))
-            {
-                return result;
-            }
-
-            AmapVectorDecodedData tileData;
-            if (!AmapVectorDecoder::DecodeEnvelope(envelope, tileData, result.error))
-            {
-                return result;
-            }
-            MergeDecodedData(tileData, decodedData);
+            tasks.push_back({ tile, type });
         }
     }
 
-    if (!AmapVectorGeoJsonWriter::WriteFile(
-        decodedData, options.geoJsonOutputPath, result.error))
+    std::vector<AmapVectorDownloadTaskResult> taskResults(tasks.size());
+    std::atomic_size_t nextTaskIndex = 0;
+    std::atomic_bool cancellationRequested = false;
+    std::mutex progressMutex;
+    std::mutex errorMutex;
+    size_t completedTaskCount = 0;
+    size_t cacheHitCount = 0;
+    size_t downloadedTaskCount = 0;
+    size_t failedTaskCount = 0;
+    std::string firstError;
+
+    const auto setFirstError = [&](std::string error)
     {
+        cancellationRequested.store(true, std::memory_order_relaxed);
+        std::lock_guard<std::mutex> errorLock(errorMutex);
+        if (firstError.empty())
+        {
+            firstError = std::move(error);
+        }
+    };
+
+    const auto reportProgress = [&](bool cacheHit, bool downloaded, bool failed)
+    {
+        std::lock_guard<std::mutex> lock(progressMutex);
+        ++completedTaskCount;
+        cacheHitCount += cacheHit ? 1 : 0;
+        downloadedTaskCount += downloaded ? 1 : 0;
+        failedTaskCount += failed ? 1 : 0;
+        if (options.progressCallback)
+        {
+            try
+            {
+                options.progressCallback({
+                    completedTaskCount,
+                    tasks.size(),
+                    cacheHitCount,
+                    downloadedTaskCount,
+                    failedTaskCount });
+            }
+            catch (const std::exception& exception)
+            {
+                setFirstError("高德 GIS 下载进度回调异常：" + std::string(exception.what()));
+            }
+            catch (...)
+            {
+                setFirstError("高德 GIS 下载进度回调发生未知异常。");
+            }
+        }
+    };
+
+    if (options.progressCallback)
+    {
+        try
+        {
+            options.progressCallback({ 0, tasks.size(), 0, 0, 0 });
+        }
+        catch (const std::exception& exception)
+        {
+            setFirstError("高德 GIS 下载进度回调异常：" + std::string(exception.what()));
+        }
+        catch (...)
+        {
+            setFirstError("高德 GIS 下载进度回调发生未知异常。");
+        }
+    }
+
+    if (cancellationRequested.load(std::memory_order_relaxed))
+    {
+        result.error = firstError;
         return result;
+    }
+
+    const size_t workerCount = GetDownloadWorkerCount(options.maxConcurrency, tasks.size());
+    std::vector<std::thread> workers;
+    workers.reserve(workerCount);
+    try
+    {
+        for (size_t workerIndex = 0; workerIndex < workerCount; ++workerIndex)
+        {
+            workers.emplace_back(
+                [&]()
+                {
+                    while (!cancellationRequested.load(std::memory_order_relaxed))
+                    {
+                        const size_t taskIndex =
+                            nextTaskIndex.fetch_add(1, std::memory_order_relaxed);
+                        if (taskIndex >= tasks.size())
+                        {
+                            return;
+                        }
+
+                        AmapVectorDownloadTaskResult& taskResult = taskResults[taskIndex];
+                        const bool success = DownloadAmapVectorTask(
+                            options, tasks[taskIndex], taskResult);
+                        if (!success)
+                        {
+                            setFirstError(taskResult.error);
+                        }
+                        reportProgress(
+                            taskResult.cacheHit,
+                            success && !taskResult.cacheHit,
+                            !success);
+                    }
+                });
+        }
+    }
+    catch (const std::exception& exception)
+    {
+        setFirstError("无法创建高德 GIS 下载线程：" + std::string(exception.what()));
+    }
+    catch (...)
+    {
+        setFirstError("无法创建高德 GIS 下载线程。");
+    }
+    for (std::thread& worker : workers)
+    {
+        worker.join();
+    }
+
+    if (cancellationRequested.load(std::memory_order_relaxed))
+    {
+        result.error = firstError.empty() ? "高德 GIS 矢量任务失败。" : firstError;
+        return result;
+    }
+
+    AmapVectorDecodedData decodedData;
+    for (const AmapVectorDownloadTaskResult& taskResult : taskResults)
+    {
+        if (!taskResult.success)
+        {
+            result.error = taskResult.error.empty() ? "高德 GIS 矢量任务失败。" :
+                taskResult.error;
+            return result;
+        }
+        if (taskResult.cacheHit)
+        {
+            result.cachedPacketCount += taskResult.decodedData.packetCount;
+            ++result.cachedTaskCount;
+        }
+        else
+        {
+            ++result.downloadedTaskCount;
+        }
+        MergeDecodedData(taskResult.decodedData, decodedData);
     }
 
     result.downloadedPacketCount = decodedData.packetCount;
     result.featureCount = static_cast<uint32_t>(decodedData.features.size());
+    result.decodedData = std::move(decodedData);
     result.success = true;
+    return result;
+}
+
+DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadGeoJson(
+    const AmapVectorDownloadOptions& options) const
+{
+    AmapVectorDownloadResult result;
+    if (options.geoJsonOutputPath.empty())
+    {
+        result.error = "下载高德矢量数据需要 GeoJSON 输出路径。";
+        return result;
+    }
+
+    result = Download(options);
+    if (!result.success)
+    {
+        return result;
+    }
+    if (!AmapVectorGeoJsonWriter::WriteFile(
+        result.decodedData, options.geoJsonOutputPath, result.error))
+    {
+        result.success = false;
+    }
     return result;
 }

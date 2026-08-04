@@ -2,6 +2,21 @@
 
 namespace
 {
+    std::filesystem::path FindFirstPng(const std::filesystem::path& directory)
+    {
+        std::error_code iteratorError;
+        for (std::filesystem::directory_iterator iterator(directory, iteratorError), end;
+            !iteratorError && iterator != end;
+            iterator.increment(iteratorError))
+        {
+            if (iterator->is_regular_file() && iterator->path().extension() == ".png")
+            {
+                return iterator->path();
+            }
+        }
+        return {};
+    }
+
     bool RunTest()
     {
         const std::filesystem::path testRoot =
@@ -47,6 +62,21 @@ namespace
             !postprocess_test::RequireFbxAxisAndUnit(planeFbxPath) ||
             !postprocess_test::RequireFbxAxisAndUnit(sphereFbxPath) ||
             !postprocess_test::RequirePlaneFbxUvMatchesNorthAxis(planeFbxPath))
+        {
+            return false;
+        }
+
+        const std::filesystem::path texturePath = FindFirstPng(textureRoot);
+        const cv::Scalar staleColor(13, 17, 251, 255);
+        if (!postprocess_test::Require(!texturePath.empty(), "FBX texture path is empty") ||
+            !postprocess_test::WriteSourceTile(texturePath, 64, staleColor))
+        {
+            return false;
+        }
+
+        tool.RunPostProcessForTest();
+        if (!postprocess_test::RequirePixelNotColor(
+            texturePath, 1, 2, cv::Vec4b(13, 17, 251, 255)))
         {
             return false;
         }

@@ -194,8 +194,6 @@ namespace DownTool
 
 		void GeneratePostProcessLowerZoomTiles(std::vector<Tile> currentLevelTiles);
 
-		bool IsPostProcessLowerZoomTileFresh(const Tile& parentTile) const;
-
 		uint32_t SelectPostProcessMergedImageSampleZoom() const;
 
 		void BuildRequestedTilesAtZoom(uint32_t zoom, std::vector<Tile>& targetTiles) const;

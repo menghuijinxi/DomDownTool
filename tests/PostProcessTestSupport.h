@@ -50,13 +50,6 @@ namespace postprocess_test
             testName;
     }
 
-    inline std::filesystem::path MakePathWithUtf8Suffix(
-        const std::filesystem::path& path,
-        const std::string& suffix)
-    {
-        return std::filesystem::u8path(PathToUtf8String(path) + suffix);
-    }
-
     inline bool ResetDirectory(const std::filesystem::path& path)
     {
         std::error_code removeError;
@@ -143,6 +136,25 @@ namespace postprocess_test
         }
 
         return true;
+    }
+
+    inline bool RequirePixelNotColor(
+        const std::filesystem::path& path,
+        int x,
+        int y,
+        const cv::Vec4b& excludedColor)
+    {
+        const cv::Mat image = cv::imread(PathToUtf8String(path), cv::IMREAD_UNCHANGED);
+        if (image.empty() || image.channels() != 4 || x < 0 || y < 0 ||
+            x >= image.cols || y >= image.rows)
+        {
+            std::cerr << "image pixel unavailable: " << PathToUtf8String(path) << "\n";
+            return false;
+        }
+
+        return Require(
+            image.at<cv::Vec4b>(y, x) != excludedColor,
+            "image still contains stale pixel: " + PathToUtf8String(path));
     }
 
     inline bool ContainsText(const std::filesystem::path& path, const std::string& needle)

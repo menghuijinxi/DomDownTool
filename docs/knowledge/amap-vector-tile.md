@@ -16,21 +16,101 @@
 - 输入中心和半径采用 WGS84。先用大地线计算半径边界，再转换为 GCJ-02。
 - 矢量瓦片索引为 `x=floor((lon+180)/360*2^z)`、
   `y=floor((90-lat)/180*2^z)`，不是 Web Mercator 的纬度投影。
+- PBF 几何局部坐标使用 2:1 世界范围：同一 `resolution` 下，X 轴尺度为
+  `2^(resolution-1)`，Y 轴尺度为 `2^(resolution-2)`；解码时不能共用一个尺度。
 - 半径只在客户端用于选取相交的完整瓦片。请求中的 `contain_range=2` 是服务端
   内容范围参数，不是米制半径，也不负责选择相邻瓦片。
 - PBF 采用 Protobuf schema 解码，保留为 `AmapVectorDecodedData` 中间模型；GeoJSON
-  仅为当前写出器，未来 Shapefile 或模型写出器应复用该模型。
+  和 PNG 写出器均复用该模型。
 - 输出坐标为 GCJ-02，并在 GeoJSON 顶层明确标注 `coordinateSystem: GCJ-02`。
+- 显示层级与 PBF 数据层级是两个概念。高德在线地图将连续的显示层级映射到离散的
+  PBF 层级：显示 z2-z5 使用数据 z3，z6-z7 使用 z6，z8-z9 使用 z8，z10-z12
+  使用 z10，z13-z14 使用 z12，z15 及以上使用 z14。直接请求其他数据层级会得到合法但
+  没有要素的很小 PBF，不代表网络下载失败。
+- `AmapVectorDownloadOptions::zoom` 和命令行 `--zoom` 表示 PNG 显示层级。下载器只在选择和
+  请求 PBF 时应用上述映射；渲染器仍按调用方设置的显示层级输出 Web Mercator XYZ。
+- 默认严格按显示层级检查每个要素的 `minZoom`、`maxZoom`，所有类别使用相同规则。
+  `--render-all-zooms` 或 `AmapVectorRenderOptions::ignoreFeatureZoomRange = true` 会显式忽略
+  这两个字段；它与 `--types all` 的“选择所有类别”语义相互独立。
+
+## 属性与分类
+
+解码模型和 GeoJSON 会保留 `layer`、`mainKey`、`subKey`、`resolution`、
+`minZoom`、`maxZoom`、`drawOrder`、`rank`、`uid`、名称、道路盾牌、建筑高度和
+内部点类型等属性。高德网页公开能力可以区分 `point`、`road`、`building` 等图层，
+但没有公开稳定的 `mainKey/subKey` 语义表，不能把观察到的分类码当成长期协议。当前
+JSAPI 内置样式表把 `30001:{2,6,11,13}` 作为水系面、`20014:{1,2}` 作为水系线、
+`10002:{13,38}` 作为水系标注；`30001:3` 是绿地，不能作为水体。
+
+建筑层的 PBF 确实包含 `height` 数值，实际样本中可见 4、8、12、16、20、40 等值。
+高德未公开该内部字段的单位和完整语义，渲染器只按原始数值分色，不自行换算成米或楼层。
+
+PNG 渲染分类按以下优先级确定：
+
+1. `(mainKey, subKey)` 精确映射。
+2. `mainKey` 映射。
+3. 图层名映射。
+4. 内置图层映射。
+
+颜色覆盖同样优先使用 `(mainKey, subKey)`，然后是 `mainKey`。启用
+`--building-height-colors`（或设置 `colorBuildingsByHeight = true`）后，带有效高度的建筑
+在这两种精确覆盖之后使用由高度稳定计算出的颜色；无高度建筑和其他类别最后使用类别颜色。
+同一个高度在不同瓦片、不同下载范围中保持同色。当前高度颜色是确定性高饱和色，不依赖要素
+遍历顺序；高度为 0 的建筑视为没有有效高度。
+内置类别包括全部、点、道路、普通线、建筑、水体、公交和其他；默认水体为绿色、建筑为
+灰色、道路为黄色。内置水体分类使用上述当前 JSAPI 样式映射；调用方仍可根据下载的
+GeoJSON 属性配置精确映射，以应对高德后续调整内部分类码。
+
+## 缓存与 PNG 后处理
+
+- 原始 PBF 使用易读目录：`cache/高德地图/gis数据/pbf缓存/基础图层/z/x/y.pbf`
+  和 `标注图层/z/x/y.pbf`。缓存命中时不申请临时签名 URL；缓存解码失败时自动重新下载。
+  目录中的 z 是映射后的 PBF 数据层级。若主动修改 `webApiVersion` 或 `containRange`，应清理
+  一次 `pbf缓存`。
+- 渲染用 PNG 固定写入 `cache/高德地图/gis数据/临时/z/x/y.png`，不再把样式哈希暴露成
+  子目录。这里的 z 是调用方设置的显示层级。临时 PNG 不参与缓存命中，每次运行都会重新
+  渲染当前范围。
+- 默认输出统一写入 `cache/高德地图/gis数据/输出`，其中包含 `数据.geojson`、
+  `合并大图.png` 和 `瓦片/z/x/y.png`。
+- PNG 渲染会把要素坐标从 GCJ-02 转成 WGS84，再写为标准 Web Mercator XYZ，因而可以
+  直接使用已有金字塔、合并大图和 FBX 后处理。
+- PNG 瓦片内部使用 2 倍分辨率绘制后缩小。水体与其他类别使用同一套线宽和几何绘制逻辑，
+  不再依据 `minZoom` 额外改变水系线宽或补画节点。
+- 只有原始 PBF 下载数据会跨运行复用。金字塔瓦片、合并大图和 FBX 贴图每次都会重新生成；
+  低层级金字塔只读取本次处理范围内的子瓦片，避免旧范围残留进入新结果。
+
+## 并发与进度
+
+- PBF 下载按“瓦片 + 图层类型”拆分为独立任务，默认按硬件线程数并发。
+- PNG 渲染按输出 XYZ 瓦片并发，默认并发数同样按硬件线程数选择；后处理继续使用已有并发队列。
+- `AmapVectorDownloadOptions::maxConcurrency` 和
+  `AmapVectorRenderOptions::maxConcurrency` 可以分别控制并发数，设置为 0 时自动使用硬件线程数；
+  显式值也不会超过硬件线程数。
+- 两类 options 都提供串行化调用的进度回调。PBF 回调报告总任务、完成、缓存命中、实际下载和
+  失败数量；PNG 回调报告总瓦片、完成和失败数量。
+- `AmapGisDownload.exe --concurrency 8` 会同时设置 PBF 下载、PNG 渲染和后处理并发数。
+- 命令行使用 `--merged-only` 时关闭最终金字塔目录，只把合并大图需要的采样中间瓦片放在
+  `临时/大图采样`；配合 `--no-geojson` 可以只保留合并大图输出。
+- Windows 下 OpenCV 不直接负责打开中文 PNG 路径。图片先编码到内存，再由支持
+  `std::filesystem::path` 的文件流写入，确保默认中文缓存目录可用。
+- PBF 缓存先写入唯一临时文件，再替换正式缓存文件；并发任务不会直接写同一个半成品文件。
 
 ## 验证方式
 
 `AmapVectorGeoJsonTest` 以 25 米 WGS84 半径构造合成 gzip/PBF 信封，覆盖单瓦片选择、
-POI 与建筑多边形解码、闭环和 GeoJSON 写出。实现阶段还用本地临时真实样本验证了当前
-schema 能解析实际 PBF；该样本不作为正式测试依赖。
+显示层级到数据层级的映射、z16 显示命中 z14 PBF 缓存、POI 与建筑多边形解码、闭环和
+GeoJSON 写出。`AmapVectorPngTileTest` 覆盖严格层级过滤、显式忽略层级范围、默认颜色、
+类别筛选、主/子分类自定义颜色、建筑高度稳定分色、临时 PNG 重写，以及现有金字塔、
+合并大图和 FBX 后处理。
+实现阶段还用本地临时真实样本验证了当前 schema 能解析实际 PBF；该样本不作为正式测试依赖。
 
 ## 快速检查清单
 
 - 新增图层字段时先更新 `proto/amap_vector_tile.proto`，再扩展中间要素模型。
 - 若授权失败，检查 Web API key 和 `webApiVersion`，不要尝试复用过期 `auth_key`。
 - 若位置整体偏移，先确认调用方没有把 GCJ-02 当作 WGS84 输入，也没有把输出误标为 WGS84。
+- 若高显示层级下载到约 1 KB 的空文件，先检查下载器是否把显示层级直接当成 PBF 数据层级；
+  z15 及以上显示应请求 z14 数据。
+- 若某类要素没有渲染，检查它的 `minZoom/maxZoom` 与显示层级；只有明确需要忽略高德样式
+  层级时才启用 `--render-all-zooms`。
 - 若需要严格圆形边界，必须在中间要素模型层实现裁剪；当前行为是完整选中瓦片输出。

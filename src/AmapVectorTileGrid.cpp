@@ -13,7 +13,6 @@
 namespace
 {
     constexpr uint32_t kMaximumAmapVectorZoom = 30;
-    constexpr uint64_t kMaximumSelectedTileCount = 4096;
 
     double NormalizeLongitude(double longitude)
     {
@@ -68,6 +67,36 @@ namespace
             }
         }
     }
+}
+
+uint32_t DownTool::AmapVectorTileGrid::ResolveDataZoom(uint32_t renderZoom)
+{
+    // 高德在线底图用离散 PBF 层级服务连续显示层级。
+    if (renderZoom > kMaximumAmapVectorZoom)
+    {
+        throw std::invalid_argument("高德矢量瓦片缩放级别超出支持范围。");
+    }
+    if (renderZoom <= 5)
+    {
+        return 3;
+    }
+    if (renderZoom <= 7)
+    {
+        return 6;
+    }
+    if (renderZoom <= 9)
+    {
+        return 8;
+    }
+    if (renderZoom <= 12)
+    {
+        return 10;
+    }
+    if (renderZoom <= 14)
+    {
+        return 12;
+    }
+    return 14;
 }
 
 std::vector<DownTool::AmapVectorTile> DownTool::AmapVectorTileGrid::SelectTilesForWgs84Radius(
@@ -144,12 +173,6 @@ std::vector<DownTool::AmapVectorTile> DownTool::AmapVectorTileGrid::SelectTilesF
     const uint64_t columnCount = northWest.x <= southEast.x ?
         static_cast<uint64_t>(southEast.x) - northWest.x + 1 :
         tileCount - northWest.x + southEast.x + 1;
-    if (rowCount > kMaximumSelectedTileCount ||
-        columnCount > kMaximumSelectedTileCount ||
-        rowCount * columnCount > kMaximumSelectedTileCount)
-    {
-        throw std::invalid_argument("高德矢量下载范围过大，请降低半径或缩放级别。");
-    }
 
     std::vector<AmapVectorTile> tiles;
     tiles.reserve(static_cast<size_t>(rowCount * columnCount));

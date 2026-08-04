@@ -18,6 +18,8 @@ namespace DownTool
     class AmapVectorTileGrid
     {
     public:
+        static uint32_t ResolveDataZoom(uint32_t renderZoom);
+
         // 输入和半径使用 WGS84；返回的瓦片属于高德 GCJ-02 矢量网格。
         static std::vector<AmapVectorTile> SelectTilesForWgs84Radius(
             const LonLat& centerWgs84,

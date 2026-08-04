@@ -53,6 +53,22 @@ namespace
             return false;
         }
 
+        const std::filesystem::path rootTilePath =
+            tool.PostProcessTilePath(DownTool::Tile(0, 0, 0));
+        const cv::Scalar staleColor(13, 17, 251, 255);
+        if (!postprocess_test::WriteSourceTile(
+            rootTilePath, tool.GetTileSize(), staleColor))
+        {
+            return false;
+        }
+
+        tool.RunPostProcessForTest();
+        if (!postprocess_test::RequirePixelNotColor(
+            rootTilePath, 1, 2, cv::Vec4b(13, 17, 251, 255)))
+        {
+            return false;
+        }
+
         std::cout << "PostProcessPyramidTest passed\n";
         return true;
     }

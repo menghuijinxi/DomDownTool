@@ -25,11 +25,21 @@ namespace
 
         tool.RunPostProcessForTest();
 
-        const std::filesystem::path metadataPath =
-            postprocess_test::MakePathWithUtf8Suffix(tool.MergedImagePath(), ".meta.json");
-        if (!postprocess_test::RequireImageSize(tool.MergedImagePath(), 64, 64) ||
-            !postprocess_test::RequireNonEmptyFile(
-                metadataPath))
+        if (!postprocess_test::RequireImageSize(tool.MergedImagePath(), 64, 64))
+        {
+            return false;
+        }
+
+        const cv::Scalar staleColor(13, 17, 251, 255);
+        if (!postprocess_test::WriteSourceTile(
+            tool.MergedImagePath(), 64, staleColor))
+        {
+            return false;
+        }
+
+        tool.RunPostProcessForTest();
+        if (!postprocess_test::RequirePixelNotColor(
+            tool.MergedImagePath(), 1, 2, cv::Vec4b(13, 17, 251, 255)))
         {
             return false;
         }

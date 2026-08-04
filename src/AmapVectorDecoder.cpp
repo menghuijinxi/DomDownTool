@@ -115,13 +115,15 @@ namespace
         }
 
         const double tileCount = std::ldexp(1., static_cast<int>(tile.zoom));
-        const double localScale = std::ldexp(1., static_cast<int>(resolution) - 1);
+        const double localXScale = std::ldexp(1., static_cast<int>(resolution) - 1);
+        // 高德内部世界坐标的纬度范围是经度范围的一半，Y 轴局部尺度也相应减半。
+        const double localYScale = std::ldexp(1., static_cast<int>(resolution) - 2);
         coordinate.longitude = -180. +
-            (static_cast<double>(tile.x) + static_cast<double>(localX) / localScale) *
+            (static_cast<double>(tile.x) + static_cast<double>(localX) / localXScale) *
                 360. / tileCount;
         coordinate.latitude = 90. -
             (static_cast<double>(tile.y) + 1.) * 180. / tileCount +
-            static_cast<double>(localY) / localScale * 180. / tileCount;
+            static_cast<double>(localY) / localYScale * 180. / tileCount;
         return std::isfinite(coordinate.longitude) && std::isfinite(coordinate.latitude) &&
             coordinate.longitude >= -180. && coordinate.longitude <= 180. &&
             coordinate.latitude >= -90. && coordinate.latitude <= 90.;
@@ -275,6 +277,22 @@ namespace
         }
     }
 
+    // 高德在 PBF 中省略协议默认值，proto3 标量 getter 会把这些字段读成 0。
+    uint32_t NormalizeStyleValue(uint32_t value, uint32_t defaultValue)
+    {
+        return value == 0 ? defaultValue : value;
+    }
+
+    uint32_t NormalizeMinimumZoom(uint32_t value, uint32_t defaultValue = 2)
+    {
+        return NormalizeStyleValue(value, defaultValue);
+    }
+
+    uint32_t NormalizeMaximumZoom(uint32_t value)
+    {
+        return NormalizeStyleValue(value, 30);
+    }
+
     void DecodeRoadLayer(
         const domdown::amap::Layer& layer,
         DownTool::AmapVectorDecodedData& decodedData)
@@ -288,6 +306,9 @@ namespace
         const LayerTileLocation tile{ layer.x(), layer.y(), layer.z() };
         for (const domdown::amap::RoadLineSameStyle& style : roadLayer.road_lines())
         {
+            const uint32_t mainKey = NormalizeStyleValue(style.main_key(), 20004);
+            const uint32_t subKey = NormalizeStyleValue(style.sub_key(), 1);
+            const uint32_t resolution = NormalizeStyleValue(style.resolution(), 12);
             for (const domdown::amap::RoadLineMulti& item : style.items())
             {
                 for (const domdown::amap::RoadLine& road : item.features())
@@ -295,11 +316,11 @@ namespace
                     DownTool::AmapVectorFeature feature = MakeFeature(
                         DownTool::AmapVectorGeometryType::LineString,
                         "road",
-                        style.main_key(),
-                        style.sub_key(),
-                        style.resolution(),
-                        item.min_zoom(),
-                        item.max_zoom(),
+                        mainKey,
+                        subKey,
+                        resolution,
+                        NormalizeMinimumZoom(item.min_zoom()),
+                        NormalizeMaximumZoom(item.max_zoom()),
                         item.draw_order(),
                         road.rank(),
                         road.uid());
@@ -310,7 +331,7 @@ namespace
                     AppendNames(road.names_8(), feature.names);
                     AppendNames(road.names_9(), feature.names);
                     std::vector<DownTool::AmapVectorCoordinate> coordinates;
-                    if (DecodeDeltaGeometry(road.line(), tile, style.resolution(), coordinates))
+                    if (DecodeDeltaGeometry(road.line(), tile, resolution, coordinates))
                     {
                         feature.geometryParts.push_back(std::move(coordinates));
                     }
@@ -328,6 +349,9 @@ namespace
     {
         for (const domdown::amap::LineFeatureSameStyle& style : styles)
         {
+            const uint32_t mainKey = NormalizeStyleValue(style.main_key(), 20016);
+            const uint32_t subKey = NormalizeStyleValue(style.sub_key(), 1);
+            const uint32_t resolution = NormalizeStyleValue(style.resolution(), 12);
             for (const domdown::amap::LineFeatureMulti& item : style.items())
             {
                 for (const domdown::amap::LineFeature& line : item.features())
@@ -335,11 +359,11 @@ namespace
                     DownTool::AmapVectorFeature feature = MakeFeature(
                         DownTool::AmapVectorGeometryType::LineString,
                         layerName,
-                        style.main_key(),
-                        style.sub_key(),
-                        style.resolution(),
-                        item.min_zoom(),
-                        item.max_zoom(),
+                        mainKey,
+                        subKey,
+                        resolution,
+                        NormalizeMinimumZoom(item.min_zoom()),
+                        NormalizeMaximumZoom(item.max_zoom()),
                         item.draw_order(),
                         line.rank(),
                         line.uid());
@@ -348,7 +372,7 @@ namespace
                     AppendNames(line.names_6(), feature.names);
                     AppendNames(line.names_7(), feature.names);
                     std::vector<DownTool::AmapVectorCoordinate> coordinates;
-                    if (DecodeDeltaGeometry(line.line(), tile, style.resolution(), coordinates))
+                    if (DecodeDeltaGeometry(line.line(), tile, resolution, coordinates))
                     {
                         feature.geometryParts.push_back(std::move(coordinates));
                     }
@@ -366,16 +390,19 @@ namespace
     {
         for (const domdown::amap::PolygonFeatureSameStyle& style : styles)
         {
+            const uint32_t mainKey = NormalizeStyleValue(style.main_key(), 30001);
+            const uint32_t subKey = NormalizeStyleValue(style.sub_key(), 1);
+            const uint32_t resolution = NormalizeStyleValue(style.resolution(), 12);
             for (const domdown::amap::PolygonFeature& polygon : style.items())
             {
                 DownTool::AmapVectorFeature feature = MakeFeature(
                     DownTool::AmapVectorGeometryType::Polygon,
                     layerName,
-                    style.main_key(),
-                    style.sub_key(),
-                    style.resolution(),
-                    polygon.min_zoom(),
-                    polygon.max_zoom(),
+                    mainKey,
+                    subKey,
+                    resolution,
+                    NormalizeMinimumZoom(polygon.min_zoom()),
+                    NormalizeMaximumZoom(polygon.max_zoom()),
                     polygon.draw_order(),
                     polygon.rank(),
                     polygon.uid());
@@ -385,7 +412,10 @@ namespace
                 {
                     std::vector<DownTool::AmapVectorCoordinate> ring;
                     if (DecodeDeltaGeometry(
-                        polygonGeometry.polygon(), tile, style.resolution(), ring))
+                        polygonGeometry.polygon(),
+                        tile,
+                        resolution,
+                        ring))
                     {
                         CloseRing(ring);
                         feature.geometryParts.push_back(std::move(ring));
@@ -404,6 +434,9 @@ namespace
     {
         for (const domdown::amap::PointFeatureSameStyle& style : styles)
         {
+            const uint32_t mainKey = NormalizeStyleValue(style.main_key(), 12024);
+            const uint32_t subKey = NormalizeStyleValue(style.sub_key(), 1);
+            const uint32_t resolution = NormalizeStyleValue(style.resolution(), 12);
             for (const domdown::amap::PointFeatureMulti& item : style.items())
             {
                 for (const domdown::amap::PointFeature& point : item.features())
@@ -411,11 +444,11 @@ namespace
                     DownTool::AmapVectorFeature feature = MakeFeature(
                         DownTool::AmapVectorGeometryType::Point,
                         layerName,
-                        style.main_key(),
-                        style.sub_key(),
-                        style.resolution(),
-                        item.min_zoom(),
-                        item.max_zoom(),
+                        mainKey,
+                        subKey,
+                        resolution,
+                        NormalizeMinimumZoom(item.min_zoom(), 18),
+                        NormalizeMaximumZoom(item.max_zoom()),
                         point.draw_order(),
                         item.rank(),
                         point.uid());
@@ -425,7 +458,7 @@ namespace
                     AppendNames(point.names_7(), feature.names);
                     AppendNames(point.names_8(), feature.names);
                     std::vector<DownTool::AmapVectorCoordinate> coordinates;
-                    if (DecodePointGeometry(point.position(), tile, style.resolution(), coordinates))
+                    if (DecodePointGeometry(point.position(), tile, resolution, coordinates))
                     {
                         feature.geometryParts.push_back(std::move(coordinates));
                     }
@@ -463,6 +496,9 @@ namespace
         const LayerTileLocation tile{ layer.x(), layer.y(), layer.z() };
         for (const domdown::amap::BuildingSameStyle& style : buildingLayer.buildings())
         {
+            const uint32_t mainKey = NormalizeStyleValue(style.main_key(), 55001);
+            const uint32_t subKey = NormalizeStyleValue(style.sub_key(), 1);
+            const uint32_t resolution = NormalizeStyleValue(style.resolution(), 12);
             for (const domdown::amap::BuildingFeatureMulti& item : style.items())
             {
                 for (const domdown::amap::BuildingFeature& building : item.features())
@@ -470,11 +506,11 @@ namespace
                     DownTool::AmapVectorFeature feature = MakeFeature(
                         DownTool::AmapVectorGeometryType::Polygon,
                         "building",
-                        style.main_key(),
-                        style.sub_key(),
-                        style.resolution(),
-                        item.min_zoom(),
-                        item.max_zoom(),
+                        mainKey,
+                        subKey,
+                        resolution,
+                        NormalizeMinimumZoom(item.min_zoom(), 15),
+                        NormalizeMaximumZoom(item.max_zoom()),
                         item.draw_order(),
                         building.rank(),
                         building.uid());
@@ -487,7 +523,11 @@ namespace
                     AppendNames(building.names_8(), feature.names);
                     AppendNames(building.names_9(), feature.names);
                     std::vector<DownTool::AmapVectorCoordinate> ring;
-                    if (DecodeDeltaGeometry(building.polygon(), tile, style.resolution(), ring))
+                    if (DecodeDeltaGeometry(
+                        building.polygon(),
+                        tile,
+                        resolution,
+                        ring))
                     {
                         CloseRing(ring);
                         feature.geometryParts.push_back(std::move(ring));
