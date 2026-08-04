@@ -1,5 +1,8 @@
 # 高德 Web 矢量瓦片
 
+面向使用者的构建、命令行参数和常见示例见
+[高德 GIS 下载与 PNG 渲染](../amap-gis-download.md)。
+
 ## 现象
 
 高德 Web 矢量瓦片不是现有栅格下载器使用的 Web Mercator 网格。服务返回的 PBF
