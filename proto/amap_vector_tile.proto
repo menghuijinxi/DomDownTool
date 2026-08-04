@@ -1,0 +1,192 @@
+syntax = "proto3";
+
+package domdown.amap;
+
+// 高德 Web 矢量瓦片 v2 的已验证字段。未知字段由 Protobuf 保留并跳过，
+// 以便服务端增加字段时仍可解析当前已知内容。
+message Result {
+  repeated Tile tiles = 1;
+  string version = 2;
+  bool status = 3;
+}
+
+message Tile {
+  uint32 z = 1;
+  uint32 x = 2;
+  uint32 y = 3;
+  repeated Layer layers = 4;
+}
+
+message Layer {
+  uint32 z = 1;
+  uint32 x = 2;
+  uint32 y = 3;
+  uint32 type = 4;
+  bytes data = 5;
+  string metadata_6 = 6;
+  string metadata_7 = 7;
+  fixed64 style_tag = 8;
+}
+
+message Language {
+  string name = 1;
+  string language = 2;
+  repeated uint32 unknown_3 = 3 [packed = true];
+  repeated uint32 unknown_4 = 4 [packed = true];
+}
+
+message RoadLine {
+  repeated Language names = 1;
+  uint32 rank = 2;
+  string shield = 3;
+  uint32 shield_type = 4;
+  repeated sint32 line = 5 [packed = true];
+  repeated Language alternative_names = 6;
+  uint64 uid = 7;
+  repeated Language names_8 = 8;
+  repeated Language names_9 = 9;
+}
+
+message LineFeature {
+  repeated Language names = 1;
+  uint32 rank = 2;
+  repeated sint32 line = 3 [packed = true];
+  repeated Language alternative_names = 4;
+  uint64 uid = 5;
+  repeated Language names_6 = 6;
+  repeated Language names_7 = 7;
+}
+
+message RoadLineMulti {
+  uint32 min_zoom = 1;
+  uint32 max_zoom = 2;
+  uint32 draw_order = 3;
+  repeated RoadLine features = 4;
+}
+
+message LineFeatureMulti {
+  uint32 min_zoom = 1;
+  uint32 max_zoom = 2;
+  uint32 draw_order = 3;
+  repeated LineFeature features = 4;
+}
+
+message RoadLineSameStyle {
+  uint32 main_key = 1;
+  uint32 sub_key = 2;
+  uint32 resolution = 3;
+  repeated RoadLineMulti items = 4;
+}
+
+message LineFeatureSameStyle {
+  uint32 main_key = 1;
+  uint32 sub_key = 2;
+  uint32 resolution = 3;
+  repeated LineFeatureMulti items = 4;
+}
+
+message GeometryPolygon {
+  repeated sint32 polygon = 1 [packed = true];
+}
+
+message PolygonFeature {
+  uint32 min_zoom = 1;
+  uint32 max_zoom = 2;
+  repeated Language names = 3;
+  uint32 draw_order = 4;
+  uint32 rank = 5;
+  repeated GeometryPolygon polygons = 6;
+  repeated Language names_7 = 7;
+  uint64 uid = 8;
+}
+
+message PolygonFeatureSameStyle {
+  uint32 main_key = 1;
+  uint32 sub_key = 2;
+  uint32 resolution = 3;
+  repeated PolygonFeature items = 4;
+}
+
+message PointFeature {
+  repeated Language names = 1;
+  uint32 draw_order = 2;
+  string internal_type = 3;
+  repeated uint32 position = 4 [packed = true];
+  repeated Language alternative_names = 5;
+  uint64 uid = 6;
+  repeated Language names_7 = 7;
+  repeated Language names_8 = 8;
+}
+
+message PointFeatureMulti {
+  uint32 min_zoom = 1;
+  uint32 max_zoom = 2;
+  uint32 rank = 3;
+  repeated PointFeature features = 4;
+}
+
+message PointFeatureSameStyle {
+  uint32 main_key = 1;
+  uint32 sub_key = 2;
+  uint32 resolution = 3;
+  repeated PointFeatureMulti items = 4;
+}
+
+message BuildingFeature {
+  repeated Language names = 1;
+  uint32 rank = 2;
+  repeated sint32 polygon = 3 [packed = true];
+  uint64 uid = 4;
+  uint64 height = 5;
+  string building_ids = 6;
+  repeated Language names_7 = 7;
+  repeated Language names_8 = 8;
+  repeated Language names_9 = 9;
+}
+
+message BuildingFeatureMulti {
+  uint32 min_zoom = 1;
+  uint32 max_zoom = 2;
+  uint32 draw_order = 3;
+  repeated BuildingFeature features = 4;
+}
+
+message BuildingSameStyle {
+  uint32 main_key = 1;
+  uint32 sub_key = 2;
+  uint32 resolution = 3;
+  repeated BuildingFeatureMulti items = 4;
+}
+
+message PoiLayer {
+  repeated PointFeatureSameStyle points = 1;
+  string internal_version = 2;
+  string tile_region = 3;
+}
+
+message RoadLayer {
+  repeated RoadLineSameStyle road_lines = 1;
+  string internal_version = 2;
+  string tile_region = 3;
+}
+
+message RegionLayer {
+  repeated PolygonFeatureSameStyle polygons = 1;
+  repeated LineFeatureSameStyle lines = 2;
+  string internal_version = 3;
+  string tile_region = 4;
+}
+
+message BuildingLayer {
+  repeated BuildingSameStyle buildings = 1;
+  string internal_version = 2;
+  string tile_region = 3;
+}
+
+message TransitLayer {
+  repeated LineFeatureSameStyle lines = 1;
+  repeated PointFeatureSameStyle points = 2;
+  repeated PolygonFeatureSameStyle polygons = 3;
+  string internal_version = 4;
+  string tile_region = 5;
+}

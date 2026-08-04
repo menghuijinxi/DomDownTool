@@ -37,6 +37,7 @@
       "version>=": "8.18.0"
     },
     "openssl",
-    "assimp"
+    "assimp",
+    "protobuf"
   ]
 }

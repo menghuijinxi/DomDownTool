@@ -6,9 +6,9 @@ cmake_minimum_required (VERSION 3.24)
 option(IS_AUTODOWNLOAD_VCPKG "是否自动下载vcpkg，并配置vcpkg为工具链" ON)
 option(DOMDOWNTOOL_BUILD_UI "是否构建 WebView UI 预览界面" ON)
 
-message(设置代理：127.0.0.1:7897)
-set(ENV{https_proxy} "127.0.0.1:7897")
-set(ENV{http_proxy} "127.0.0.1:7897")
+message(设置代理：127.0.0.1:10090)
+set(ENV{https_proxy} "127.0.0.1:10090")
+set(ENV{http_proxy} "127.0.0.1:10090")
 
 IF(IS_AUTODOWNLOAD_VCPKG)
     set(Vcpkg_DownloadPath ${CMAKE_CURRENT_SOURCE_DIR}/../out/vcpkg)
@@ -89,6 +89,8 @@ find_package(CURL REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(assimp CONFIG REQUIRED)
+find_package(Protobuf CONFIG REQUIRED)
+find_package(ZLIB REQUIRED)
 
 set(DOMDOWNTOOL_LIBRARIES
     httplib::httplib
@@ -99,7 +101,9 @@ set(DOMDOWNTOOL_LIBRARIES
     CURL::libcurl
     ${OpenCV_LIBS}
     OpenSSL::Crypto
-    assimp::assimp)
+    assimp::assimp
+    protobuf::libprotobuf
+    ZLIB::ZLIB)
 
 file(GLOB DOMDOWNTOOL_CORE_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
@@ -108,7 +112,15 @@ list(REMOVE_ITEM DOMDOWNTOOL_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_main.cpp)
 
 add_library(DomDownToolCore STATIC ${DOMDOWNTOOL_CORE_SOURCES})
-target_include_directories(DomDownToolCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+protobuf_generate(
+    TARGET DomDownToolCore
+    LANGUAGE cpp
+    PROTOS ${CMAKE_CURRENT_SOURCE_DIR}/proto/amap_vector_tile.proto
+    APPEND_PATH
+    PROTOC_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+target_include_directories(DomDownToolCore PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>)
 target_link_libraries(DomDownToolCore PUBLIC ${DOMDOWNTOOL_LIBRARIES})
 
 # 将源代码添加到此项目的可执行文件。
@@ -198,3 +210,5 @@ add_domdown_test(RealDataFbxIntegrationTest
 add_domdown_test(UiBridgeSmokeTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/UiBridgeSmokeTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/UiBridge.cpp)
+add_domdown_test(AmapVectorGeoJsonTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorGeoJsonTest.cpp)
