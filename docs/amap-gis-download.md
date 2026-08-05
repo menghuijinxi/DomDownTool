@@ -54,6 +54,19 @@ WGS84，经纬度顺序分别为 `--lon`、`--lat`。
 
 ## 常用命令
 
+### 输出 JPG 合并大图
+
+```powershell
+.\AmapGisDownload.exe `
+    --types water --zoom 16 --radius 2000 `
+    --no-geojson --merged-only `
+    --merged-format jpg
+```
+
+`--merged-format` 支持 `png` 和 `jpg`，默认是 `png`。PNG 保留透明背景；JPG 不支持
+透明度，透明区域会变为黑色背景。该参数只影响合并大图，临时瓦片和金字塔瓦片仍使用
+PNG。
+
 ### 建筑按高度着色
 
 ```powershell
@@ -139,7 +152,7 @@ cache\高德地图\gis数据\
 ├─ 临时\显示层级\x\y.png
 └─ 输出\
    ├─ 数据.geojson
-   ├─ 合并大图.png
+   ├─ 合并大图.png 或 合并大图.jpg
    └─ 瓦片\显示层级\x\y.png
 ```
 
@@ -150,7 +163,7 @@ cache\高德地图\gis数据\
 - `临时` 中的 PNG 每次运行都会重写，不能作为最终输出使用。
 - 金字塔和合并大图会根据本次输入重新生成，不复用旧结果；通过 C++ 启用 FBX 时同样
   每次重新生成。
-- `--merged-only` 不生成最终 `瓦片` 目录，只保留 `合并大图.png`；合并过程仍会在
+- `--merged-only` 不生成最终 `瓦片` 目录，只保留所选格式的合并大图；合并过程仍会在
   临时目录生成采样瓦片。
 - `--no-geojson` 关闭 `数据.geojson`。当前命令行工具始终执行 PNG 渲染和合并大图，
   暂不提供只导出 GeoJSON 的参数。
@@ -228,6 +241,7 @@ cache\高德地图\gis数据\
 | `--png-cache <目录>` | 覆盖每次重写的临时 PNG 目录 |
 | `--concurrency <数量>` | PBF、PNG 和后处理并发数；0 表示按硬件线程数自动选择 |
 | `--merged-resolution <像素>` | 合并大图最大边，默认 16384，另一边保持比例 |
+| `--merged-format <png\|jpg>` | 合并大图格式，默认 PNG；JPG 不保留透明度 |
 | `-h`, `--help` | 显示内置帮助 |
 
 ## C++ 调用
@@ -272,6 +286,9 @@ if (!result.success)
     // result.error 包含下载、解码、渲染或后处理错误。
 }
 ```
+
+C++ 接口通过输出路径扩展名选择格式。需要 JPG 时，将上面的路径改为
+`cache/高德地图/gis数据/输出/合并大图.jpg`。
 
 应用程序应在调用下载器前完成 libcurl 全局初始化，并在所有下载器对象销毁后执行清理。
 如果只需要解码数据或 GeoJSON，可以直接使用 `AmapVectorDownloader::Download()` 或

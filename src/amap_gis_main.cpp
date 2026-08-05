@@ -27,6 +27,7 @@ namespace
             std::filesystem::u8path("cache/高德地图/gis数据/输出");
         std::filesystem::path geoJsonOutputPath;
         uint32_t mergedImageResolution = 16384;
+        std::string mergedImageFormat = "png";
         bool writeGeoJson = true;
         bool geoJsonPathOverridden = false;
         bool writePyramid = true;
@@ -451,6 +452,20 @@ namespace
                     return false;
                 }
             }
+            else if (argument == "--merged-format")
+            {
+                options.mergedImageFormat = ToLowerAscii(value);
+                if (options.mergedImageFormat == "jpeg")
+                {
+                    options.mergedImageFormat = "jpg";
+                }
+                if (options.mergedImageFormat != "png" &&
+                    options.mergedImageFormat != "jpg")
+                {
+                    error = "--merged-format 只支持 png 或 jpg。";
+                    return false;
+                }
+            }
             else
             {
                 error = "未知参数：" + argument;
@@ -504,12 +519,14 @@ namespace
             "  --png-cache <目录>            临时 PNG XYZ 目录（每次重写）\n"
             "  --concurrency <数量>          PBF/PNG 并发数，默认按硬件线程数，0 表示自动\n"
             "  --merged-resolution <像素>    合并大图最大边，默认 16384\n"
+            "  --merged-format <png|jpg>     合并大图格式，默认 png\n"
             "  -h, --help                    显示帮助\n\n"
             "示例：\n"
             "  AmapGisDownload.exe --types water --zoom 16 --radius 2000\n"
             "  AmapGisDownload.exe --types road,building --color \"road=#F0C641\"\n"
             "  AmapGisDownload.exe --types building --building-height-colors\n"
             "  AmapGisDownload.exe --types all --zoom 14 --render-all-zooms\n"
+            "  AmapGisDownload.exe --types water --merged-only --merged-format jpg\n"
             "  AmapGisDownload.exe --types water --water-code 123:4\n";
     }
 }
@@ -546,8 +563,9 @@ int main(int argumentCount, char* arguments[])
     const std::filesystem::path tileOutputRoot = options.writePyramid ?
         options.outputRoot / std::filesystem::u8path("瓦片") :
         options.download.render.pngTileCachePath / std::filesystem::u8path("大图采样");
-    const std::filesystem::path mergedImagePath =
-        options.outputRoot / std::filesystem::u8path("合并大图.png");
+    std::filesystem::path mergedImagePath =
+        options.outputRoot / std::filesystem::u8path("合并大图");
+    mergedImagePath.replace_extension(options.mergedImageFormat);
     downloader.SetPostProcessEnabled(options.writePyramid);
     downloader.SetPostProcessOutputPath(PathToUtf8String(tileOutputRoot));
     downloader.SetPostProcessMergedImageEnabled(true);

@@ -1601,9 +1601,25 @@ namespace
 		{
 			extension = ".png";
 		}
+		std::transform(
+			extension.begin(),
+			extension.end(),
+			extension.begin(),
+			[](unsigned char character)
+			{
+				return static_cast<char>(std::tolower(character));
+			});
+
+		cv::Mat convertedImage;
+		const cv::Mat* imageToEncode = &image;
+		if ((extension == ".jpg" || extension == ".jpeg") && image.channels() == 4)
+		{
+			cv::cvtColor(image, convertedImage, cv::COLOR_BGRA2BGR);
+			imageToEncode = &convertedImage;
+		}
 
 		std::vector<unsigned char> data;
-		if (!cv::imencode(extension, image, data))
+		if (!cv::imencode(extension, *imageToEncode, data))
 		{
 			return false;
 		}
@@ -2881,7 +2897,7 @@ uint32_t DownTool::DownToolBase::SelectPostProcessMergedImageSampleZoom() const
 		}
 
 		const double score = std::abs(std::log(sourcePixels / targetResolution));
-		if (score < bestScore || (score == bestScore && zoom < bestZoom))
+		if (score < bestScore || (score == bestScore && zoom > bestZoom))
 		{
 			bestScore = score;
 			bestZoom = zoom;
