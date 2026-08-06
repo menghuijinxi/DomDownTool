@@ -9,7 +9,11 @@
         "installDir": "${sourceDir}../out/DomDownTool/install/${presetName}",
         "cacheVariables": {
           "CMAKE_C_COMPILER": "cl.exe",
-          "CMAKE_CXX_COMPILER": "cl.exe"
+          "CMAKE_CXX_COMPILER": "cl.exe",
+          "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>",
+          "BUILD_SHARED_LIBS": "OFF",
+          "DOMDOWNTOOL_BUILD_UI": "OFF",
+          "DOMDOWNTOOL_BUILD_PREVIEW": "ON"
         },
         "condition": {
           "type": "equals",
@@ -26,7 +30,8 @@
                 "strategy": "external"
             },
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug"
+                "CMAKE_BUILD_TYPE": "Debug",
+                "VCPKG_TARGET_TRIPLET": "x64-windows-static"
             }
         },
         {
@@ -46,7 +51,8 @@
                 "strategy": "external"
             },
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug"
+                "CMAKE_BUILD_TYPE": "Debug",
+                "VCPKG_TARGET_TRIPLET": "x86-windows-static"
             }
         },
         {

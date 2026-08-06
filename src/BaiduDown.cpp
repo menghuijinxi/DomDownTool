@@ -229,6 +229,12 @@ DownTool::LonLat DownTool::BaiduDown::ConvertTargetLonLatToSourceLonLat(
 	return WGS84ToBD09(lonLat);
 }
 
+DownTool::LonLat DownTool::BaiduDown::ConvertSourceLonLatToTargetLonLat(
+	const LonLat& lonLat) const
+{
+	return BD09ToWGS84(lonLat);
+}
+
 bool DownTool::BaiduDown::TryGetSourceTilePixelForLonLat(
 	const LonLat& lonLat,
 	uint32_t zoom,
@@ -237,6 +243,15 @@ bool DownTool::BaiduDown::TryGetSourceTilePixelForLonLat(
 	double& pixelY) const
 {
 	return TryGetBaiduTilePixelForBD09LonLat(lonLat, zoom, tile, pixelX, pixelY);
+}
+
+bool DownTool::BaiduDown::TryGetSourceLonLatForTilePixel(
+	const Tile& tile,
+	double pixelX,
+	double pixelY,
+	LonLat& lonLat) const
+{
+	return TryGetBD09LonLatForBaiduTilePixel(tile, pixelX, pixelY, lonLat);
 }
 
 std::filesystem::path DownTool::BaiduDown::GetTileFilePath(const Tile& tile) const

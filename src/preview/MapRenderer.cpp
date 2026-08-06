@@ -1,0 +1,262 @@
+#include "preview/MapRenderer.h"
+
+#include <algorithm>
+#include <cmath>
+#include <utility>
+
+#include "ArcGISDown.h"
+#include "BaiduDown.h"
+#include "BingDown.h"
+#include "GaoDeDown.h"
+#include "GoogleDown.h"
+#include "TencentDown.h"
+#include "TianDiTuDown.h"
+
+#include "include/core/SkCanvas.h"
+#include "include/core/SkColor.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkSamplingOptions.h"
+
+namespace
+{
+constexpr uint32_t kTileSize = 256;
+} // namespace
+
+DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw)
+    : imageCache_(requestRedraw), downloadQueue_(std::move(requestRedraw))
+{
+    auto addSource =
+        [this](std::string id, std::string name, std::string coordinateSystem,
+               std::unique_ptr<DownTool::DownToolBase> projection,
+               TileYAxisDirection yDirection, double minimumZoom, double maximumZoom)
+    {
+        projection->SetTileSize(kTileSize);
+        MapSource source;
+        source.summary.id = std::move(id);
+        source.summary.name = std::move(name);
+        source.summary.coordinateSystem = std::move(coordinateSystem);
+        source.summary.cacheRoot = std::filesystem::u8path(projection->GetCachePath());
+        source.summary.minimumZoom = minimumZoom;
+        source.summary.maximumZoom = maximumZoom;
+        source.yDirection = yDirection;
+        source.projection = std::move(projection);
+        sources_.push_back(std::move(source));
+    };
+
+    addSource("gaode.satellite", "高德卫星", "GCJ02 / XYZ",
+              std::make_unique<DownTool::GaoDeDown>(DownTool::GaoDeMapType::Satellite),
+              TileYAxisDirection::Down, 3., 20.);
+    addSource("gaode.electronic", "高德电子地图", "GCJ02 / XYZ",
+              std::make_unique<DownTool::GaoDeDown>(DownTool::GaoDeMapType::Electronic),
+              TileYAxisDirection::Down, 3., 20.);
+    addSource("gaode.roads", "高德透明路网", "GCJ02 / XYZ",
+              std::make_unique<DownTool::GaoDeDown>(DownTool::GaoDeMapType::RoadNetworkOverlay),
+              TileYAxisDirection::Down, 3., 20.);
+    addSource("tencent.satellite", "腾讯卫星", "GCJ02 / XYZ",
+              std::make_unique<DownTool::TencentDown>(), TileYAxisDirection::Down, 3., 19.);
+    addSource("tianditu.satellite", "天地图影像", "CGCS2000 / XYZ",
+              std::make_unique<DownTool::TianDiTuDown>(), TileYAxisDirection::Down, 1., 18.);
+    addSource("baidu.satellite", "百度卫星", "BD09 / Baidu",
+              std::make_unique<DownTool::BaiduDown>(), TileYAxisDirection::Up, 3., 19.);
+    addSource("google.satellite", "Google 卫星", "WGS84 / XYZ",
+              std::make_unique<DownTool::GoogleDown>(), TileYAxisDirection::Down, 1., 21.);
+    addSource("bing.satellite", "Bing 卫星", "WGS84 / XYZ", std::make_unique<DownTool::BingDown>(),
+              TileYAxisDirection::Down, 1., 20.);
+    addSource("arcgis.satellite", "ArcGIS 影像", "WGS84 / XYZ",
+              std::make_unique<DownTool::ArcGISDown>(), TileYAxisDirection::Down, 1., 20.);
+}
+
+DomDownToolPreview::MapRenderer::~MapRenderer() = default;
+
+void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int height, float dpiScale)
+{
+    toolbarHeight_ = 52. * std::max(0.1F, dpiScale);
+    statusBarHeight_ = 28. * std::max(0.1F, dpiScale);
+    viewport_.setSize(width, height, {toolbarHeight_, statusBarHeight_});
+    for (const std::filesystem::path& path : downloadQueue_.takeCompletedPaths())
+    {
+        imageCache_.invalidate(path);
+    }
+    imageCache_.beginFrame(canvas);
+
+    const SkRect mapBounds = SkRect::MakeLTRB(
+        0.F, static_cast<float>(toolbarHeight_), static_cast<float>(width),
+        std::max(static_cast<float>(toolbarHeight_),
+                 static_cast<float>(height) - static_cast<float>(statusBarHeight_)));
+    SkAutoCanvasRestore mapRestore(&canvas, true);
+    canvas.clipRect(mapBounds, SkClipOp::kIntersect, false);
+    SkPaint backgroundPaint;
+    backgroundPaint.setColor(SkColorSetRGB(31, 34, 33));
+    canvas.drawRect(mapBounds, backgroundPaint);
+
+    MapSource& source = currentSource();
+    const std::vector<VisibleTile> visibleTiles =
+        viewport_.visibleTiles(*source.projection, source.yDirection, kTileSize, 1);
+    renderStats_.visibleTiles = visibleTiles.size();
+    renderStats_.readyTiles = 0;
+    std::vector<TileDownloadJob> downloadJobs;
+    downloadJobs.reserve(visibleTiles.size());
+
+    const SkSamplingOptions sampling(SkFilterMode::kLinear, SkMipmapMode::kNone);
+    for (const VisibleTile& visibleTile : visibleTiles)
+    {
+        const std::filesystem::path tilePath =
+            resolveTilePath(source.summary.cacheRoot, visibleTile.cacheTile);
+        sk_sp<SkImage> image = imageCache_.findOrRequest(tilePath, canvas);
+        if (!image)
+        {
+            if (downloadQueue_.enabled() && imageCache_.isKnownMissing(tilePath))
+            {
+                downloadJobs.push_back({tilePath, visibleTile.cacheTile, source.projection.get(),
+                                        source.projection->BuildTileHttpRequest(
+                                            visibleTile.cacheTile)});
+            }
+            drawMissingTile(canvas, visibleTile);
+            continue;
+        }
+
+        renderStats_.readyTiles++;
+        const SkRect sourceRect = SkRect::MakeIWH(image->width(), image->height());
+        const SkRect destinationRect = SkRect::MakeXYWH(
+            static_cast<float>(visibleTile.left), static_cast<float>(visibleTile.top),
+            static_cast<float>(visibleTile.size + 0.5), static_cast<float>(visibleTile.size + 0.5));
+        canvas.drawImageRect(image, sourceRect, destinationRect, sampling, nullptr,
+                             SkCanvas::kFast_SrcRectConstraint);
+    }
+
+    downloadQueue_.updateVisibleRequests(downloadJobs);
+
+    drawCenterMarker(canvas, width, height);
+    renderStats_.cache = imageCache_.stats();
+    renderStats_.downloads = downloadQueue_.stats();
+}
+
+bool DomDownToolPreview::MapRenderer::panBy(double deltaX, double deltaY)
+{
+    MapSource& source = currentSource();
+    return viewport_.panBy(deltaX, deltaY, *source.projection, source.yDirection, kTileSize);
+}
+
+bool DomDownToolPreview::MapRenderer::zoomAt(double screenX, double screenY, double zoomDelta)
+{
+    MapSource& source = currentSource();
+    return viewport_.zoomAt(screenX, screenY, zoomDelta, source.summary.minimumZoom,
+                            source.summary.maximumZoom, *source.projection, source.yDirection,
+                            kTileSize);
+}
+
+std::optional<DownTool::LonLat> DomDownToolPreview::MapRenderer::lonLatAt(double screenX,
+                                                                          double screenY) const
+{
+    const MapSource& source = currentSource();
+    return viewport_.lonLatAt(screenX, screenY, *source.projection, source.yDirection, kTileSize);
+}
+
+bool DomDownToolPreview::MapRenderer::selectSource(std::string_view sourceId)
+{
+    const auto sourceIterator =
+        std::find_if(sources_.begin(), sources_.end(),
+                     [sourceId](const MapSource& source) { return source.summary.id == sourceId; });
+    if (sourceIterator == sources_.end())
+    {
+        return false;
+    }
+
+    activeSourceIndex_ = static_cast<size_t>(std::distance(sources_.begin(), sourceIterator));
+    downloadQueue_.cancelPending();
+    viewport_.setZoom(std::clamp(viewport_.zoom(), sourceIterator->summary.minimumZoom,
+                                 sourceIterator->summary.maximumZoom));
+    return true;
+}
+
+std::vector<DomDownToolPreview::MapSourceSummary> DomDownToolPreview::MapRenderer::sources() const
+{
+    std::vector<MapSourceSummary> result;
+    result.reserve(sources_.size());
+    for (const MapSource& source : sources_)
+    {
+        result.push_back(source.summary);
+    }
+    return result;
+}
+
+DomDownToolPreview::MapSourceSummary DomDownToolPreview::MapRenderer::activeSource() const
+{
+    return currentSource().summary;
+}
+
+DomDownToolPreview::MapRenderStats DomDownToolPreview::MapRenderer::stats() const
+{
+    return renderStats_;
+}
+
+void DomDownToolPreview::MapRenderer::clearCache()
+{
+    downloadQueue_.cancelPending();
+    imageCache_.clear();
+}
+
+void DomDownToolPreview::MapRenderer::setAutoDownloadEnabled(bool enabled)
+{
+    downloadQueue_.setEnabled(enabled);
+}
+
+bool DomDownToolPreview::MapRenderer::autoDownloadEnabled() const
+{
+    return downloadQueue_.enabled();
+}
+
+DomDownToolPreview::MapRenderer::MapSource& DomDownToolPreview::MapRenderer::currentSource()
+{
+    return sources_.at(activeSourceIndex_);
+}
+
+const DomDownToolPreview::MapRenderer::MapSource& DomDownToolPreview::MapRenderer::currentSource()
+    const
+{
+    return sources_.at(activeSourceIndex_);
+}
+
+void DomDownToolPreview::MapRenderer::drawMissingTile(SkCanvas& canvas,
+                                                      const VisibleTile& tile) const
+{
+    const bool alternate = ((tile.cacheTile.X + tile.cacheTile.Y) & 1) != 0;
+    SkPaint fillPaint;
+    fillPaint.setColor(alternate ? SkColorSetRGB(47, 52, 50) : SkColorSetRGB(41, 45, 44));
+    canvas.drawRect(SkRect::MakeXYWH(static_cast<float>(tile.left), static_cast<float>(tile.top),
+                                     static_cast<float>(tile.size + 0.5),
+                                     static_cast<float>(tile.size + 0.5)),
+                    fillPaint);
+
+    SkPaint borderPaint;
+    borderPaint.setStyle(SkPaint::kStroke_Style);
+    borderPaint.setStrokeWidth(1.F);
+    borderPaint.setColor(SkColorSetARGB(72, 190, 198, 193));
+    canvas.drawRect(SkRect::MakeXYWH(static_cast<float>(tile.left), static_cast<float>(tile.top),
+                                     static_cast<float>(tile.size), static_cast<float>(tile.size)),
+                    borderPaint);
+}
+
+void DomDownToolPreview::MapRenderer::drawCenterMarker(SkCanvas& canvas, int width,
+                                                       int height) const
+{
+    const float centerX = static_cast<float>(width) * 0.5F;
+    const float contentHeight =
+        std::max(0.F, static_cast<float>(height - toolbarHeight_ - statusBarHeight_));
+    const float centerY = static_cast<float>(toolbarHeight_) + contentHeight * 0.5F;
+
+    SkPaint shadowPaint;
+    shadowPaint.setStyle(SkPaint::kStroke_Style);
+    shadowPaint.setStrokeWidth(4.F);
+    shadowPaint.setColor(SkColorSetARGB(180, 24, 27, 26));
+    canvas.drawLine(centerX - 10.F, centerY, centerX + 10.F, centerY, shadowPaint);
+    canvas.drawLine(centerX, centerY - 10.F, centerX, centerY + 10.F, shadowPaint);
+
+    SkPaint markerPaint;
+    markerPaint.setStyle(SkPaint::kStroke_Style);
+    markerPaint.setStrokeWidth(2.F);
+    markerPaint.setColor(SkColorSetRGB(246, 190, 67));
+    canvas.drawLine(centerX - 10.F, centerY, centerX + 10.F, centerY, markerPaint);
+    canvas.drawLine(centerX, centerY - 10.F, centerX, centerY + 10.F, markerPaint);
+}

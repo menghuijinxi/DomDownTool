@@ -39,6 +39,13 @@ namespace DownTool
 		Invalid
 	};
 
+	struct TileHttpRequest
+	{
+		std::string url;
+		std::vector<std::string> headers;
+		std::string proxy;
+	};
+
 	struct CurlMultiHandle
 	{
 		DownToolBase* owner = nullptr;
@@ -239,6 +246,11 @@ namespace DownTool
 			return lonLat;
 		}
 
+		virtual LonLat ConvertSourceLonLatToTargetLonLat(const LonLat& lonLat) const
+		{
+			return lonLat;
+		}
+
 		virtual std::filesystem::path GetPostProcessSourceTileFilePath(
 			const Tile& tile) const
 		{
@@ -278,6 +290,12 @@ namespace DownTool
 			double& pixelY) const
 		{
 			return TryGetTilePixelForLonLat(lonLat, zoom, tile, pixelX, pixelY);
+		}
+
+		virtual bool TryGetSourceLonLatForTilePixel(
+			const Tile& tile, double pixelX, double pixelY, LonLat& lonLat) const
+		{
+			return TryGetLonLatForTilePixel(tile, pixelX, pixelY, lonLat);
 		}
 
 		virtual bool IsUnavailableTileFile(
@@ -320,8 +338,28 @@ namespace DownTool
 		//根据瓦片坐标生成下载URL
 		virtual std::string MakeUri(const Tile& tile);
 
+		TileHttpRequest BuildTileHttpRequest(const Tile& tile);
+
+		bool IsTileDownloadUnavailable(
+			const std::filesystem::path& tilePath,
+			const std::map<std::string, std::string>& responseHeaders,
+			const Tile& tile) const;
+
 		//计算下载范围
 		virtual void CalculateDownRange();
+
+		bool TryProjectToSourceTile(
+			const LonLat& lonLat,
+			uint32_t zoom,
+			Tile& tile,
+			double& pixelX,
+			double& pixelY) const;
+
+		bool TryUnprojectFromSourceTile(
+			const Tile& tile,
+			double pixelX,
+			double pixelY,
+			LonLat& lonLat) const;
 
         GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Proxy, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTextureDistanceOffsets, TileSize)
 		

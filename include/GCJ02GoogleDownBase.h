@@ -18,6 +18,9 @@ namespace DownTool
 		virtual LonLat ConvertTargetLonLatToSourceLonLat(
 			const LonLat& lonLat) const override;
 
+		virtual LonLat ConvertSourceLonLatToTargetLonLat(
+			const LonLat& lonLat) const override;
+
 		static double Transform_Lat(double lat, double lon);
 
 		static double Transform_Lng(double lng, double lat);

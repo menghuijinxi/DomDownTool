@@ -4025,6 +4025,24 @@ std::string DownTool::DownToolBase::MakeUri(const Tile& tile)
 	return fmt::vformat(UrlTemplate, args);
 }
 
+DownTool::TileHttpRequest DownTool::DownToolBase::BuildTileHttpRequest(const Tile& tile)
+{
+	TileHttpRequest request;
+	request.url = MakeUri(tile);
+	request.headers = GetRequestHeaders(tile);
+	request.proxy = Proxy;
+	return request;
+}
+
+bool DownTool::DownToolBase::IsTileDownloadUnavailable(
+	const std::filesystem::path& tilePath,
+	const std::map<std::string, std::string>& responseHeaders,
+	const Tile& tile) const
+{
+	return IsUnavailableTileResponseHeader(responseHeaders, tile) ||
+		IsUnavailableTileFile(tilePath, tile);
+}
+
 void DownTool::DownToolBase::CalculateDownRange()
 {
 	GeographicLib::Math::real dummy;
@@ -4041,4 +4059,31 @@ void DownTool::DownToolBase::CalculateDownRange()
 		MaxLonLat.lon = 180.0;
 		MinLonLat.lon = -180.0;
 	}
+}
+
+bool DownTool::DownToolBase::TryProjectToSourceTile(
+	const LonLat& lonLat,
+	uint32_t zoom,
+	Tile& tile,
+	double& pixelX,
+	double& pixelY) const
+{
+	const LonLat sourceLonLat = ConvertTargetLonLatToSourceLonLat(lonLat);
+	return TryGetSourceTilePixelForLonLat(sourceLonLat, zoom, tile, pixelX, pixelY);
+}
+
+bool DownTool::DownToolBase::TryUnprojectFromSourceTile(
+	const Tile& tile,
+	double pixelX,
+	double pixelY,
+	LonLat& lonLat) const
+{
+	LonLat sourceLonLat;
+	if (!TryGetSourceLonLatForTilePixel(tile, pixelX, pixelY, sourceLonLat))
+	{
+		return false;
+	}
+
+	lonLat = ConvertSourceLonLatToTargetLonLat(sourceLonLat);
+	return true;
 }

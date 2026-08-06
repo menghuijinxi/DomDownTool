@@ -4,7 +4,8 @@
 cmake_minimum_required (VERSION 3.24)
 
 option(IS_AUTODOWNLOAD_VCPKG "是否自动下载vcpkg，并配置vcpkg为工具链" ON)
-option(DOMDOWNTOOL_BUILD_UI "是否构建 WebView UI 预览界面" ON)
+option(DOMDOWNTOOL_BUILD_UI "是否构建 WebView UI 预览界面" OFF)
+option(DOMDOWNTOOL_BUILD_PREVIEW "是否构建 SkiaUI 瓦块预览工具" ON)
 
 message(设置代理：127.0.0.1:10090)
 set(ENV{https_proxy} "127.0.0.1:10090")
@@ -31,7 +32,7 @@ IF(IS_AUTODOWNLOAD_VCPKG)
         ENDIF()
     ELSE()
         message("下载vcpkg中...")
-        execute_process(COMMAND git clone https://github.com/microsoft/vcpkg.git ${Vcpkg_DownloadPath})
+        execute_process(COMMAND git clone https://github.com/menghuijinxi/vcpkg.git ${Vcpkg_DownloadPath})
         IF(WIN32)
         	execute_process(COMMAND ${Vcpkg_DownloadPath}/bootstrap-vcpkg.bat)
         ELSE()
@@ -70,7 +71,6 @@ if(MSVC)
     endif()
 endif()
 
-find_package(httplib CONFIG REQUIRED)
 find_package(GDAL CONFIG REQUIRED)
 find_package(LibXml2 REQUIRED)
 
@@ -93,7 +93,6 @@ find_package(Protobuf CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
 
 set(DOMDOWNTOOL_LIBRARIES
-    httplib::httplib
     GDAL::GDAL
     LibXml2::LibXml2
     ${GeographicLib_LIBRARIES}
@@ -109,9 +108,12 @@ file(GLOB DOMDOWNTOOL_CORE_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 list(REMOVE_ITEM DOMDOWNTOOL_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview_main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_main.cpp)
 
 add_library(DomDownToolCore STATIC ${DOMDOWNTOOL_CORE_SOURCES})
+target_sources(DomDownToolCore PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/MapViewport.cpp)
 protobuf_generate(
     TARGET DomDownToolCore
     LANGUAGE cpp
@@ -173,6 +175,36 @@ if(DOMDOWNTOOL_BUILD_UI)
   endif()
 endif()
 
+if(DOMDOWNTOOL_BUILD_PREVIEW)
+  if(NOT WIN32)
+    message(FATAL_ERROR "DomDownToolPreview 当前仅支持 Windows")
+  endif()
+
+  find_package(SkiaUI CONFIG REQUIRED)
+  add_executable(DomDownToolPreview WIN32
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview_main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/MapRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewController.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SkiaImageCodecs.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TileDownloadQueue.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TileImageCache.cpp)
+  target_link_libraries(DomDownToolPreview PRIVATE
+    DomDownToolCore
+    SkiaUI::SkuiWin32Dx12)
+  target_compile_definitions(DomDownToolPreview PRIVATE
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN)
+  add_custom_command(TARGET DomDownToolPreview POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+      "${CMAKE_CURRENT_SOURCE_DIR}/resources/preview"
+      "$<TARGET_FILE_DIR:DomDownToolPreview>/resources/preview")
+  set_property(TARGET DomDownToolPreview PROPERTY CXX_STANDARD 23)
+  set_property(TARGET DomDownToolPreview PROPERTY CXX_STANDARD_REQUIRED ON)
+  if(MSVC)
+    target_compile_options(DomDownToolPreview PRIVATE /EHsc /permissive-)
+  endif()
+endif()
+
 enable_testing()
 
 function(add_domdown_test target_name)
@@ -212,3 +244,25 @@ add_domdown_test(UiBridgeSmokeTest
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/UiBridge.cpp)
 add_domdown_test(AmapVectorGeoJsonTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorGeoJsonTest.cpp)
+add_domdown_test(MapViewportTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/MapViewportTest.cpp)
+
+if(DOMDOWNTOOL_BUILD_PREVIEW)
+  add_executable(TileDownloadQueueTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/TileDownloadQueueTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SkiaImageCodecs.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TileDownloadQueue.cpp)
+  target_link_libraries(TileDownloadQueueTest PRIVATE
+    DomDownToolCore
+    SkiaUI::SkuiWin32Dx12)
+  target_compile_definitions(TileDownloadQueueTest PRIVATE
+    DOMDOWNTOOL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN)
+  set_property(TARGET TileDownloadQueueTest PROPERTY CXX_STANDARD 23)
+  set_property(TARGET TileDownloadQueueTest PROPERTY CXX_STANDARD_REQUIRED ON)
+  if(MSVC)
+    target_compile_options(TileDownloadQueueTest PRIVATE /EHsc /permissive-)
+  endif()
+  add_test(NAME TileDownloadQueueTest COMMAND TileDownloadQueueTest)
+endif()

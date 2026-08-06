@@ -3,14 +3,6 @@
   "version": "1.0.0",
   "dependencies": [
     {
-      "name": "cpp-httplib",
-      "features": [
-        "openssl",
-        "zlib"
-      ],
-      "version>=": "0.30.1"
-    },
-    {
       "name": "opencv",
       "version>=": "4.12.0"
     },
@@ -38,6 +30,13 @@
     },
     "openssl",
     "assimp",
-    "protobuf"
+    "protobuf",
+    {
+      "name": "skiaui",
+      "features": [
+        "win32-dx12"
+      ],
+      "platform": "windows"
+    }
   ]
 }

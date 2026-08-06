@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            color: #edf1ef;
+            font: 13px "Microsoft YaHei", "Segoe UI", sans-serif;
+        }
+
+        .shell {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            height: 100%;
+        }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            width: 100%;
+            height: 52px;
+            padding: 0 12px;
+            border-bottom: 1px solid #3b403e;
+            background: #222725;
+        }
+
+        .brand {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            min-width: 218px;
+            color: #f4f6f5;
+            font-size: 15px;
+            font-weight: 700;
+        }
+
+        .brand span {
+            color: #9aa49f;
+            font-size: 11px;
+            font-weight: 400;
+        }
+
+        .field {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            color: #aeb7b2;
+        }
+
+        select {
+            width: 184px;
+            height: 30px;
+            padding: 0 8px;
+            border: 1px solid #505854;
+            border-radius: 4px;
+            outline: none;
+            background: #181c1b;
+            color: #edf1ef;
+            font: inherit;
+        }
+
+        select:focus {
+            border-color: #50a38b;
+        }
+
+        .zoom-controls {
+            display: flex;
+            align-items: center;
+            height: 30px;
+            border: 1px solid #505854;
+            border-radius: 4px;
+            overflow: hidden;
+            background: #181c1b;
+        }
+
+        button {
+            width: 31px;
+            height: 28px;
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+            color: #edf1ef;
+            font: 18px "Segoe UI", sans-serif;
+        }
+
+        button:hover {
+            background: #343b38;
+        }
+
+        #zoom-value {
+            min-width: 58px;
+            color: #d9dfdc;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+        }
+
+        #reload-tiles {
+            width: 34px;
+            border: 1px solid #505854;
+            border-radius: 4px;
+            font-size: 15px;
+        }
+
+        #auto-download-toggle {
+            width: 72px;
+            border: 1px solid #3d8d76;
+            border-radius: 4px;
+            background: #23463c;
+            color: #d9f2e9;
+            font: 12px "Microsoft YaHei", "Segoe UI", sans-serif;
+        }
+
+        #auto-download-toggle:hover {
+            background: #2d5a4d;
+        }
+
+        .toolbar-spacer {
+            flex: 1;
+        }
+
+        .coordinate-chip {
+            color: #b8c1bd;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .map-overlay {
+            position: relative;
+            flex: 1;
+            min-height: 0;
+            pointer-events: none;
+        }
+
+        .source-line {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            height: 30px;
+            padding: 0 9px;
+            border-left: 3px solid #50a38b;
+            background: rgba(28, 33, 31, 0.88);
+        }
+
+        #active-provider {
+            font-weight: 650;
+        }
+
+        #coordinate-system {
+            color: #aab4af;
+            font-size: 11px;
+        }
+
+        .statusbar {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            width: 100%;
+            height: 28px;
+            padding: 0 10px;
+            border-top: 1px solid #3b403e;
+            background: #202523;
+            color: #aeb7b2;
+            font-size: 11px;
+        }
+
+        #cursor-coordinate,
+        #center-coordinate {
+            min-width: 150px;
+            color: #d7ddda;
+            font-variant-numeric: tabular-nums;
+        }
+
+        #cache-path {
+            min-width: 0;
+            overflow: hidden;
+            color: #8f9994;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .status-spacer {
+            flex: 1;
+        }
+
+        #tile-stats {
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <header class="toolbar">
+            <div class="brand">DomDownTool <span>瓦块预览</span></div>
+            <label class="field">
+                <span>地图</span>
+                <select id="provider-select">
+                    <option value="gaode.satellite" selected>高德卫星</option>
+                    <option value="gaode.electronic">高德电子地图</option>
+                    <option value="gaode.roads">高德透明路网</option>
+                    <option value="tencent.satellite">腾讯卫星</option>
+                    <option value="tianditu.satellite">天地图影像</option>
+                    <option value="baidu.satellite">百度卫星</option>
+                    <option value="google.satellite">Google 卫星</option>
+                    <option value="bing.satellite">Bing 卫星</option>
+                    <option value="arcgis.satellite">ArcGIS 影像</option>
+                </select>
+            </label>
+            <div class="zoom-controls">
+                <button id="zoom-out" type="button" title="缩小">-</button>
+                <span id="zoom-value">Z 15.00</span>
+                <button id="zoom-in" type="button" title="放大">+</button>
+            </div>
+            <button id="auto-download-toggle" type="button" title="切换自动下载或仅使用缓存">自动下载</button>
+            <button id="reload-tiles" type="button" title="重新读取缓存">&#x21bb;</button>
+            <div class="toolbar-spacer"></div>
+            <span class="coordinate-chip" id="center-coordinate">116.397389, 39.908722</span>
+        </header>
+
+        <section class="map-overlay">
+            <div class="source-line">
+                <span id="active-provider">高德卫星</span>
+                <span id="coordinate-system">GCJ02 / XYZ</span>
+            </div>
+        </section>
+
+        <footer class="statusbar">
+            <span id="cursor-coordinate">116.397389, 39.908722</span>
+            <span id="cache-path">cache/高德地图</span>
+            <div class="status-spacer"></div>
+            <span id="tile-stats">可见 0  已载入 0  读取 0  下载 0/0  失败 0  缓存 0.0 MB</span>
+        </footer>
+    </main>
+</body>
+</html>

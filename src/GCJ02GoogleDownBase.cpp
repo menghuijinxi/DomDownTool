@@ -19,6 +19,12 @@ DownTool::LonLat DownTool::GCJ02GoogleDownBase::ConvertTargetLonLatToSourceLonLa
 	return WGS84ToGCJ02(lonLat);
 }
 
+DownTool::LonLat DownTool::GCJ02GoogleDownBase::ConvertSourceLonLatToTargetLonLat(
+	const LonLat& lonLat) const
+{
+	return GCJ02ToWGS84(lonLat);
+}
+
 double DownTool::GCJ02GoogleDownBase::Transform_Lat(double lat, double lon)
 {
 	auto ret = -100.0 + 2.0 * lon + 3.0 * lat + 0.2 * lat * lat + 0.1 * lon * lat + 0.2 * std::sqrt(std::abs(lon));

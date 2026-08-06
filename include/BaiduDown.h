@@ -26,12 +26,21 @@ namespace DownTool
 		virtual LonLat ConvertTargetLonLatToSourceLonLat(
 			const LonLat& lonLat) const override;
 
+		virtual LonLat ConvertSourceLonLatToTargetLonLat(
+			const LonLat& lonLat) const override;
+
 		virtual bool TryGetSourceTilePixelForLonLat(
 			const LonLat& lonLat,
 			uint32_t zoom,
 			Tile& tile,
 			double& pixelX,
 			double& pixelY) const override;
+
+		virtual bool TryGetSourceLonLatForTilePixel(
+			const Tile& tile,
+			double pixelX,
+			double pixelY,
+			LonLat& lonLat) const override;
 
 		static LonLat BD09ToGCJ02(const LonLat& lonLat);
 
