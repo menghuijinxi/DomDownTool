@@ -107,6 +107,7 @@ set(DOMDOWNTOOL_LIBRARIES
 file(GLOB DOMDOWNTOOL_CORE_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 list(REMOVE_ITEM DOMDOWNTOOL_CORE_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/amap_gis_main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview_main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_main.cpp)
@@ -129,14 +130,20 @@ target_link_libraries(DomDownToolCore PUBLIC ${DOMDOWNTOOL_LIBRARIES})
 add_executable(DomDownTool ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
 target_link_libraries(DomDownTool PRIVATE DomDownToolCore)
 
+add_executable(AmapGisDownload ${CMAKE_CURRENT_SOURCE_DIR}/src/amap_gis_main.cpp)
+target_link_libraries(AmapGisDownload PRIVATE DomDownToolCore)
+
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET DomDownToolCore PROPERTY CXX_STANDARD 20)
   set_property(TARGET DomDownTool PROPERTY CXX_STANDARD 20)
+  set_property(TARGET AmapGisDownload PROPERTY CXX_STANDARD 20)
 endif()
 
 if(MSVC)
   target_compile_definitions(DomDownToolCore PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
   target_compile_definitions(DomDownTool PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+  target_compile_definitions(AmapGisDownload PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+  target_compile_options(DomDownTool PRIVATE /EHsc)
 endif()
 
 if(DOMDOWNTOOL_BUILD_UI)
@@ -207,6 +214,32 @@ endif()
 
 enable_testing()
 
+add_test(NAME SatelliteDownloadHelpTest COMMAND DomDownTool --help)
+add_test(NAME SatelliteDownloadDryRunTest
+    COMMAND DomDownTool --provider baidu --lon 116.74 --lat 39.95
+        --radius 20000 --zoom 16 --merged-format jpg --dry-run)
+add_test(NAME SatelliteDownloadInvalidProviderTest
+    COMMAND DomDownTool --provider ocean)
+add_test(NAME SatelliteDownloadInvalidMapTypeTest
+    COMMAND DomDownTool --provider baidu --map-type electronic)
+add_test(NAME SatelliteDownloadInvalidMergedFormatTest
+    COMMAND DomDownTool --merged-format bmp)
+set_tests_properties(
+    SatelliteDownloadInvalidProviderTest
+    SatelliteDownloadInvalidMapTypeTest
+    SatelliteDownloadInvalidMergedFormatTest
+    PROPERTIES WILL_FAIL TRUE)
+
+add_test(NAME AmapGisDownloadHelpTest COMMAND AmapGisDownload --help)
+add_test(NAME AmapGisDownloadInvalidTypeTest COMMAND AmapGisDownload --types ocean)
+add_test(NAME AmapGisDownloadInvalidConcurrencyTest
+    COMMAND AmapGisDownload --concurrency invalid)
+add_test(NAME AmapGisDownloadInvalidMergedFormatTest
+    COMMAND AmapGisDownload --merged-format bmp)
+set_tests_properties(AmapGisDownloadInvalidTypeTest PROPERTIES WILL_FAIL TRUE)
+set_tests_properties(AmapGisDownloadInvalidConcurrencyTest PROPERTIES WILL_FAIL TRUE)
+set_tests_properties(AmapGisDownloadInvalidMergedFormatTest PROPERTIES WILL_FAIL TRUE)
+
 function(add_domdown_test target_name)
   add_executable(${target_name} ${ARGN})
   target_link_libraries(${target_name} PRIVATE DomDownToolCore)
@@ -266,3 +299,5 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
   endif()
   add_test(NAME TileDownloadQueueTest COMMAND TileDownloadQueueTest)
 endif()
+add_domdown_test(AmapVectorPngTileTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorPngTileTest.cpp)

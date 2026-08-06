@@ -15,6 +15,7 @@
 #include "amap_vector_tile.pb.h"
 
 #include "AmapVectorDecoder.h"
+#include "AmapVectorDownloader.h"
 #include "AmapVectorTileGrid.h"
 
 namespace
@@ -122,6 +123,31 @@ namespace
         poiTileLayer->set_type(0);
         poiTileLayer->set_data(poiData);
 
+        domdown::amap::RegionLayer regionLayer;
+        domdown::amap::PolygonFeatureSameStyle* waterStyle = regionLayer.add_polygons();
+        // 高德省略基础区域面的 mainKey 和 resolution 默认值。
+        waterStyle->set_sub_key(2);
+        domdown::amap::PolygonFeature* water = waterStyle->add_items();
+        water->set_min_zoom(15);
+        water->set_max_zoom(20);
+        const std::array<int32_t, 10> waterRingDelta = {
+            700, 700, 600, 0, 0, 600, -600, 0, 0, -600
+        };
+        domdown::amap::GeometryPolygon* waterRing = water->add_polygons();
+        for (const int32_t value : waterRingDelta)
+        {
+            waterRing->add_polygon(value);
+        }
+
+        std::string regionData;
+        regionLayer.SerializeToString(&regionData);
+        domdown::amap::Layer* regionTileLayer = tile->add_layers();
+        regionTileLayer->set_x(tileCoordinates.x);
+        regionTileLayer->set_y(tileCoordinates.y);
+        regionTileLayer->set_z(tileCoordinates.zoom);
+        regionTileLayer->set_type(2);
+        regionTileLayer->set_data(regionData);
+
         domdown::amap::BuildingLayer buildingLayer;
         domdown::amap::BuildingSameStyle* buildingStyle = buildingLayer.add_buildings();
         buildingStyle->set_main_key(55001);
@@ -157,6 +183,36 @@ namespace
 
     bool RunTest()
     {
+        struct ZoomMapping
+        {
+            uint32_t renderZoom = 0;
+            uint32_t dataZoom = 0;
+        };
+        constexpr std::array<ZoomMapping, 12> kZoomMappings = {{
+            { 2, 3 },
+            { 5, 3 },
+            { 6, 6 },
+            { 7, 6 },
+            { 8, 8 },
+            { 9, 8 },
+            { 10, 10 },
+            { 12, 10 },
+            { 13, 12 },
+            { 14, 12 },
+            { 15, 14 },
+            { 18, 14 }
+        }};
+        for (const ZoomMapping& mapping : kZoomMappings)
+        {
+            if (!Require(
+                DownTool::AmapVectorTileGrid::ResolveDataZoom(mapping.renderZoom) ==
+                    mapping.dataZoom,
+                "Amap vector display zoom was not mapped to the expected data zoom"))
+            {
+                return false;
+            }
+        }
+
         // 该点为 WGS84；经 GCJ-02 偏移后仍在单个 z14 高德矢量瓦片内。
         const DownTool::LonLat centerWgs84(116.0500, 39.9760);
         const std::vector<DownTool::AmapVectorTile> selectedTiles =
@@ -168,6 +224,16 @@ namespace
                     selectedTiles.front().y == 4553 &&
                     selectedTiles.front().zoom == 14,
                 "WGS84 中心点没有映射到预期的 GCJ-02 高德矢量瓦片"))
+        {
+            return false;
+        }
+
+        const std::vector<DownTool::AmapVectorTile> largeTileSelection =
+            DownTool::AmapVectorTileGrid::SelectTilesForWgs84Radius(
+                centerWgs84, 100000., 14);
+        if (!Require(
+            largeTileSelection.size() > 4096,
+            "高德矢量下载不应人为限制选中的瓦片数量"))
         {
             return false;
         }
@@ -187,7 +253,41 @@ namespace
             "合成高德 Protobuf 信封解码失败：" + error) ||
             !Require(decodedData.status, "合成高德 Protobuf 的 status 应为 true") ||
             !Require(decodedData.packetCount == 1, "合成高德 Protobuf 应只包含一个包") ||
-            !Require(decodedData.features.size() == 2, "合成高德 Protobuf 应导出两个要素"))
+            !Require(decodedData.features.size() == 3, "合成高德 Protobuf 要素数量错误"))
+        {
+            return false;
+        }
+
+        const auto waterFeature = std::find_if(
+            decodedData.features.begin(),
+            decodedData.features.end(),
+            [](const DownTool::AmapVectorFeature& feature)
+            {
+                return feature.layerName == "region";
+            });
+        if (!Require(waterFeature != decodedData.features.end(), "缺少水体面要素") ||
+            !Require(
+                waterFeature->mainKey == 30001 &&
+                    waterFeature->subKey == 2 &&
+                    waterFeature->resolution == 12 &&
+                    waterFeature->minZoom == 15 &&
+                    waterFeature->maxZoom == 20,
+                "高德默认区域面样式没有正确恢复") ||
+            !Require(
+                waterFeature->geometryParts.size() == 1 &&
+                    waterFeature->geometryParts.front().size() == 5,
+                "高德默认水体几何没有解码"))
+        {
+            return false;
+        }
+        const auto& waterRingCoordinates = waterFeature->geometryParts.front();
+        const double waterLongitudeWidth = std::abs(
+            waterRingCoordinates[1].longitude - waterRingCoordinates[0].longitude);
+        const double waterLatitudeHeight = std::abs(
+            waterRingCoordinates[2].latitude - waterRingCoordinates[1].latitude);
+        if (!Require(
+            std::abs(waterLongitudeWidth - waterLatitudeHeight) < 1e-10,
+            "高德矢量瓦片 X/Y 局部尺度不一致"))
         {
             return false;
         }
@@ -243,7 +343,61 @@ namespace
         const CPLJSONArray features = root.GetArray("features");
         if (!Require(root.GetString("type") == "FeatureCollection", "输出不是 FeatureCollection") ||
             !Require(root.GetString("coordinateSystem") == "GCJ-02", "输出坐标系标记错误") ||
-            !Require(features.Size() == 2, "输出 GeoJSON 要素数量错误"))
+            !Require(features.Size() == 3, "输出 GeoJSON 要素数量错误"))
+        {
+            return false;
+        }
+
+        DownTool::AmapVectorDownloadOptions downloadOptions;
+        downloadOptions.centerWgs84 = centerWgs84;
+        downloadOptions.radiusMeters = 25.;
+        downloadOptions.zoom = 16;
+        downloadOptions.webApiKey = "cache-only-test";
+        downloadOptions.webApiVersion = "unit-test";
+        downloadOptions.includeBaseLayers = true;
+        downloadOptions.includeLabels = true;
+        downloadOptions.maxConcurrency = 2;
+        std::vector<DownTool::AmapVectorDownloadProgress> downloadProgress;
+        downloadOptions.progressCallback =
+            [&](const DownTool::AmapVectorDownloadProgress& progress)
+            {
+                downloadProgress.push_back(progress);
+            };
+        downloadOptions.rawTileCachePath = outputRoot / "raw-cache";
+        const std::filesystem::path baseCachePath =
+            downloadOptions.rawTileCachePath / std::filesystem::u8path("基础图层") /
+            "14" / "13473" / "4553.pbf";
+        const std::filesystem::path labelCachePath =
+            downloadOptions.rawTileCachePath / std::filesystem::u8path("标注图层") /
+            "14" / "13473" / "4553.pbf";
+        std::filesystem::create_directories(baseCachePath.parent_path());
+        std::filesystem::create_directories(labelCachePath.parent_path());
+        for (const std::filesystem::path& cachePath : { baseCachePath, labelCachePath })
+        {
+            std::ofstream rawCache(cachePath, std::ios::binary | std::ios::trunc);
+            rawCache.write(envelope.data(), static_cast<std::streamsize>(envelope.size()));
+        }
+        const DownTool::AmapVectorDownloadResult cachedDownload =
+            DownTool::AmapVectorDownloader().Download(downloadOptions);
+        if (!Require(cachedDownload.success, "原始矢量缓存下载失败：" + cachedDownload.error) ||
+            !Require(
+                cachedDownload.selectedTiles.size() == 1 &&
+                    cachedDownload.selectedTiles.front().zoom == 14,
+                "z16 display download did not use the z14 Amap data tile") ||
+            !Require(cachedDownload.cachedPacketCount == 2, "原始矢量缓存没有全部命中") ||
+            !Require(cachedDownload.cachedTaskCount == 2, "原始矢量缓存任务计数错误") ||
+            !Require(cachedDownload.downloadedTaskCount == 0, "缓存测试不应发起下载") ||
+            !Require(cachedDownload.featureCount == 6, "原始矢量缓存解码要素数量错误") ||
+            !Require(downloadProgress.size() == 3, "PBF 下载进度回调次数错误") ||
+            !Require(
+                downloadProgress.front().completedTaskCount == 0 &&
+                    downloadProgress.front().totalTaskCount == 2,
+                "PBF 下载初始进度错误") ||
+            !Require(
+                downloadProgress.back().completedTaskCount == 2 &&
+                    downloadProgress.back().cacheHitCount == 2 &&
+                    downloadProgress.back().failedTaskCount == 0,
+                "PBF 下载完成进度错误"))
         {
             return false;
         }
