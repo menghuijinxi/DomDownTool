@@ -174,9 +174,48 @@ bool testBaiduTileSelection()
                                      "Baidu upward Y tile selection is incorrect");
 }
 
+bool testViewSpanShowsMoreTilesWithoutChangingSourceZoom()
+{
+    DownTool::GoogleDownBase projection;
+    projection.SetTileSize(256);
+
+    DomDownToolPreview::MapViewport viewport;
+    viewport.setSize(1024, 768, {52., 28.});
+    viewport.setCenter({116.397389, 39.908722});
+    viewport.setZoom(15.);
+    const uint32_t sourceZoom = viewport.sourceZoom();
+    const std::vector<DomDownToolPreview::VisibleTile> normalTiles = viewport.visibleTiles(
+        projection, DomDownToolPreview::TileYAxisDirection::Down, 256, 0);
+
+    viewport.SetViewSpan(2.);
+    const std::vector<DomDownToolPreview::VisibleTile> expandedTiles = viewport.visibleTiles(
+        projection, DomDownToolPreview::TileYAxisDirection::Down, 256, 0);
+    const bool sameSourceZoom = std::all_of(
+        expandedTiles.begin(), expandedTiles.end(),
+        [sourceZoom](const DomDownToolPreview::VisibleTile& tile)
+        { return tile.cacheTile.Zoom == sourceZoom; });
+
+    viewport.SetViewSpan(100.);
+    const bool maximumClamped = viewport.GetViewSpan() == 4.;
+    viewport.SetViewSpan(0.1);
+    const bool minimumClamped = viewport.GetViewSpan() == 1.;
+
+    return postprocess_test::Require(!normalTiles.empty() &&
+                                         expandedTiles.size() > normalTiles.size(),
+                                     "expanded view span did not show more tiles") &&
+        postprocess_test::Require(sourceZoom == 15 && viewport.sourceZoom() == sourceZoom &&
+                                      sameSourceZoom,
+                                  "view span changed the source tile zoom") &&
+        postprocess_test::Require(expandedTiles.front().size < normalTiles.front().size,
+                                  "expanded view span did not reduce tile display size") &&
+        postprocess_test::Require(maximumClamped && minimumClamped,
+                                  "view span limits were not enforced");
+}
+
 bool runTest()
 {
-    if (!testStandardTileSelection() || !testBaiduTileSelection())
+    if (!testStandardTileSelection() || !testBaiduTileSelection() ||
+        !testViewSpanShowsMoreTilesWithoutChangingSourceZoom())
     {
         return false;
     }

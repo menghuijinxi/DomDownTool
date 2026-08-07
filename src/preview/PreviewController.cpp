@@ -197,6 +197,14 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             {
                 renderer_.setAutoDownloadEnabled(!renderer_.autoDownloadEnabled());
             }
+            else if (event.id == "view-span-decrease")
+            {
+                renderer_.adjustViewSpan(-0.5);
+            }
+            else if (event.id == "view-span-increase")
+            {
+                renderer_.adjustViewSpan(0.5);
+            }
             else if (event.id == "place-search-submit")
             {
                 submitPlaceSearch(runtime);
@@ -698,6 +706,7 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
         {{"active-provider", source.name},
          {"coordinate-system", source.coordinateSystem},
          {"zoom-value", fmt::format("Z {:.2f}", renderer_.zoom())},
+         {"view-span-value", fmt::format("视野 {:.1f}x", renderer_.GetViewSpan())},
          {"center-coordinate", fmt::format("{:.6f}, {:.6f}", center.lon, center.lat)},
          {"cache-path", pathToUtf8(source.cacheRoot)},
          {"tile-stats",

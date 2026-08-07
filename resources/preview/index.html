@@ -267,6 +267,30 @@
             font-variant-numeric: tabular-nums;
         }
 
+        .view-span-controls {
+            display: flex;
+            flex: 0 0 auto;
+            align-items: center;
+            height: 22px;
+            overflow: hidden;
+            border: 1px solid #49514d;
+            border-radius: 4px;
+            background: #181c1b;
+        }
+
+        .view-span-controls button {
+            width: 24px;
+            height: 20px;
+            font-size: 13px;
+        }
+
+        #view-span-value {
+            min-width: 68px;
+            color: #d7ddda;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+        }
+
         .map-overlay {
             position: relative;
             flex: 1;
@@ -382,6 +406,11 @@
         <footer class="statusbar">
             <span id="cursor-coordinate">116.397389, 39.908722</span>
             <span class="coordinate-chip" id="center-coordinate">116.397389, 39.908722</span>
+            <div class="view-span-controls">
+                <button id="view-span-decrease" type="button" data-action="view-span-decrease" title="减少可见瓦块">-</button>
+                <span id="view-span-value">视野 1.0x</span>
+                <button id="view-span-increase" type="button" data-action="view-span-increase" title="显示更多瓦块">+</button>
+            </div>
             <span id="cache-path">cache/高德地图</span>
             <div class="status-spacer"></div>
             <span id="tile-stats">可见 0  已载入 0  读取 0  下载 0/0  失败 0  缓存 0.0 MB</span>

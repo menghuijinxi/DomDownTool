@@ -149,6 +149,19 @@ bool DomDownToolPreview::MapRenderer::zoomAt(double screenX, double screenY, dou
                             kTileSize);
 }
 
+bool DomDownToolPreview::MapRenderer::adjustViewSpan(double delta)
+{
+    const double previousViewSpan = viewport_.GetViewSpan();
+    viewport_.SetViewSpan(previousViewSpan + delta);
+    if (viewport_.GetViewSpan() == previousViewSpan)
+    {
+        return false;
+    }
+
+    downloadQueue_.cancelPending();
+    return true;
+}
+
 void DomDownToolPreview::MapRenderer::setView(const DownTool::LonLat& centerWgs84, double zoom)
 {
     const MapSource& source = currentSource();

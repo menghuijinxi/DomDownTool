@@ -52,6 +52,8 @@ class MapRenderer
 
     bool zoomAt(double screenX, double screenY, double zoomDelta);
 
+    bool adjustViewSpan(double delta);
+
     void setView(const DownTool::LonLat& centerWgs84, double zoom);
 
     void setLocationMarker(const std::optional<DownTool::LonLat>& coordinateWgs84);
@@ -72,6 +74,11 @@ class MapRenderer
     [[nodiscard]] double zoom() const
     {
         return viewport_.zoom();
+    }
+
+    [[nodiscard]] double GetViewSpan() const
+    {
+        return viewport_.GetViewSpan();
     }
 
     [[nodiscard]] MapRenderStats stats() const;

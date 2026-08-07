@@ -12,6 +12,8 @@ constexpr double kMinimumLatitude = -85.0511287798066;
 constexpr double kMaximumLatitude = 85.0511287798066;
 constexpr double kMinimumZoom = 0.;
 constexpr double kMaximumZoom = 23.;
+constexpr double kMinimumViewSpan = 1.;
+constexpr double kMaximumViewSpan = 4.;
 
 int64_t normalizeTileX(int64_t tileX, int64_t tileCount)
 {
@@ -51,6 +53,14 @@ uint32_t DomDownToolPreview::MapViewport::sourceZoom() const
     return static_cast<uint32_t>(std::floor(zoom_));
 }
 
+void DomDownToolPreview::MapViewport::SetViewSpan(double viewSpan)
+{
+    if (std::isfinite(viewSpan))
+    {
+        viewSpan_ = std::clamp(viewSpan, kMinimumViewSpan, kMaximumViewSpan);
+    }
+}
+
 std::vector<DomDownToolPreview::VisibleTile> DomDownToolPreview::MapViewport::visibleTiles(
     const DownTool::DownToolBase& projection, TileYAxisDirection yDirection, uint32_t tileSize,
     int overscanTiles) const
@@ -68,7 +78,7 @@ std::vector<DomDownToolPreview::VisibleTile> DomDownToolPreview::MapViewport::vi
         return result;
     }
 
-    const double scale = std::exp2(zoom_ - static_cast<double>(integerZoom));
+    const double scale = displayScale();
     const double tileExtent = static_cast<double>(tileSize);
     const int margin = std::max(0, overscanTiles);
     const double worldLeft = centerPoint.x - centerScreenX() / scale;
@@ -132,7 +142,7 @@ bool DomDownToolPreview::MapViewport::panBy(double deltaX, double deltaY,
         return false;
     }
 
-    const double scale = std::exp2(zoom_ - static_cast<double>(integerZoom));
+    const double scale = displayScale();
     centerPoint.x -= deltaX / scale;
     centerPoint.y -= deltaY / scale;
     DownTool::LonLat nextCenter;
@@ -168,7 +178,7 @@ bool DomDownToolPreview::MapViewport::zoomAt(double screenX, double screenY, dou
         return false;
     }
 
-    const double scale = std::exp2(zoom_ - static_cast<double>(integerZoom));
+    const double scale = displayScale();
     const SourcePoint centerPoint{anchorPoint.x - (screenX - centerScreenX()) / scale,
                                   anchorPoint.y - (screenY - centerScreenY()) / scale};
     DownTool::LonLat nextCenter;
@@ -194,7 +204,7 @@ std::optional<DownTool::LonLat> DomDownToolPreview::MapViewport::lonLatAt(
         return std::nullopt;
     }
 
-    const double scale = std::exp2(zoom_ - static_cast<double>(integerZoom));
+    const double scale = displayScale();
     const SourcePoint targetPoint{centerPoint.x + (screenX - centerScreenX()) / scale,
                                   centerPoint.y + (screenY - centerScreenY()) / scale};
     DownTool::LonLat lonLat;
@@ -220,7 +230,7 @@ DomDownToolPreview::MapViewport::screenPointForLonLat(
         return std::nullopt;
     }
 
-    const double scale = std::exp2(zoom_ - static_cast<double>(integerZoom));
+    const double scale = displayScale();
     return ViewportPoint{centerScreenX() + (targetPoint.x - centerPoint.x) * scale,
                          centerScreenY() + (targetPoint.y - centerPoint.y) * scale};
 }
@@ -284,6 +294,11 @@ double DomDownToolPreview::MapViewport::centerScreenY() const
     const double contentHeight =
         std::max(0., static_cast<double>(height_) - insets_.top - insets_.bottom);
     return insets_.top + contentHeight * 0.5;
+}
+
+double DomDownToolPreview::MapViewport::displayScale() const
+{
+    return std::exp2(zoom_ - static_cast<double>(sourceZoom())) / viewSpan_;
 }
 
 std::filesystem::path DomDownToolPreview::resolveTilePath(const std::filesystem::path& cacheRoot,

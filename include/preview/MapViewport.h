@@ -63,6 +63,13 @@ class MapViewport
 
     [[nodiscard]] uint32_t sourceZoom() const;
 
+    void SetViewSpan(double viewSpan);
+
+    [[nodiscard]] double GetViewSpan() const
+    {
+        return viewSpan_;
+    }
+
     [[nodiscard]] std::vector<VisibleTile> visibleTiles(const DownTool::DownToolBase& projection,
                                                         TileYAxisDirection yDirection,
                                                         uint32_t tileSize = 256,
@@ -105,11 +112,14 @@ class MapViewport
 
     [[nodiscard]] double centerScreenY() const;
 
+    [[nodiscard]] double displayScale() const;
+
     int width_ = 1;
     int height_ = 1;
     ViewportInsets insets_;
     DownTool::LonLat center_{116.397389, 39.908722};
     double zoom_ = 15.;
+    double viewSpan_ = 1.;
 };
 
 [[nodiscard]] std::filesystem::path resolveTilePath(const std::filesystem::path& cacheRoot,

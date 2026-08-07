@@ -113,6 +113,22 @@ bool runTest()
         return false;
     }
 
+    sendMouse(runtime, skui::EventType::MouseDown, 357.F, 887.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 357.F, 887.F);
+    if (!postprocess_test::Require(lastClickId == "view-span-decrease",
+                                   "视野缩小按钮无法点击，实际命中：" + lastClickId))
+    {
+        return false;
+    }
+
+    sendMouse(runtime, skui::EventType::MouseDown, 451.F, 887.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 451.F, 887.F);
+    if (!postprocess_test::Require(lastClickId == "view-span-increase",
+                                   "视野扩大按钮无法点击，实际命中：" + lastClickId))
+    {
+        return false;
+    }
+
     std::vector<uint32_t> pixels(static_cast<size_t>(kWidth) * kHeight);
     if (!postprocess_test::Require(
             runtime.renderToBgraPixels(pixels.data(), kWidth, kHeight,
