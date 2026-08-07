@@ -146,7 +146,7 @@ if(MSVC)
   target_compile_options(DomDownTool PRIVATE /EHsc)
 endif()
 
-if(DOMDOWNTOOL_BUILD_UI)
+if(DOMDOWNTOOL_BUILD_UI OR DOMDOWNTOOL_BUILD_PREVIEW)
   include(FetchContent)
 
   set(WEBVIEW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -159,7 +159,9 @@ if(DOMDOWNTOOL_BUILD_UI)
     GIT_REPOSITORY https://github.com/webview/webview
     GIT_TAG 0.12.0)
   FetchContent_MakeAvailable(webview)
+endif()
 
+if(DOMDOWNTOOL_BUILD_UI)
   if(WIN32)
     add_executable(DomDownToolUi WIN32
       ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_main.cpp
@@ -190,21 +192,28 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
   find_package(SkiaUI CONFIG REQUIRED)
   add_executable(DomDownToolPreview WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview_main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapPlaceSearch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapWebViewSearch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/MapRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewController.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SearchTrace.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SkiaImageCodecs.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TileDownloadQueue.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TileImageCache.cpp)
   target_link_libraries(DomDownToolPreview PRIVATE
     DomDownToolCore
-    SkiaUI::SkuiWin32Dx12)
+    SkiaUI::SkuiWin32Dx12
+    webview::core
+    comctl32)
   target_compile_definitions(DomDownToolPreview PRIVATE
     NOMINMAX
     WIN32_LEAN_AND_MEAN)
-  add_custom_command(TARGET DomDownToolPreview POST_BUILD
+  add_custom_target(DomDownToolPreviewResources
     COMMAND ${CMAKE_COMMAND} -E copy_directory
       "${CMAKE_CURRENT_SOURCE_DIR}/resources/preview"
-      "$<TARGET_FILE_DIR:DomDownToolPreview>/resources/preview")
+      "$<TARGET_FILE_DIR:DomDownToolPreview>/resources/preview"
+    COMMENT "Syncing DomDownToolPreview resources")
+  add_dependencies(DomDownToolPreview DomDownToolPreviewResources)
   set_property(TARGET DomDownToolPreview PROPERTY CXX_STANDARD 23)
   set_property(TARGET DomDownToolPreview PROPERTY CXX_STANDARD_REQUIRED ON)
   if(MSVC)
@@ -279,6 +288,10 @@ add_domdown_test(AmapVectorGeoJsonTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorGeoJsonTest.cpp)
 add_domdown_test(MapViewportTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/MapViewportTest.cpp)
+add_domdown_test(AmapPlaceSearchTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapPlaceSearchTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapPlaceSearch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SearchTrace.cpp)
 
 if(DOMDOWNTOOL_BUILD_PREVIEW)
   add_executable(TileDownloadQueueTest
@@ -298,6 +311,22 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     target_compile_options(TileDownloadQueueTest PRIVATE /EHsc /permissive-)
   endif()
   add_test(NAME TileDownloadQueueTest COMMAND TileDownloadQueueTest)
+
+  add_executable(PreviewSearchUiTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/PreviewSearchUiTest.cpp)
+  target_link_libraries(PreviewSearchUiTest PRIVATE
+    DomDownToolCore
+    SkiaUI::SkuiWin32Dx12)
+  target_compile_definitions(PreviewSearchUiTest PRIVATE
+    DOMDOWNTOOL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN)
+  set_property(TARGET PreviewSearchUiTest PROPERTY CXX_STANDARD 23)
+  set_property(TARGET PreviewSearchUiTest PROPERTY CXX_STANDARD_REQUIRED ON)
+  if(MSVC)
+    target_compile_options(PreviewSearchUiTest PRIVATE /EHsc /permissive-)
+  endif()
+  add_test(NAME PreviewSearchUiTest COMMAND PreviewSearchUiTest)
 endif()
 add_domdown_test(AmapVectorPngTileTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorPngTileTest.cpp)

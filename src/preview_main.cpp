@@ -9,6 +9,7 @@
 #include "skui_win32_app.h"
 
 #include "preview/PreviewController.h"
+#include "preview/SearchTrace.h"
 
 namespace
 {
@@ -48,6 +49,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         MessageBoxW(nullptr, L"无法确定程序运行目录。", L"DomDownTool", MB_OK | MB_ICONERROR);
         return EXIT_FAILURE;
     }
+
+    DomDownToolPreview::initializeSearchTrace(applicationRoot / "logs" /
+                                              "amap-search.log");
+    DomDownToolPreview::writeSearchTrace("App", "preview_starting");
 
     const std::filesystem::path documentPath =
         applicationRoot / "resources" / "preview" / "index.html";

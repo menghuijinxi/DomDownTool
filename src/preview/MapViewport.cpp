@@ -206,6 +206,25 @@ std::optional<DownTool::LonLat> DomDownToolPreview::MapViewport::lonLatAt(
     return lonLat;
 }
 
+std::optional<DomDownToolPreview::ViewportPoint>
+DomDownToolPreview::MapViewport::screenPointForLonLat(
+    const DownTool::LonLat& lonLat, const DownTool::DownToolBase& projection,
+    TileYAxisDirection yDirection, uint32_t tileSize) const
+{
+    const uint32_t integerZoom = sourceZoom();
+    SourcePoint centerPoint;
+    SourcePoint targetPoint;
+    if (!project(center_, integerZoom, projection, yDirection, tileSize, centerPoint) ||
+        !project(lonLat, integerZoom, projection, yDirection, tileSize, targetPoint))
+    {
+        return std::nullopt;
+    }
+
+    const double scale = std::exp2(zoom_ - static_cast<double>(integerZoom));
+    return ViewportPoint{centerScreenX() + (targetPoint.x - centerPoint.x) * scale,
+                         centerScreenY() + (targetPoint.y - centerPoint.y) * scale};
+}
+
 bool DomDownToolPreview::MapViewport::project(const DownTool::LonLat& lonLat, uint32_t zoom,
                                               const DownTool::DownToolBase& projection,
                                               TileYAxisDirection yDirection, uint32_t tileSize,

@@ -58,6 +58,16 @@ bool testProjectionInteraction(DownTool::DownToolBase& projection,
         return false;
     }
 
+    const std::optional<DomDownToolPreview::ViewportPoint> centerPoint =
+        viewport.screenPointForLonLat(beijing, projection, yDirection);
+    if (!postprocess_test::Require(
+            centerPoint.has_value() && std::abs(centerPoint->x - kCenterScreenX) < 0.001 &&
+                std::abs(centerPoint->y - kCenterScreenY) < 0.001,
+            projectionName + " center screen projection failed"))
+    {
+        return false;
+    }
+
     constexpr double kAnchorX = 723.;
     constexpr double kAnchorY = 331.;
     const std::optional<DownTool::LonLat> anchorBefore =

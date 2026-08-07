@@ -52,6 +52,10 @@ class MapRenderer
 
     bool zoomAt(double screenX, double screenY, double zoomDelta);
 
+    void setView(const DownTool::LonLat& centerWgs84, double zoom);
+
+    void setLocationMarker(const std::optional<DownTool::LonLat>& coordinateWgs84);
+
     [[nodiscard]] std::optional<DownTool::LonLat> lonLatAt(double screenX, double screenY) const;
 
     bool selectSource(std::string_view sourceId);
@@ -104,12 +108,15 @@ class MapRenderer
 
     void drawCenterMarker(SkCanvas& canvas, int width, int height) const;
 
+    void drawLocationMarker(SkCanvas& canvas, int width, int height) const;
+
     std::vector<MapSource> sources_;
     size_t activeSourceIndex_ = 0;
     MapViewport viewport_;
     TileImageCache imageCache_;
     TileDownloadQueue downloadQueue_;
     MapRenderStats renderStats_;
+    std::optional<DownTool::LonLat> locationMarkerWgs84_;
     double toolbarHeight_ = 52.;
     double statusBarHeight_ = 28.;
 };

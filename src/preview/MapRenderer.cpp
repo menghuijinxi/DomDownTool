@@ -15,6 +15,8 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
 #include "include/core/SkPaint.h"
+#include "include/core/SkPath.h"
+#include "include/core/SkPathBuilder.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkSamplingOptions.h"
 
@@ -128,6 +130,7 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
     downloadQueue_.updateVisibleRequests(downloadJobs);
 
     drawCenterMarker(canvas, width, height);
+    drawLocationMarker(canvas, width, height);
     renderStats_.cache = imageCache_.stats();
     renderStats_.downloads = downloadQueue_.stats();
 }
@@ -144,6 +147,20 @@ bool DomDownToolPreview::MapRenderer::zoomAt(double screenX, double screenY, dou
     return viewport_.zoomAt(screenX, screenY, zoomDelta, source.summary.minimumZoom,
                             source.summary.maximumZoom, *source.projection, source.yDirection,
                             kTileSize);
+}
+
+void DomDownToolPreview::MapRenderer::setView(const DownTool::LonLat& centerWgs84, double zoom)
+{
+    const MapSource& source = currentSource();
+    viewport_.setCenter(centerWgs84);
+    viewport_.setZoom(std::clamp(zoom, source.summary.minimumZoom, source.summary.maximumZoom));
+    downloadQueue_.cancelPending();
+}
+
+void DomDownToolPreview::MapRenderer::setLocationMarker(
+    const std::optional<DownTool::LonLat>& coordinateWgs84)
+{
+    locationMarkerWgs84_ = coordinateWgs84;
 }
 
 std::optional<DownTool::LonLat> DomDownToolPreview::MapRenderer::lonLatAt(double screenX,
@@ -259,4 +276,52 @@ void DomDownToolPreview::MapRenderer::drawCenterMarker(SkCanvas& canvas, int wid
     markerPaint.setColor(SkColorSetRGB(246, 190, 67));
     canvas.drawLine(centerX - 10.F, centerY, centerX + 10.F, centerY, markerPaint);
     canvas.drawLine(centerX, centerY - 10.F, centerX, centerY + 10.F, markerPaint);
+}
+
+void DomDownToolPreview::MapRenderer::drawLocationMarker(SkCanvas& canvas, int width,
+                                                          int height) const
+{
+    if (!locationMarkerWgs84_.has_value())
+    {
+        return;
+    }
+
+    const MapSource& source = currentSource();
+    const std::optional<ViewportPoint> point = viewport_.screenPointForLonLat(
+        *locationMarkerWgs84_, *source.projection, source.yDirection, kTileSize);
+    if (!point.has_value() || point->x < -20. || point->x > static_cast<double>(width) + 20. ||
+        point->y < toolbarHeight_ - 30. ||
+        point->y > static_cast<double>(height) - statusBarHeight_ + 20.)
+    {
+        return;
+    }
+
+    const float x = static_cast<float>(point->x);
+    const float tipY = static_cast<float>(point->y);
+    const float centerY = tipY - 14.F;
+    SkPaint shadowPaint;
+    shadowPaint.setAntiAlias(true);
+    shadowPaint.setColor(SkColorSetARGB(90, 0, 0, 0));
+    canvas.drawCircle(x + 1.5F, centerY + 2.F, 10.5F, shadowPaint);
+
+    SkPathBuilder pinPathBuilder;
+    pinPathBuilder.moveTo(x - 7.F, centerY + 5.F)
+        .lineTo(x, tipY)
+        .lineTo(x + 7.F, centerY + 5.F)
+        .close();
+    const SkPath pinPath = pinPathBuilder.detach();
+    SkPaint pinPaint;
+    pinPaint.setAntiAlias(true);
+    pinPaint.setColor(SkColorSetRGB(220, 75, 67));
+    pinPaint.setStyle(SkPaint::kFill_Style);
+    canvas.drawPath(pinPath, pinPaint);
+    canvas.drawCircle(x, centerY, 10.F, pinPaint);
+
+    SkPaint outlinePaint;
+    outlinePaint.setAntiAlias(true);
+    outlinePaint.setColor(SK_ColorWHITE);
+    outlinePaint.setStyle(SkPaint::kStroke_Style);
+    outlinePaint.setStrokeWidth(2.F);
+    canvas.drawCircle(x, centerY, 9.F, outlinePaint);
+    canvas.drawCircle(x, centerY, 3.F, outlinePaint);
 }

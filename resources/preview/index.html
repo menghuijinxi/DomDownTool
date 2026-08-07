@@ -18,6 +18,7 @@
         }
 
         .shell {
+            position: relative;
             display: flex;
             flex-direction: column;
             width: 100%;
@@ -25,12 +26,15 @@
         }
 
         .toolbar {
+            position: relative;
+            z-index: 30;
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 10px;
             width: 100%;
             height: 52px;
             padding: 0 12px;
+            overflow: visible;
             border-bottom: 1px solid #3b403e;
             background: #222725;
         }
@@ -39,7 +43,8 @@
             display: flex;
             align-items: baseline;
             gap: 8px;
-            min-width: 218px;
+            width: 170px;
+            min-width: 170px;
             color: #f4f6f5;
             font-size: 15px;
             font-weight: 700;
@@ -72,6 +77,134 @@
 
         select:focus {
             border-color: #50a38b;
+        }
+
+        .search-control {
+            position: relative;
+            flex: 0 0 300px;
+            width: 300px;
+            height: 32px;
+        }
+
+        .search-input-shell {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            height: 32px;
+            overflow: hidden;
+            border: 1px solid #505854;
+            border-radius: 4px;
+            background: #181c1b;
+        }
+
+        .search-input-shell:focus-within {
+            border-color: #50a38b;
+        }
+
+        #place-search-input {
+            flex: 1;
+            min-width: 0;
+            height: 30px;
+            padding: 0 9px;
+            border: 0;
+            outline: none;
+            background: transparent;
+            color: #edf1ef;
+            font: inherit;
+        }
+
+        #place-search-input::placeholder {
+            color: #7f8984;
+        }
+
+        #place-search-clear {
+            width: 28px;
+            height: 30px;
+            color: #9ea8a3;
+            font-size: 17px;
+        }
+
+        #place-search-submit {
+            width: 48px;
+            height: 30px;
+            border-left: 1px solid #3f4743;
+            background: #2c5146;
+            color: #e3f4ed;
+            font: 12px "Microsoft YaHei", "Segoe UI", sans-serif;
+        }
+
+        #place-search-submit:hover {
+            background: #376559;
+        }
+
+        .search-results {
+            position: absolute;
+            z-index: 80;
+            top: 48px;
+            left: 192px;
+            width: 360px;
+            max-height: 374px;
+            overflow-y: auto;
+            border: 1px solid #4a524e;
+            border-radius: 4px;
+            background: #1b201e;
+            box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
+        }
+
+        .search-result-list {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            min-width: 0;
+        }
+
+        .search-result {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            justify-content: center;
+            width: 100%;
+            height: 56px;
+            padding: 6px 10px;
+            overflow: hidden;
+            border-bottom: 1px solid #303633;
+            background: transparent;
+            text-align: left;
+        }
+
+        .search-result:hover,
+        .search-result.selected {
+            background: #2c3934;
+        }
+
+        .search-result-name,
+        .search-result-address {
+            display: block;
+            width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .search-result-name {
+            color: #f0f3f1;
+            font-size: 13px;
+        }
+
+        .search-result-address {
+            margin-top: 3px;
+            color: #98a29d;
+            font-size: 11px;
+        }
+
+        .search-state {
+            min-height: 48px;
+            padding: 15px 12px;
+            color: #aab3af;
+        }
+
+        .search-error {
+            color: #ef9d97;
         }
 
         .zoom-controls {
@@ -204,6 +337,13 @@
     <main class="shell">
         <header class="toolbar">
             <div class="brand">DomDownTool <span>瓦块预览</span></div>
+            <div class="search-control">
+                <div class="search-input-shell">
+                    <input id="place-search-input" type="text" placeholder="搜索地点或地址" autocomplete="off">
+                    <button id="place-search-clear" type="button" data-action="clear-place-search" title="清除搜索">&times;</button>
+                    <button id="place-search-submit" type="button" data-action="submit-place-search">搜索</button>
+                </div>
+            </div>
             <label class="field">
                 <span>地图</span>
                 <select id="provider-select">
@@ -219,15 +359,18 @@
                 </select>
             </label>
             <div class="zoom-controls">
-                <button id="zoom-out" type="button" title="缩小">-</button>
+                <button id="zoom-out" type="button" data-action="zoom-out" title="缩小">-</button>
                 <span id="zoom-value">Z 15.00</span>
-                <button id="zoom-in" type="button" title="放大">+</button>
+                <button id="zoom-in" type="button" data-action="zoom-in" title="放大">+</button>
             </div>
-            <button id="auto-download-toggle" type="button" title="切换自动下载或仅使用缓存">自动下载</button>
-            <button id="reload-tiles" type="button" title="重新读取缓存">&#x21bb;</button>
+            <button id="auto-download-toggle" type="button" data-action="toggle-auto-download" title="切换自动下载或仅使用缓存">自动下载</button>
+            <button id="reload-tiles" type="button" data-action="reload-tiles" title="重新读取缓存">&#x21bb;</button>
             <div class="toolbar-spacer"></div>
-            <span class="coordinate-chip" id="center-coordinate">116.397389, 39.908722</span>
         </header>
+
+        <div id="place-search-results" class="search-results" style="display: none">
+            <div id="place-search-results-content"></div>
+        </div>
 
         <section class="map-overlay">
             <div class="source-line">
@@ -238,6 +381,7 @@
 
         <footer class="statusbar">
             <span id="cursor-coordinate">116.397389, 39.908722</span>
+            <span class="coordinate-chip" id="center-coordinate">116.397389, 39.908722</span>
             <span id="cache-path">cache/高德地图</span>
             <div class="status-spacer"></div>
             <span id="tile-stats">可见 0  已载入 0  读取 0  下载 0/0  失败 0  缓存 0.0 MB</span>

@@ -1,0 +1,162 @@
+#include "PostProcessTestSupport.h"
+
+#include <cstdint>
+#include <filesystem>
+#include <iostream>
+#include <string>
+#include <vector>
+
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/core/mat.hpp"
+#include "skui_runtime.h"
+
+namespace
+{
+constexpr int kWidth = 1440;
+constexpr int kHeight = 900;
+
+void sendMouse(skui::Runtime& runtime, skui::EventType type, float x, float y)
+{
+    skui::Event event;
+    event.type = type;
+    event.x = x;
+    event.y = y;
+    event.button = skui::MouseButton::Left;
+    runtime.handleEvent(event);
+}
+
+bool runTest()
+{
+    const std::filesystem::path sourceRoot = DOMDOWNTOOL_SOURCE_DIR;
+    const std::filesystem::path documentPath =
+        sourceRoot / "resources" / "preview" / "index.html";
+    skui::RuntimeOptions options;
+    options.assetRoot = documentPath.parent_path().generic_string();
+    skui::Runtime runtime(std::move(options));
+    runtime.resize(kWidth, kHeight, 1.F);
+    if (!postprocess_test::Require(runtime.loadDocument(documentPath.generic_string()),
+                                   "无法加载预览 HTML：" + runtime.lastError()))
+    {
+        return false;
+    }
+
+    std::string lastInputId;
+    std::string lastInputValue;
+    std::string lastClickId;
+    runtime.setElementEventCallback(
+        [&](const skui::ElementEvent& event)
+        {
+            if (event.type == skui::ElementEventType::Input)
+            {
+                lastInputId = event.id;
+                lastInputValue = event.value;
+            }
+            else if (event.type == skui::ElementEventType::Click)
+            {
+                lastClickId = event.id;
+            }
+        });
+
+    if (!postprocess_test::Require(runtime.setVisibleById("place-search-results", true),
+                                   "无法显示搜索结果面板") ||
+        !postprocess_test::Require(
+            runtime.replaceHtmlById(
+                "place-search-results-content",
+                "<div id=\"place-search-results-content\" "
+                "class=\"search-state\">正在搜索...</div>"),
+            "无法注入搜索加载状态") ||
+        !postprocess_test::Require(
+            runtime.replaceHtmlById(
+                "place-search-results-content",
+                "<div id=\"place-search-results-content\" "
+                "class=\"search-result-list\">"
+                "<button id=\"search-result-0\" class=\"search-result selected\" "
+                "type=\"button\" data-action=\"select-place-result\">"
+                "<span class=\"search-result-name\">天安门广场</span>"
+                "<span class=\"search-result-address\">北京市东城区 · 东长安街</span></button>"
+                "<button id=\"search-result-1\" class=\"search-result\" type=\"button\" "
+                "data-action=\"select-place-result\">"
+                "<span class=\"search-result-name\">天安门</span>"
+                "<span class=\"search-result-address\">北京市东城区</span></button>"
+                "</div>"),
+            "无法注入搜索候选结果"))
+    {
+        return false;
+    }
+
+    sendMouse(runtime, skui::EventType::MouseDown, 260.F, 26.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 260.F, 26.F);
+    skui::Event textEvent;
+    textEvent.type = skui::EventType::TextInput;
+    textEvent.text = "天安门";
+    runtime.handleEvent(textEvent);
+    if (!postprocess_test::Require(lastInputId == "place-search-input" &&
+                                       lastInputValue == "天安门",
+                                   "搜索输入框没有接收中文输入"))
+    {
+        return false;
+    }
+
+    sendMouse(runtime, skui::EventType::MouseDown, 520.F, 76.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 520.F, 76.F);
+    if (!postprocess_test::Require(lastClickId == "search-result-0",
+                                   "候选结果没有铺满弹层宽度，实际命中：" + lastClickId))
+    {
+        return false;
+    }
+
+    sendMouse(runtime, skui::EventType::MouseDown, 260.F, 132.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 260.F, 132.F);
+    if (!postprocess_test::Require(lastClickId == "search-result-1",
+                                   "第二条候选结果无法点击，实际命中：" + lastClickId))
+    {
+        return false;
+    }
+
+    std::vector<uint32_t> pixels(static_cast<size_t>(kWidth) * kHeight);
+    if (!postprocess_test::Require(
+            runtime.renderToBgraPixels(pixels.data(), kWidth, kHeight,
+                                       static_cast<size_t>(kWidth) * sizeof(uint32_t), 1.F),
+            "搜索 UI 离屏渲染失败"))
+    {
+        return false;
+    }
+
+    size_t nonTransparentPixels = 0;
+    for (const uint32_t pixel : pixels)
+    {
+        if ((pixel >> 24U) != 0U)
+        {
+            ++nonTransparentPixels;
+        }
+    }
+    if (!postprocess_test::Require(nonTransparentPixels > pixels.size() / 4,
+                                   "搜索 UI 渲染结果为空"))
+    {
+        return false;
+    }
+
+    const std::filesystem::path outputPath = sourceRoot / "tmp" / "preview-search-ui.png";
+    std::error_code directoryError;
+    std::filesystem::create_directories(outputPath.parent_path(), directoryError);
+    if (!postprocess_test::Require(!directoryError, "无法创建搜索 UI 截图目录"))
+    {
+        return false;
+    }
+
+    cv::Mat image(kHeight, kWidth, CV_8UC4, pixels.data());
+    if (!postprocess_test::Require(cv::imwrite(outputPath.string(), image),
+                                   "无法写入搜索 UI 截图"))
+    {
+        return false;
+    }
+
+    std::cout << "PreviewSearchUiTest passed: " << outputPath << '\n';
+    return true;
+}
+} // namespace
+
+int main()
+{
+    return postprocess_test::RunGuarded(runTest);
+}

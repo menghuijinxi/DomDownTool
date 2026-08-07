@@ -34,6 +34,12 @@ struct VisibleTile
     double size = 0.;
 };
 
+struct ViewportPoint
+{
+    double x = 0.;
+    double y = 0.;
+};
+
 class MapViewport
 {
   public:
@@ -73,6 +79,10 @@ class MapViewport
                                                            const DownTool::DownToolBase& projection,
                                                            TileYAxisDirection yDirection,
                                                            uint32_t tileSize = 256) const;
+
+    [[nodiscard]] std::optional<ViewportPoint> screenPointForLonLat(
+        const DownTool::LonLat& lonLat, const DownTool::DownToolBase& projection,
+        TileYAxisDirection yDirection, uint32_t tileSize = 256) const;
 
   private:
     struct SourcePoint
