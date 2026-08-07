@@ -9,6 +9,7 @@
 #include <memory>
 #include <stdexcept>
 #include <system_error>
+#include <thread>
 #include <utility>
 
 #include <windows.h>
@@ -151,7 +152,16 @@ DomDownToolPreview::TileDownloadQueue::TileDownloadQueue(
 {
     (void)curlGlobalState();
     registerSkiaImageCodecs();
-    workerCount = std::clamp(workerCount, size_t{1}, size_t{8});
+    const size_t hardwareThreadCount = std::max<size_t>(
+        1, static_cast<size_t>(std::thread::hardware_concurrency()));
+    if (workerCount == 0)
+    {
+        workerCount = hardwareThreadCount;
+    }
+    else
+    {
+        workerCount = std::min(workerCount, hardwareThreadCount);
+    }
     workers_.reserve(workerCount);
     for (size_t index = 0; index < workerCount; ++index)
     {
@@ -209,22 +219,30 @@ void DomDownToolPreview::TileDownloadQueue::updateVisibleRequests(
             return;
         }
 
-        std::unordered_set<std::filesystem::path> nextVisiblePaths;
-        nextVisiblePaths.reserve(jobs.size());
+        std::unordered_map<std::filesystem::path, const TileDownloadJob*> nextVisibleJobs;
+        nextVisibleJobs.reserve(jobs.size());
         for (const TileDownloadJob& job : jobs)
         {
             if (job.source && !job.destination.empty())
             {
-                nextVisiblePaths.insert(job.destination);
+                nextVisibleJobs.emplace(job.destination, &job);
             }
         }
-        visiblePaths_ = std::move(nextVisiblePaths);
+        visiblePaths_.clear();
+        visiblePaths_.reserve(nextVisibleJobs.size());
+        for (const auto& [destination, job] : nextVisibleJobs)
+        {
+            (void)job;
+            visiblePaths_.insert(destination);
+        }
 
         std::deque<PendingJob> retainedJobs;
         for (PendingJob& pending : pendingJobs_)
         {
-            if (visiblePaths_.contains(pending.job.destination))
+            const auto visibleJob = nextVisibleJobs.find(pending.job.destination);
+            if (visibleJob != nextVisibleJobs.end())
             {
+                pending.job = *visibleJob->second;
                 retainedJobs.push_back(std::move(pending));
             }
             else
@@ -419,11 +437,27 @@ void DomDownToolPreview::TileDownloadQueue::workerLoop()
                     return;
                 }
 
+                const auto now = std::chrono::steady_clock::now();
                 const auto nextJob = std::min_element(
                     pendingJobs_.begin(), pendingJobs_.end(),
-                    [](const PendingJob& left, const PendingJob& right)
-                    { return left.notBefore < right.notBefore; });
-                const auto now = std::chrono::steady_clock::now();
+                    [now](const PendingJob& left, const PendingJob& right)
+                    {
+                        const bool leftReady = left.notBefore <= now;
+                        const bool rightReady = right.notBefore <= now;
+                        if (leftReady != rightReady)
+                        {
+                            return leftReady;
+                        }
+                        if (!leftReady)
+                        {
+                            return left.notBefore < right.notBefore;
+                        }
+                        if (left.job.priority != right.job.priority)
+                        {
+                            return left.job.priority < right.job.priority;
+                        }
+                        return left.notBefore < right.notBefore;
+                    });
                 if (nextJob->notBefore > now)
                 {
                     condition_.wait_until(lock, nextJob->notBefore);

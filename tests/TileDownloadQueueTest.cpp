@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "DownToolBase.h"
@@ -102,6 +104,14 @@ int main()
         DownTool::DownToolBase source;
         DomDownToolPreview::TileDownloadQueue queue(
             [&completionCondition] { completionCondition.notify_all(); }, 1);
+        DomDownToolPreview::TileDownloadQueue automaticQueue(
+            [&completionCondition] { completionCondition.notify_all(); });
+        const size_t hardwareThreadCount = std::max<size_t>(
+            1, static_cast<size_t>(std::thread::hardware_concurrency()));
+        if (automaticQueue.GetWorkerCount() != hardwareThreadCount)
+        {
+            throw std::runtime_error("自动下载并发数没有使用 CPU 硬件线程数");
+        }
         const DownTool::Tile tile(1, 2, 3);
 
         const std::filesystem::path validPath = testRoot / "cache" / "valid.png";
@@ -117,6 +127,29 @@ int main()
             std::filesystem::file_size(validPath) != pngBytes.size())
         {
             throw std::runtime_error("有效瓦块没有通过原子落盘或图片校验");
+        }
+        queue.takeCompletedPaths();
+
+        const std::filesystem::path highPriorityPath = testRoot / "cache" / "high.png";
+        const std::filesystem::path lowPriorityPath = testRoot / "cache" / "low.png";
+        queue.updateVisibleRequests({
+            {lowPriorityPath, tile, &source, source.BuildTileHttpRequest(tile), 100.0},
+            {highPriorityPath, tile, &source, source.BuildTileHttpRequest(tile), 1.0}});
+        if (!waitUntil(
+                [&highPriorityPath, &lowPriorityPath]
+                {
+                    return std::filesystem::exists(highPriorityPath) &&
+                        std::filesystem::exists(lowPriorityPath);
+                },
+                completionCondition, completionMutex))
+        {
+            throw std::runtime_error("中心优先测试瓦块未在超时时间内完成");
+        }
+        const std::vector<std::filesystem::path> priorityCompletions =
+            queue.takeCompletedPaths();
+        if (priorityCompletions.size() < 2 || priorityCompletions[0] != highPriorityPath)
+        {
+            throw std::runtime_error("瓦块下载没有按中心优先级执行");
         }
 
         const std::filesystem::path invalidPath = testRoot / "cache" / "invalid.png";

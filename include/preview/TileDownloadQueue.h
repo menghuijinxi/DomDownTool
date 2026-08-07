@@ -23,6 +23,7 @@ struct TileDownloadJob
     DownTool::Tile tile;
     DownTool::DownToolBase* source = nullptr;
     DownTool::TileHttpRequest request;
+    double priority = 0.0;
 };
 
 struct TileDownloadStats
@@ -36,7 +37,7 @@ class TileDownloadQueue
 {
   public:
     explicit TileDownloadQueue(std::function<void()> requestRedraw,
-                               size_t workerCount = 4);
+                               size_t workerCount = 0);
 
     ~TileDownloadQueue();
 
@@ -46,6 +47,8 @@ class TileDownloadQueue
     void setEnabled(bool enabled);
 
     [[nodiscard]] bool enabled() const;
+
+    [[nodiscard]] size_t GetWorkerCount() const noexcept { return workers_.size(); }
 
     void updateVisibleRequests(const std::vector<TileDownloadJob>& jobs);
 

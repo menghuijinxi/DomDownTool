@@ -99,6 +99,10 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
     renderStats_.readyTiles = 0;
     std::vector<TileDownloadJob> downloadJobs;
     downloadJobs.reserve(visibleTiles.size());
+    const double mapCenterX = static_cast<double>(width) * 0.5;
+    const double mapContentHeight =
+        std::max(0., static_cast<double>(height) - toolbarHeight_ - statusBarHeight_);
+    const double mapCenterY = static_cast<double>(toolbarHeight_) + mapContentHeight * 0.5;
 
     const SkSamplingOptions sampling(SkFilterMode::kLinear, SkMipmapMode::kNone);
     for (const VisibleTile& visibleTile : visibleTiles)
@@ -110,9 +114,19 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
         {
             if (downloadQueue_.enabled() && imageCache_.isKnownMissing(tilePath))
             {
-                downloadJobs.push_back({tilePath, visibleTile.cacheTile, source.projection.get(),
-                                        source.projection->BuildTileHttpRequest(
-                                            visibleTile.cacheTile)});
+                TileDownloadJob job{
+                    tilePath,
+                    visibleTile.cacheTile,
+                    source.projection.get(),
+                    source.projection->BuildTileHttpRequest(visibleTile.cacheTile)};
+                const double tileCenterX =
+                    visibleTile.left + static_cast<double>(visibleTile.size) * 0.5;
+                const double tileCenterY =
+                    visibleTile.top + static_cast<double>(visibleTile.size) * 0.5;
+                const double distanceX = tileCenterX - mapCenterX;
+                const double distanceY = tileCenterY - mapCenterY;
+                job.priority = distanceX * distanceX + distanceY * distanceY;
+                downloadJobs.push_back(std::move(job));
             }
             drawMissingTile(canvas, visibleTile);
             continue;
