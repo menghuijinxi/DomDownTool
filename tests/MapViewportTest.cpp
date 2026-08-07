@@ -68,6 +68,29 @@ bool testProjectionInteraction(DownTool::DownToolBase& projection,
         return false;
     }
 
+    const std::optional<DomDownToolPreview::ViewportTransform> transform =
+        viewport.makeTransform(projection, yDirection);
+    const std::optional<DomDownToolPreview::ViewportSourcePoint> sourcePoint =
+        transform.has_value() ? transform->sourcePointForLonLat(beijing) : std::nullopt;
+    const DomDownToolPreview::ViewportPoint transformedPoint =
+        sourcePoint.has_value() ? transform->screenPointForSourcePoint(*sourcePoint)
+                                : DomDownToolPreview::ViewportPoint{};
+    const std::optional<DomDownToolPreview::ViewportGeoBounds> bounds =
+        viewport.visibleGeoBounds(projection, yDirection);
+    if (!postprocess_test::Require(
+            transform.has_value() && sourcePoint.has_value() &&
+                std::abs(transformedPoint.x - centerPoint->x) < 0.001 &&
+                std::abs(transformedPoint.y - centerPoint->y) < 0.001,
+            projectionName + " reusable viewport transform does not match direct projection") ||
+        !postprocess_test::Require(
+            bounds.has_value() && bounds->minLon <= beijing.lon &&
+                bounds->maxLon >= beijing.lon && bounds->minLat <= beijing.lat &&
+                bounds->maxLat >= beijing.lat,
+            projectionName + " visible geographic bounds do not contain the center"))
+    {
+        return false;
+    }
+
     constexpr double kAnchorX = 723.;
     constexpr double kAnchorY = 331.;
     const std::optional<DownTool::LonLat> anchorBefore =

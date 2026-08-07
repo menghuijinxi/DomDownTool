@@ -79,6 +79,14 @@
             border-color: #50a38b;
         }
 
+        #provider-select {
+            width: 160px;
+        }
+
+        #gis-overlay-select {
+            width: 132px;
+        }
+
         .search-control {
             position: relative;
             flex: 0 0 300px;
@@ -258,6 +266,59 @@
             background: #2d5a4d;
         }
 
+        #gis-color-toggle {
+            width: 48px;
+            border: 1px solid #505854;
+            border-radius: 4px;
+            color: #d9dfdc;
+            font: 12px "Microsoft YaHei", "Segoe UI", sans-serif;
+        }
+
+        #gis-color-toggle:hover {
+            background: #343b38;
+        }
+
+        .gis-color-panel {
+            position: absolute;
+            z-index: 90;
+            top: 48px;
+            left: 720px;
+            width: 238px;
+            padding: 9px;
+            border: 1px solid #4a524e;
+            border-radius: 4px;
+            background: #1b201e;
+            box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
+        }
+
+        .gis-color-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 30px;
+        }
+
+        .gis-color-row span {
+            flex: 1;
+            color: #d8dfdc;
+        }
+
+        .gis-color-row input {
+            width: 92px;
+            height: 24px;
+            padding: 0 6px;
+            border: 1px solid #505854;
+            border-radius: 3px;
+            outline: none;
+            background: #181c1b;
+            color: #edf1ef;
+            font: 12px "Consolas", monospace;
+        }
+
+        .gis-color-row input:focus {
+            border-color: #50a38b;
+        }
+
         .toolbar-spacer {
             flex: 1;
         }
@@ -380,8 +441,26 @@
                     <option value="google.satellite">Google 卫星</option>
                     <option value="bing.satellite">Bing 卫星</option>
                     <option value="arcgis.satellite">ArcGIS 影像</option>
+                    <option value="none">无</option>
                 </select>
             </label>
+            <label class="field">
+                <span>GIS</span>
+                <select id="gis-overlay-select">
+                    <option value="none" selected>无</option>
+                    <option value="all">全部</option>
+                    <option value="road">道路</option>
+                    <option value="water">水</option>
+                    <option value="green">绿地</option>
+                    <option value="highway">高速</option>
+                    <option value="subway">地铁</option>
+                    <option value="building">建筑</option>
+                    <option value="point">点</option>
+                    <option value="boundary">边界</option>
+                    <option value="other">其他</option>
+                </select>
+            </label>
+            <button id="gis-color-toggle" type="button" data-action="toggle-gis-colors">颜色</button>
             <div class="zoom-controls">
                 <button id="zoom-out" type="button" data-action="zoom-out" title="缩小">-</button>
                 <span id="zoom-value">Z 15.00</span>
@@ -391,6 +470,18 @@
             <button id="reload-tiles" type="button" data-action="reload-tiles" title="重新读取缓存">&#x21bb;</button>
             <div class="toolbar-spacer"></div>
         </header>
+
+        <div id="gis-color-panel" class="gis-color-panel" style="display: none">
+            <div class="gis-color-row"><span>道路</span><input id="gis-color-road" type="text" value="#F0C641" maxlength="7"></div>
+            <div class="gis-color-row"><span>水</span><input id="gis-color-water" type="text" value="#42A5F5" maxlength="7"></div>
+            <div class="gis-color-row"><span>绿地</span><input id="gis-color-green" type="text" value="#43A047" maxlength="7"></div>
+            <div class="gis-color-row"><span>高速</span><input id="gis-color-highway" type="text" value="#FF6F38" maxlength="7"></div>
+            <div class="gis-color-row"><span>地铁</span><input id="gis-color-subway" type="text" value="#D24BDC" maxlength="7"></div>
+            <div class="gis-color-row"><span>建筑</span><input id="gis-color-building" type="text" value="#B4B4B4" maxlength="7"></div>
+            <div class="gis-color-row"><span>点</span><input id="gis-color-point" type="text" value="#E53935" maxlength="7"></div>
+            <div class="gis-color-row"><span>边界</span><input id="gis-color-boundary" type="text" value="#536E7A" maxlength="7"></div>
+            <div class="gis-color-row"><span>其他</span><input id="gis-color-other" type="text" value="#607D8B" maxlength="7"></div>
+        </div>
 
         <div id="place-search-results" class="search-results" style="display: none">
             <div id="place-search-results-content"></div>

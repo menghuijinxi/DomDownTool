@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <utility>
 
 #include "ArcGISDown.h"
@@ -26,7 +27,9 @@ constexpr uint32_t kTileSize = 256;
 } // namespace
 
 DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw)
-    : imageCache_(requestRedraw), downloadQueue_(std::move(requestRedraw))
+    : imageCache_(requestRedraw),
+      downloadQueue_(requestRedraw),
+      gisOverlay_(std::move(requestRedraw))
 {
     auto addSource =
         [this](std::string id, std::string name, std::string coordinateSystem,
@@ -39,6 +42,10 @@ DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw
         source.summary.name = std::move(name);
         source.summary.coordinateSystem = std::move(coordinateSystem);
         source.summary.cacheRoot = std::filesystem::u8path(projection->GetCachePath());
+        if (source.summary.id == "none")
+        {
+            source.summary.cacheRoot.clear();
+        }
         source.summary.minimumZoom = minimumZoom;
         source.summary.maximumZoom = maximumZoom;
         source.yDirection = yDirection;
@@ -67,6 +74,8 @@ DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw
               TileYAxisDirection::Down, 1., 20.);
     addSource("arcgis.satellite", "ArcGIS 影像", "WGS84 / XYZ",
               std::make_unique<DownTool::ArcGISDown>(), TileYAxisDirection::Down, 1., 20.);
+    addSource("none", "无", "WGS84 / XYZ", std::make_unique<DownTool::GoogleDownBase>(),
+              TileYAxisDirection::Down, 1., 21.);
 }
 
 DomDownToolPreview::MapRenderer::~MapRenderer() = default;
@@ -105,43 +114,61 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
     const double mapCenterY = static_cast<double>(toolbarHeight_) + mapContentHeight * 0.5;
 
     const SkSamplingOptions sampling(SkFilterMode::kLinear, SkMipmapMode::kNone);
-    for (const VisibleTile& visibleTile : visibleTiles)
+    if (source.summary.id != "none")
     {
-        const std::filesystem::path tilePath =
-            resolveTilePath(source.summary.cacheRoot, visibleTile.cacheTile);
-        sk_sp<SkImage> image = imageCache_.findOrRequest(tilePath, canvas);
-        if (!image)
+        for (const VisibleTile& visibleTile : visibleTiles)
         {
-            if (downloadQueue_.enabled() && imageCache_.isKnownMissing(tilePath))
+            const std::filesystem::path tilePath =
+                resolveTilePath(source.summary.cacheRoot, visibleTile.cacheTile);
+            sk_sp<SkImage> image = imageCache_.findOrRequest(tilePath, canvas);
+            if (!image)
             {
-                TileDownloadJob job{
-                    tilePath,
-                    visibleTile.cacheTile,
-                    source.projection.get(),
-                    source.projection->BuildTileHttpRequest(visibleTile.cacheTile)};
-                const double tileCenterX =
-                    visibleTile.left + static_cast<double>(visibleTile.size) * 0.5;
-                const double tileCenterY =
-                    visibleTile.top + static_cast<double>(visibleTile.size) * 0.5;
-                const double distanceX = tileCenterX - mapCenterX;
-                const double distanceY = tileCenterY - mapCenterY;
-                job.priority = distanceX * distanceX + distanceY * distanceY;
-                downloadJobs.push_back(std::move(job));
+                if (downloadQueue_.enabled() && imageCache_.isKnownMissing(tilePath))
+                {
+                    TileDownloadJob job{
+                        tilePath,
+                        visibleTile.cacheTile,
+                        source.projection.get(),
+                        source.projection->BuildTileHttpRequest(visibleTile.cacheTile)};
+                    const double tileCenterX =
+                        visibleTile.left + static_cast<double>(visibleTile.size) * 0.5;
+                    const double tileCenterY =
+                        visibleTile.top + static_cast<double>(visibleTile.size) * 0.5;
+                    const double distanceX = tileCenterX - mapCenterX;
+                    const double distanceY = tileCenterY - mapCenterY;
+                    job.priority = distanceX * distanceX + distanceY * distanceY;
+                    downloadJobs.push_back(std::move(job));
+                }
+                drawMissingTile(canvas, visibleTile);
+                continue;
             }
-            drawMissingTile(canvas, visibleTile);
-            continue;
-        }
 
-        renderStats_.readyTiles++;
-        const SkRect sourceRect = SkRect::MakeIWH(image->width(), image->height());
-        const SkRect destinationRect = SkRect::MakeXYWH(
-            static_cast<float>(visibleTile.left), static_cast<float>(visibleTile.top),
-            static_cast<float>(visibleTile.size + 0.5), static_cast<float>(visibleTile.size + 0.5));
-        canvas.drawImageRect(image, sourceRect, destinationRect, sampling, nullptr,
-                             SkCanvas::kFast_SrcRectConstraint);
+            renderStats_.readyTiles++;
+            const SkRect sourceRect = SkRect::MakeIWH(image->width(), image->height());
+            const SkRect destinationRect = SkRect::MakeXYWH(
+                static_cast<float>(visibleTile.left), static_cast<float>(visibleTile.top),
+                static_cast<float>(visibleTile.size + 0.5),
+                static_cast<float>(visibleTile.size + 0.5));
+            canvas.drawImageRect(image, sourceRect, destinationRect, sampling, nullptr,
+                                 SkCanvas::kFast_SrcRectConstraint);
+        }
     }
 
     downloadQueue_.updateVisibleRequests(downloadJobs);
+
+    const double worldPixels =
+        static_cast<double>(kTileSize) * std::pow(2., viewport_.sourceZoom());
+    const double displayScale = 1. / viewport_.GetViewSpan();
+    const double mapWidthDegrees =
+        360. * static_cast<double>(width) / std::max(1., worldPixels * displayScale);
+    const double mapHeightDegrees =
+        360. * mapContentHeight / std::max(1., worldPixels * displayScale);
+    const double latitudeScale =
+        std::max(0.2, std::cos(viewport_.center().lat * std::numbers::pi / 180.));
+    const double radiusMeters = std::max(mapWidthDegrees * latitudeScale, mapHeightDegrees) *
+        111320. * 0.65;
+    gisOverlay_.UpdateContext(viewport_.center(), radiusMeters, viewport_.sourceZoom());
+    gisOverlay_.Draw(canvas, viewport_, *source.projection, source.yDirection, kTileSize);
 
     drawCenterMarker(canvas, width, height);
     drawLocationMarker(canvas, width, height);
@@ -214,6 +241,29 @@ bool DomDownToolPreview::MapRenderer::selectSource(std::string_view sourceId)
     return true;
 }
 
+void DomDownToolPreview::MapRenderer::SetGisOverlayCategory(GisOverlayCategory category)
+{
+    gisOverlay_.SetCategory(category);
+}
+
+DomDownToolPreview::GisOverlayCategory
+DomDownToolPreview::MapRenderer::GetGisOverlayCategory() const
+{
+    return gisOverlay_.GetCategory();
+}
+
+void DomDownToolPreview::MapRenderer::SetGisOverlayColor(
+    GisOverlayCategory category, const DownTool::AmapVectorColor& color)
+{
+    gisOverlay_.SetColor(category, color);
+}
+
+DownTool::AmapVectorColor DomDownToolPreview::MapRenderer::GetGisOverlayColor(
+    GisOverlayCategory category) const
+{
+    return gisOverlay_.GetColor(category);
+}
+
 std::vector<DomDownToolPreview::MapSourceSummary> DomDownToolPreview::MapRenderer::sources() const
 {
     std::vector<MapSourceSummary> result;
@@ -239,6 +289,7 @@ void DomDownToolPreview::MapRenderer::clearCache()
 {
     downloadQueue_.cancelPending();
     imageCache_.clear();
+    gisOverlay_.Clear();
 }
 
 void DomDownToolPreview::MapRenderer::setAutoDownloadEnabled(bool enabled)

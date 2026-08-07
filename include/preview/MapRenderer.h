@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "DownToolBase.h"
+#include "preview/GisOverlayRenderer.h"
 #include "preview/MapViewport.h"
 #include "preview/TileDownloadQueue.h"
 #include "preview/TileImageCache.h"
@@ -61,6 +62,16 @@ class MapRenderer
     [[nodiscard]] std::optional<DownTool::LonLat> lonLatAt(double screenX, double screenY) const;
 
     bool selectSource(std::string_view sourceId);
+
+    void SetGisOverlayCategory(GisOverlayCategory category);
+
+    [[nodiscard]] GisOverlayCategory GetGisOverlayCategory() const;
+
+    void SetGisOverlayColor(GisOverlayCategory category,
+                             const DownTool::AmapVectorColor& color);
+
+    [[nodiscard]] DownTool::AmapVectorColor GetGisOverlayColor(
+        GisOverlayCategory category) const;
 
     [[nodiscard]] std::vector<MapSourceSummary> sources() const;
 
@@ -122,6 +133,7 @@ class MapRenderer
     MapViewport viewport_;
     TileImageCache imageCache_;
     TileDownloadQueue downloadQueue_;
+    GisOverlayRenderer gisOverlay_;
     MapRenderStats renderStats_;
     std::optional<DownTool::LonLat> locationMarkerWgs84_;
     double toolbarHeight_ = 52.;

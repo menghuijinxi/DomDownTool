@@ -194,6 +194,7 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview_main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapPlaceSearch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapWebViewSearch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisOverlayRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/MapRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewController.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SearchTrace.cpp
@@ -311,6 +312,23 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     target_compile_options(TileDownloadQueueTest PRIVATE /EHsc /permissive-)
   endif()
   add_test(NAME TileDownloadQueueTest COMMAND TileDownloadQueueTest)
+
+  add_executable(GisOverlayRendererTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/GisOverlayRendererTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisOverlayRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SearchTrace.cpp)
+  target_link_libraries(GisOverlayRendererTest PRIVATE
+    DomDownToolCore
+    SkiaUI::SkuiWin32Dx12)
+  target_compile_definitions(GisOverlayRendererTest PRIVATE
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN)
+  set_property(TARGET GisOverlayRendererTest PROPERTY CXX_STANDARD 23)
+  set_property(TARGET GisOverlayRendererTest PROPERTY CXX_STANDARD_REQUIRED ON)
+  if(MSVC)
+    target_compile_options(GisOverlayRendererTest PRIVATE /EHsc /permissive-)
+  endif()
+  add_test(NAME GisOverlayRendererTest COMMAND GisOverlayRendererTest)
 
   add_executable(PreviewSearchUiTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/PreviewSearchUiTest.cpp)

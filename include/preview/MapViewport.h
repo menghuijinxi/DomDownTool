@@ -40,6 +40,39 @@ struct ViewportPoint
     double y = 0.;
 };
 
+struct ViewportSourcePoint
+{
+    double x = 0.;
+    double y = 0.;
+};
+
+struct ViewportGeoBounds
+{
+    double minLon = 0.;
+    double maxLon = 0.;
+    double minLat = 0.;
+    double maxLat = 0.;
+};
+
+struct ViewportTransform
+{
+    uint32_t sourceZoom = 0;
+    double centerSourceX = 0.;
+    double centerSourceY = 0.;
+    double centerScreenX = 0.;
+    double centerScreenY = 0.;
+    double displayScale = 1.;
+    const DownTool::DownToolBase* projection = nullptr;
+    TileYAxisDirection yDirection = TileYAxisDirection::Down;
+    uint32_t tileSize = 256;
+
+    [[nodiscard]] std::optional<ViewportSourcePoint> sourcePointForLonLat(
+        const DownTool::LonLat& lonLat) const;
+
+    [[nodiscard]] ViewportPoint screenPointForSourcePoint(
+        const ViewportSourcePoint& point) const;
+};
+
 class MapViewport
 {
   public:
@@ -90,6 +123,14 @@ class MapViewport
     [[nodiscard]] std::optional<ViewportPoint> screenPointForLonLat(
         const DownTool::LonLat& lonLat, const DownTool::DownToolBase& projection,
         TileYAxisDirection yDirection, uint32_t tileSize = 256) const;
+
+    [[nodiscard]] std::optional<ViewportTransform> makeTransform(
+        const DownTool::DownToolBase& projection, TileYAxisDirection yDirection,
+        uint32_t tileSize = 256) const;
+
+    [[nodiscard]] std::optional<ViewportGeoBounds> visibleGeoBounds(
+        const DownTool::DownToolBase& projection, TileYAxisDirection yDirection,
+        uint32_t tileSize = 256) const;
 
   private:
     struct SourcePoint

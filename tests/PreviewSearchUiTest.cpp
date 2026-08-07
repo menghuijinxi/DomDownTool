@@ -43,6 +43,8 @@ bool runTest()
     std::string lastInputId;
     std::string lastInputValue;
     std::string lastClickId;
+    std::string lastChangeId;
+    std::string lastChangeValue;
     runtime.setElementEventCallback(
         [&](const skui::ElementEvent& event)
         {
@@ -54,6 +56,11 @@ bool runTest()
             else if (event.type == skui::ElementEventType::Click)
             {
                 lastClickId = event.id;
+            }
+            else if (event.type == skui::ElementEventType::Change)
+            {
+                lastChangeId = event.id;
+                lastChangeValue = event.value;
             }
         });
 
@@ -125,6 +132,18 @@ bool runTest()
     sendMouse(runtime, skui::EventType::MouseUp, 451.F, 887.F);
     if (!postprocess_test::Require(lastClickId == "view-span-increase",
                                    "视野扩大按钮无法点击，实际命中：" + lastClickId))
+    {
+        return false;
+    }
+
+    sendMouse(runtime, skui::EventType::MouseDown, 800.F, 26.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 800.F, 26.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 800.F, 112.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 800.F, 112.F);
+    if (!postprocess_test::Require(lastChangeId == "gis-overlay-select" &&
+                                       lastChangeValue == "road",
+                                   "GIS select did not commit the road option: " +
+                                       lastChangeId + "=" + lastChangeValue))
     {
         return false;
     }
