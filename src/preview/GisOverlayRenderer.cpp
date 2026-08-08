@@ -472,6 +472,26 @@ void DomDownToolPreview::GisOverlayRenderer::Draw(
             {
                 continue;
             }
+
+            if (feature.geometryType == AmapVectorGeometryType::Point)
+            {
+                const float radius = static_cast<float>(5. / transform->displayScale);
+                for (const std::vector<DownTool::LonLat>& part : feature.geometryParts)
+                {
+                    for (const DownTool::LonLat& coordinate : part)
+                    {
+                        const std::optional<ViewportSourcePoint> point =
+                            transform->sourcePointForLonLat(coordinate);
+                        if (point.has_value())
+                        {
+                            canvas.drawCircle(static_cast<float>(point->x),
+                                              static_cast<float>(point->y), radius, paint);
+                        }
+                    }
+                }
+                continue;
+            }
+
             if (!initialized[featureIndex])
             {
                 SkPathBuilder pathBuilder;
@@ -510,26 +530,6 @@ void DomDownToolPreview::GisOverlayRenderer::Draw(
             const SkPath& path = paths[featureIndex];
             if (path.isEmpty())
             {
-                continue;
-            }
-
-            if (feature.geometryType == AmapVectorGeometryType::Point)
-            {
-                SkPath::Iter iterator(path, false);
-                SkPoint points[4];
-                const float radius = static_cast<float>(5. / transform->displayScale);
-                while (true)
-                {
-                    const SkPath::Verb verb = iterator.next(points);
-                    if (verb == SkPath::kDone_Verb)
-                    {
-                        break;
-                    }
-                    if (verb == SkPath::kMove_Verb)
-                    {
-                        canvas.drawCircle(points[0].x(), points[0].y(), radius, paint);
-                    }
-                }
                 continue;
             }
 

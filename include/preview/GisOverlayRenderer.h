@@ -20,6 +20,8 @@ class SkCanvas;
 
 namespace DomDownToolPreview
 {
+class GisOverlayRendererTestAccess;
+
 enum class GisOverlayCategory
 {
     None,
@@ -67,6 +69,8 @@ class GisOverlayRenderer
     [[nodiscard]] bool IsLoading() const;
 
   private:
+    friend class GisOverlayRendererTestAccess;
+
     struct PreparedData;
     struct PreparedRenderCache;
 

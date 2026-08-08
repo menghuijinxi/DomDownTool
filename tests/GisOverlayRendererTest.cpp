@@ -1,9 +1,30 @@
 #include <atomic>
 #include <cstdint>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
+#include <utility>
 
+#include "include/core/SkBitmap.h"
+#include "include/core/SkCanvas.h"
+
+#include "GCJ02GoogleDownBase.h"
+#include "GoogleDownBase.h"
 #include "preview/GisOverlayRenderer.h"
+
+namespace DomDownToolPreview
+{
+class GisOverlayRendererTestAccess
+{
+  public:
+    static void SetDecodedData(GisOverlayRenderer& renderer,
+                               const DownTool::AmapVectorDecodedData& decodedData)
+    {
+        const std::lock_guard lock(renderer.mutex_);
+        renderer.preparedData_ = GisOverlayRenderer::prepareData(decodedData);
+    }
+};
+} // namespace DomDownToolPreview
 
 namespace
 {
@@ -12,6 +33,66 @@ bool colorsEqual(const DownTool::AmapVectorColor& left,
 {
     return left.red == right.red && left.green == right.green &&
         left.blue == right.blue && left.alpha == right.alpha;
+}
+
+bool pointRendersAfterPanningAndColorChange()
+{
+    const DownTool::LonLat centerWgs84{116.397389, 39.908722};
+    const DownTool::LonLat centerGcj02 =
+        DownTool::GCJ02GoogleDownBase::WGS84ToGCJ02(centerWgs84);
+    DownTool::AmapVectorFeature pointFeature;
+    pointFeature.geometryType = DownTool::AmapVectorGeometryType::Point;
+    pointFeature.layerName = "poi";
+    pointFeature.geometryParts.push_back(
+        {{{centerGcj02.lon, centerGcj02.lat}}});
+
+    DownTool::AmapVectorDecodedData decodedData;
+    decodedData.features.push_back(std::move(pointFeature));
+
+    DomDownToolPreview::GisOverlayRenderer renderer([] {});
+    renderer.SetCategory(DomDownToolPreview::GisOverlayCategory::Point);
+    DomDownToolPreview::GisOverlayRendererTestAccess::SetDecodedData(renderer, decodedData);
+
+    DownTool::GoogleDownBase projection;
+    projection.SetTileSize(256);
+    DomDownToolPreview::MapViewport viewport;
+    viewport.setSize(64, 64);
+    viewport.setCenter(centerWgs84);
+    viewport.setZoom(15.);
+
+    SkBitmap bitmap;
+    bitmap.allocN32Pixels(64, 64);
+    bitmap.eraseColor(SK_ColorTRANSPARENT);
+    SkCanvas canvas(bitmap);
+    renderer.Draw(canvas, viewport, projection,
+                  DomDownToolPreview::TileYAxisDirection::Down, 256);
+    if (SkColorGetA(bitmap.getColor(32, 32)) == 0)
+    {
+        return false;
+    }
+
+    bitmap.eraseColor(SK_ColorTRANSPARENT);
+    if (!viewport.panBy(8., 0., projection,
+                        DomDownToolPreview::TileYAxisDirection::Down, 256))
+    {
+        return false;
+    }
+    renderer.Draw(canvas, viewport, projection,
+                  DomDownToolPreview::TileYAxisDirection::Down, 256);
+    if (SkColorGetA(bitmap.getColor(40, 32)) == 0)
+    {
+        return false;
+    }
+
+    const DownTool::AmapVectorColor updatedColor{12, 220, 34, 255};
+    renderer.SetColor(DomDownToolPreview::GisOverlayCategory::Point, updatedColor);
+    bitmap.eraseColor(SK_ColorTRANSPARENT);
+    renderer.Draw(canvas, viewport, projection,
+                  DomDownToolPreview::TileYAxisDirection::Down, 256);
+    const SkColor renderedColor = bitmap.getColor(40, 32);
+    return SkColorGetR(renderedColor) == updatedColor.red &&
+        SkColorGetG(renderedColor) == updatedColor.green &&
+        SkColorGetB(renderedColor) == updatedColor.blue;
 }
 } // namespace
 
@@ -24,6 +105,12 @@ int main()
         if (renderer.GetCategory() != DomDownToolPreview::GisOverlayCategory::None)
         {
             throw std::runtime_error("GIS overlay must be disabled by default");
+        }
+
+        if (!pointRendersAfterPanningAndColorChange())
+        {
+            throw std::runtime_error(
+                "point did not render after panning or refresh its color");
         }
 
         renderer.UpdateContext({116.397389, 39.908722}, 100., 15);
