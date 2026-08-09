@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <optional>
 #include <string>
@@ -75,6 +76,10 @@ class PreviewController
 
     void updateUi(skui::Runtime& runtime);
 
+    void selectGisColorCategory(GisOverlayCategory category);
+
+    void applyGisColorPicker(skui::Runtime& runtime);
+
     void updateCursor(skui::Runtime& runtime, double screenX, double screenY);
 
     void scheduleUiRefresh();
@@ -98,7 +103,15 @@ class PreviewController
     bool searchPopupOpen_ = false;
     bool gisOverlayPopupOpen_ = false;
     bool gisColorPopupOpen_ = false;
+    GisOverlayCategory gisColorPaletteCategory_ = GisOverlayCategory::Road;
+    double gisColorHue_ = 0.;
+    double gisColorSaturation_ = 0.;
+    double gisColorBrightness_ = 0.;
+    bool gisColorFieldDragging_ = false;
+    bool gisColorHueDragging_ = false;
     std::optional<GisOverlayCategories> lastUiGisCategories_;
+    std::array<std::string, 9> lastUiGisColorValues_{};
+    std::string lastUiGisPickerState_;
     bool dragging_ = false;
     POINT lastDragPoint_{};
 };

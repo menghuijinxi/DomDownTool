@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cmath>
 #include <cstdint>
 #include <iterator>
 #include <string>
@@ -32,8 +33,14 @@ constexpr double kGisOverlayPanelWidth = 184.;
 constexpr double kGisOverlayPanelHeight = 322.;
 constexpr double kGisColorPanelLeft = 720.;
 constexpr double kGisColorPanelTop = 48.;
-constexpr double kGisColorPanelWidth = 238.;
-constexpr double kGisColorPanelHeight = 288.;
+constexpr double kGisColorPanelWidth = 342.;
+constexpr double kGisColorPanelHeight = 562.;
+constexpr double kGisColorFieldLeft = 730.;
+constexpr double kGisColorFieldTop = 427.;
+constexpr double kGisColorFieldWidth = 220.;
+constexpr double kGisColorFieldHeight = 150.;
+constexpr double kGisColorHueTop = kGisColorFieldTop;
+constexpr double kGisColorHueHeight = kGisColorFieldHeight;
 
 bool isPointInside(double x, double y, double left, double top, double width, double height)
 {
@@ -311,6 +318,25 @@ std::optional<DomDownToolPreview::GisOverlayCategory> gisColorCategoryFromId(
     return gisCategoryFromValue(id.substr(prefix.size()));
 }
 
+std::optional<DomDownToolPreview::GisOverlayCategory> gisColorTargetCategoryFromId(
+    std::string_view id)
+{
+    constexpr std::string_view prefix = "gis-color-target-";
+    if (!id.starts_with(prefix))
+    {
+        return std::nullopt;
+    }
+    const std::optional<DomDownToolPreview::GisOverlayCategory> category =
+        gisCategoryFromValue(id.substr(prefix.size()));
+    if (!category.has_value() ||
+        *category == DomDownToolPreview::GisOverlayCategory::None ||
+        *category == DomDownToolPreview::GisOverlayCategory::All)
+    {
+        return std::nullopt;
+    }
+    return category;
+}
+
 std::optional<DownTool::AmapVectorColor> parseGisColor(std::string_view value)
 {
     if (!value.empty() && value.front() == '#')
@@ -341,6 +367,105 @@ std::optional<DownTool::AmapVectorColor> parseGisColor(std::string_view value)
     return DownTool::AmapVectorColor{*red, *green, *blue, 255};
 }
 
+std::string gisColorHex(const DownTool::AmapVectorColor& color)
+{
+    return fmt::format("#{:02X}{:02X}{:02X}", static_cast<unsigned>(color.red),
+                       static_cast<unsigned>(color.green),
+                       static_cast<unsigned>(color.blue));
+}
+
+struct HsvColor
+{
+    double hue = 0.;
+    double saturation = 0.;
+    double brightness = 0.;
+};
+
+HsvColor toHsv(const DownTool::AmapVectorColor& color)
+{
+    const double red = static_cast<double>(color.red) / 255.;
+    const double green = static_cast<double>(color.green) / 255.;
+    const double blue = static_cast<double>(color.blue) / 255.;
+    const double maximum = std::max({red, green, blue});
+    const double minimum = std::min({red, green, blue});
+    const double delta = maximum - minimum;
+
+    double hue = 0.;
+    if (delta > 0.)
+    {
+        if (maximum == red)
+        {
+            hue = 60. * std::fmod((green - blue) / delta, 6.);
+        }
+        else if (maximum == green)
+        {
+            hue = 60. * ((blue - red) / delta + 2.);
+        }
+        else
+        {
+            hue = 60. * ((red - green) / delta + 4.);
+        }
+        if (hue < 0.)
+        {
+            hue += 360.;
+        }
+    }
+
+    return HsvColor{hue, maximum > 0. ? delta / maximum : 0., maximum};
+}
+
+DownTool::AmapVectorColor fromHsv(const HsvColor& color)
+{
+    const double hue = std::fmod(std::max(0., color.hue), 360.);
+    const double saturation = std::clamp(color.saturation, 0., 1.);
+    const double brightness = std::clamp(color.brightness, 0., 1.);
+    const double chroma = brightness * saturation;
+    const double intermediate =
+        chroma * (1. - std::abs(std::fmod(hue / 60., 2.) - 1.));
+
+    double red = 0.;
+    double green = 0.;
+    double blue = 0.;
+    if (hue < 60.)
+    {
+        red = chroma;
+        green = intermediate;
+    }
+    else if (hue < 120.)
+    {
+        red = intermediate;
+        green = chroma;
+    }
+    else if (hue < 180.)
+    {
+        green = chroma;
+        blue = intermediate;
+    }
+    else if (hue < 240.)
+    {
+        green = intermediate;
+        blue = chroma;
+    }
+    else if (hue < 300.)
+    {
+        red = intermediate;
+        blue = chroma;
+    }
+    else
+    {
+        red = chroma;
+        blue = intermediate;
+    }
+
+    const double match = brightness - chroma;
+    const auto channel = [match](double value)
+    {
+        return static_cast<uint8_t>(
+            std::clamp(std::lround((value + match) * 255.), 0L, 255L));
+    };
+    return DownTool::AmapVectorColor{channel(red), channel(green), channel(blue), 255};
+}
+
 } // namespace
 
 DomDownToolPreview::PreviewController::PreviewController()
@@ -355,6 +480,7 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
 {
     writeSearchTrace("Controller", "runtime_attached");
     runtime_ = &runtime;
+    selectGisColorCategory(gisColorPaletteCategory_);
     runtime.setElementEventCallback(
         [this, &runtime](const skui::ElementEvent& event)
         {
@@ -476,6 +602,69 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 return;
             }
 
+            if (event.type == skui::ElementEventType::MouseDown)
+            {
+                if (const std::optional<GisOverlayCategory> target =
+                        gisColorTargetCategoryFromId(event.id))
+                {
+                    selectGisColorCategory(*target);
+                    updateUi(runtime);
+                    requestRedraw();
+                    return;
+                }
+                if (const std::optional<GisOverlayCategory> category =
+                        gisColorCategoryFromId(event.id))
+                {
+                    selectGisColorCategory(*category);
+                    updateUi(runtime);
+                    requestRedraw();
+                    return;
+                }
+            }
+
+            const bool colorFieldEvent = event.id == "gis-color-picker-field" &&
+                (event.type == skui::ElementEventType::MouseDown ||
+                 event.type == skui::ElementEventType::MouseUp ||
+                 (event.type == skui::ElementEventType::MouseMove &&
+                  gisColorFieldDragging_));
+            if (colorFieldEvent)
+            {
+                gisColorFieldDragging_ =
+                    event.type != skui::ElementEventType::MouseUp;
+                gisColorHueDragging_ = false;
+                gisColorSaturation_ = std::clamp(
+                    (static_cast<double>(event.x) - kGisColorFieldLeft) /
+                        kGisColorFieldWidth,
+                    0., 1.);
+                gisColorBrightness_ = 1. - std::clamp(
+                    (static_cast<double>(event.y) - kGisColorFieldTop) /
+                        kGisColorFieldHeight,
+                    0., 1.);
+                applyGisColorPicker(runtime);
+                return;
+            }
+
+            const bool colorHueEvent = event.id == "gis-color-picker-hue" &&
+                (event.type == skui::ElementEventType::MouseDown ||
+                 event.type == skui::ElementEventType::MouseUp ||
+                 (event.type == skui::ElementEventType::MouseMove &&
+                  gisColorHueDragging_));
+            if (colorHueEvent)
+            {
+                gisColorHueDragging_ = event.type != skui::ElementEventType::MouseUp;
+                gisColorFieldDragging_ = false;
+                gisColorHue_ = 360. * std::clamp(
+                    (static_cast<double>(event.y) - kGisColorHueTop) /
+                        kGisColorHueHeight,
+                    0., 1.);
+                if (gisColorHue_ >= 360.)
+                {
+                    gisColorHue_ = 0.;
+                }
+                applyGisColorPicker(runtime);
+                return;
+            }
+
             if (event.type == skui::ElementEventType::Input)
             {
                 const std::optional<GisOverlayCategory> category = gisColorCategoryFromId(event.id);
@@ -486,6 +675,9 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                     if (color.has_value())
                     {
                         renderer_.SetGisOverlayColor(*category, *color);
+                        selectGisColorCategory(*category);
+                        updateUi(runtime);
+                        requestRedraw();
                     }
                     return;
                 }
@@ -493,6 +685,15 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
 
             if (event.type != skui::ElementEventType::Click)
             {
+                return;
+            }
+
+            if (const std::optional<GisOverlayCategory> target =
+                    gisColorTargetCategoryFromId(event.id))
+            {
+                selectGisColorCategory(*target);
+                updateUi(runtime);
+                requestRedraw();
                 return;
             }
 
@@ -732,6 +933,8 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         message == WM_KILLFOCUS)
     {
         dragging_ = false;
+        gisColorFieldDragging_ = false;
+        gisColorHueDragging_ = false;
         if (message == WM_KILLFOCUS && (gisOverlayPopupOpen_ || gisColorPopupOpen_))
         {
             gisOverlayPopupOpen_ = false;
@@ -1106,6 +1309,29 @@ void DomDownToolPreview::PreviewController::updateSearchUi(skui::Runtime& runtim
                     static_cast<int>(searchState_), searchResults_.size()));
 }
 
+void DomDownToolPreview::PreviewController::selectGisColorCategory(
+    GisOverlayCategory category)
+{
+    if (category == GisOverlayCategory::None || category == GisOverlayCategory::All)
+    {
+        return;
+    }
+    gisColorPaletteCategory_ = category;
+    const HsvColor hsv = toHsv(renderer_.GetGisOverlayColor(category));
+    gisColorHue_ = hsv.hue;
+    gisColorSaturation_ = hsv.saturation;
+    gisColorBrightness_ = hsv.brightness;
+}
+
+void DomDownToolPreview::PreviewController::applyGisColorPicker(skui::Runtime& runtime)
+{
+    const DownTool::AmapVectorColor color =
+        fromHsv(HsvColor{gisColorHue_, gisColorSaturation_, gisColorBrightness_});
+    renderer_.SetGisOverlayColor(gisColorPaletteCategory_, color);
+    updateUi(runtime);
+    requestRedraw();
+}
+
 void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
 {
     const MapSourceSummary source = renderer_.activeSource();
@@ -1141,6 +1367,63 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
     runtime.setTextById("gis-overlay-arrow", gisOverlayPopupOpen_ ? "^" : "v");
     runtime.setAttributeById("gis-overlay-toggle", "aria-expanded",
                              gisOverlayPopupOpen_ ? "true" : "false");
+
+    std::string_view paletteTargetLabel = kGisCategoryControls.front().label;
+    for (size_t index = 0; index < kGisCategoryControls.size(); ++index)
+    {
+        const GisCategoryControl& control = kGisCategoryControls[index];
+        const std::string categoryValue(control.value);
+        const std::string colorValue =
+            gisColorHex(renderer_.GetGisOverlayColor(control.category));
+        if (lastUiGisColorValues_[index] != colorValue)
+        {
+            runtime.setValueById("gis-color-" + categoryValue, colorValue);
+            runtime.setStyleById("gis-color-target-" + categoryValue,
+                                 "background-color: " + colorValue + ";");
+            lastUiGisColorValues_[index] = colorValue;
+        }
+        runtime.setAttributeById("gis-color-target-" + categoryValue, "aria-pressed",
+                                 control.category == gisColorPaletteCategory_ ? "true"
+                                                                             : "false");
+        if (control.category == gisColorPaletteCategory_)
+        {
+            paletteTargetLabel = control.label;
+        }
+    }
+    runtime.setTextById("gis-color-palette-target", paletteTargetLabel);
+    const DownTool::AmapVectorColor pickerColor =
+        fromHsv(HsvColor{gisColorHue_, gisColorSaturation_, gisColorBrightness_});
+    const std::string pickerHex = gisColorHex(pickerColor);
+    const std::string hueHex =
+        gisColorHex(fromHsv(HsvColor{gisColorHue_, 1., 1.}));
+    const std::string pickerState = fmt::format(
+        "{}:{:.6f}:{:.6f}:{:.6f}", static_cast<int>(gisColorPaletteCategory_),
+        gisColorHue_, gisColorSaturation_, gisColorBrightness_);
+    if (lastUiGisPickerState_ != pickerState)
+    {
+        runtime.setStyleById(
+            "gis-color-picker-field",
+            "background-color: " + hueHex + "; background-image: "
+                "linear-gradient(to bottom, transparent 0%, #000000 100%), "
+                "linear-gradient(to right, #ffffff 0%, transparent 100%);");
+        runtime.setStyleById("gis-color-current",
+                             "background-color: " + pickerHex + ";");
+        runtime.setStyleById(
+            "gis-color-picker-marker",
+            fmt::format("left: {:.1f}px; top: {:.1f}px;",
+                        gisColorSaturation_ * kGisColorFieldWidth - 5.,
+                        (1. - gisColorBrightness_) * kGisColorFieldHeight - 5.));
+        runtime.setStyleById(
+            "gis-color-hue-marker",
+            fmt::format("top: {:.1f}px;", gisColorHue_ / 360. * kGisColorHueHeight - 2.));
+        runtime.setTextById("gis-color-hue-value",
+                            fmt::format("{:.0f}°", gisColorHue_));
+        runtime.setTextById("gis-color-saturation-value",
+                            fmt::format("{:.0f}%", gisColorSaturation_ * 100.));
+        runtime.setTextById("gis-color-brightness-value",
+                            fmt::format("{:.0f}%", gisColorBrightness_ * 100.));
+        lastUiGisPickerState_ = pickerState;
+    }
     runtime.setVisibleById("gis-color-panel", gisColorPopupOpen_);
 }
 

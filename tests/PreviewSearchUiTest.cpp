@@ -1,5 +1,6 @@
 #include "PostProcessTestSupport.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
@@ -42,6 +43,7 @@ bool runTest()
 
     std::string lastInputId;
     std::string lastInputValue;
+    std::string lastMouseDownId;
     std::string lastClickId;
     std::string lastChangeId;
     std::string lastChangeValue;
@@ -54,6 +56,10 @@ bool runTest()
             {
                 lastInputId = event.id;
                 lastInputValue = event.value;
+            }
+            else if (event.type == skui::ElementEventType::MouseDown)
+            {
+                lastMouseDownId = event.id;
             }
             else if (event.type == skui::ElementEventType::Click)
             {
@@ -166,6 +172,42 @@ bool runTest()
     if (!postprocess_test::Require(lastChangeId == "gis-overlay-water" &&
                                        lastChangeValue == "water" && lastChangeChecked,
                                    "GIS water checkbox did not support multiple selection"))
+    {
+        return false;
+    }
+
+    runtime.setVisibleById("gis-overlay-panel", false);
+    if (!postprocess_test::Require(runtime.setVisibleById("gis-color-panel", true),
+                                   "GIS color picker panel could not be shown"))
+    {
+        return false;
+    }
+    const std::vector<std::string> pickerChildren =
+        runtime.childElementIdsById("gis-color-picker-body");
+    if (!postprocess_test::Require(
+            std::ranges::find(pickerChildren, "gis-color-picker-field") !=
+                    pickerChildren.end() &&
+                std::ranges::find(pickerChildren, "gis-color-picker-hue") !=
+                    pickerChildren.end(),
+            "GIS color picker is missing the saturation/value field or hue strip"))
+    {
+        return false;
+    }
+
+    sendMouse(runtime, skui::EventType::MouseDown, 840.F, 500.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 840.F, 500.F);
+    if (!postprocess_test::Require(lastMouseDownId == "gis-color-picker-field" &&
+                                       lastClickId == "gis-color-picker-field",
+                                   "GIS saturation/value field did not receive pointer input"))
+    {
+        return false;
+    }
+
+    sendMouse(runtime, skui::EventType::MouseDown, 960.F, 500.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 960.F, 500.F);
+    if (!postprocess_test::Require(lastMouseDownId == "gis-color-picker-hue" &&
+                                       lastClickId == "gis-color-picker-hue",
+                                   "GIS hue strip did not receive pointer input"))
     {
         return false;
     }
