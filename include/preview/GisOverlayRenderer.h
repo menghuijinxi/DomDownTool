@@ -67,6 +67,8 @@ class GisOverlayRenderer
 
     [[nodiscard]] DownTool::AmapVectorColor GetColor(GisOverlayCategory category) const;
 
+    void ResetColors();
+
     void UpdateContext(const DownTool::LonLat& centerWgs84, double radiusMeters, uint32_t zoom);
 
     void Draw(SkCanvas& canvas, const MapViewport& viewport,

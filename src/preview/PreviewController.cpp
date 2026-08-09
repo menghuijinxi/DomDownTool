@@ -22,6 +22,9 @@ namespace
 constexpr UINT kPreviewRedrawMessage = WM_APP + 0x642;
 constexpr UINT kPreviewUiRefreshMessage = WM_APP + 0x643;
 constexpr UINT kPreviewSearchRefreshMessage = WM_APP + 0x644;
+constexpr UINT kPreviewMapUiRefreshMessage = WM_APP + 0x646;
+constexpr UINT_PTR kPreviewEyedropperTimerId = 0x645;
+constexpr UINT kPreviewEyedropperTimerIntervalMilliseconds = 16;
 constexpr double kSearchControlLeft = 192.;
 constexpr double kSearchControlWidth = 300.;
 constexpr double kSearchPopupWidth = 360.;
@@ -37,7 +40,7 @@ constexpr double kGisColorPanelWidth = 342.;
 constexpr double kGisColorPanelHeight = 562.;
 constexpr double kGisColorFieldLeft = 730.;
 constexpr double kGisColorFieldTop = 427.;
-constexpr double kGisColorFieldWidth = 220.;
+constexpr double kGisColorFieldWidth = 190.;
 constexpr double kGisColorFieldHeight = 150.;
 constexpr double kGisColorHueTop = kGisColorFieldTop;
 constexpr double kGisColorHueHeight = kGisColorFieldHeight;
@@ -51,6 +54,49 @@ POINT clientPoint(LPARAM lParam)
 {
     return POINT{static_cast<LONG>(static_cast<int16_t>(LOWORD(lParam))),
                  static_cast<LONG>(static_cast<int16_t>(HIWORD(lParam)))};
+}
+
+class ScreenDeviceContext
+{
+  public:
+    ScreenDeviceContext() : handle_(GetDC(nullptr))
+    {
+    }
+
+    ~ScreenDeviceContext()
+    {
+        if (handle_)
+        {
+            ReleaseDC(nullptr, handle_);
+        }
+    }
+
+    ScreenDeviceContext(const ScreenDeviceContext&) = delete;
+    ScreenDeviceContext& operator=(const ScreenDeviceContext&) = delete;
+
+    [[nodiscard]] HDC get() const
+    {
+        return handle_;
+    }
+
+  private:
+    HDC handle_ = nullptr;
+};
+
+std::optional<DownTool::AmapVectorColor> screenPixelColor(const POINT& screenPoint)
+{
+    const ScreenDeviceContext screen;
+    if (!screen.get())
+    {
+        return std::nullopt;
+    }
+
+    const COLORREF color = GetPixel(screen.get(), screenPoint.x, screenPoint.y);
+    if (color == CLR_INVALID)
+    {
+        return std::nullopt;
+    }
+    return DownTool::AmapVectorColor{GetRValue(color), GetGValue(color), GetBValue(color), 255};
 }
 
 std::string pathToUtf8(const std::filesystem::path& path)
@@ -697,6 +743,24 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 return;
             }
 
+            if (event.id == "gis-color-eyedropper")
+            {
+                setGisColorEyedropperActive(!gisColorEyedropperActive_);
+                updateUi(runtime);
+                requestRedraw();
+                return;
+            }
+
+            if (event.id == "gis-color-reset")
+            {
+                setGisColorEyedropperActive(false);
+                renderer_.ResetGisOverlayColors();
+                selectGisColorCategory(gisColorPaletteCategory_);
+                updateUi(runtime);
+                requestRedraw();
+                return;
+            }
+
             if (event.id == "zoom-in")
             {
                 renderer_.zoomAt(static_cast<double>(runtime.width()) * 0.5,
@@ -719,11 +783,16 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             {
                 gisColorPopupOpen_ = !gisColorPopupOpen_;
                 gisOverlayPopupOpen_ = false;
+                if (!gisColorPopupOpen_)
+                {
+                    setGisColorEyedropperActive(false);
+                }
             }
             else if (event.id == "gis-overlay-toggle")
             {
                 gisOverlayPopupOpen_ = !gisOverlayPopupOpen_;
                 gisColorPopupOpen_ = false;
+                setGisColorEyedropperActive(false);
                 writeSearchTrace("Controller", "gis_popup_toggle",
                                  fmt::format("open={}", gisOverlayPopupOpen_));
             }
@@ -758,9 +827,13 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
     runtime.setElementKeyDownCallback(
         [this, &runtime](const skui::ElementEvent& event)
         {
-            if (event.key == VK_ESCAPE && gisOverlayPopupOpen_)
+            if (event.key == VK_ESCAPE &&
+                (gisOverlayPopupOpen_ || gisColorPopupOpen_ ||
+                 gisColorEyedropperActive_))
             {
                 gisOverlayPopupOpen_ = false;
+                gisColorPopupOpen_ = false;
+                setGisColorEyedropperActive(false);
                 updateUi(runtime);
                 requestRedraw();
                 return true;
@@ -832,7 +905,17 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
                                                                 WPARAM wParam, LPARAM lParam,
                                                                 skui::Runtime& runtime)
 {
+    if (message == WM_DESTROY && gisColorEyedropperActive_)
+    {
+        KillTimer(window, kPreviewEyedropperTimerId);
+        gisColorEyedropperActive_ = false;
+    }
     window_.store(message == WM_DESTROY ? nullptr : window, std::memory_order_relaxed);
+    if (message == WM_DESTROY)
+    {
+        pendingMapUiPoint_.reset();
+        mapUiRefreshPosted_ = false;
+    }
     if (message == kPreviewRedrawMessage)
     {
         return true;
@@ -848,15 +931,81 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         processPlaceSearchResponses(runtime);
         return true;
     }
+    if (message == kPreviewMapUiRefreshMessage)
+    {
+        mapUiRefreshPosted_ = false;
+        if (!pendingMapUiPoint_.has_value())
+        {
+            return false;
+        }
+
+        const POINT point = *pendingMapUiPoint_;
+        pendingMapUiPoint_.reset();
+        updateMapInteractionUi(runtime, point);
+        return false;
+    }
+    if (message == WM_TIMER && wParam == kPreviewEyedropperTimerId)
+    {
+        if (gisColorEyedropperActive_)
+        {
+            sampleGisColorAtScreenCursor(runtime);
+            const bool cancel = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0 ||
+                (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+            const bool confirm = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+            if (cancel || confirm)
+            {
+                setGisColorEyedropperActive(false);
+                updateUi(runtime);
+                requestRedraw();
+            }
+        }
+        return true;
+    }
 
     if (message == WM_KEYDOWN && wParam == VK_ESCAPE &&
-        (gisOverlayPopupOpen_ || gisColorPopupOpen_))
+        (gisOverlayPopupOpen_ || gisColorPopupOpen_ ||
+         gisColorEyedropperActive_))
     {
         gisOverlayPopupOpen_ = false;
         gisColorPopupOpen_ = false;
+        setGisColorEyedropperActive(false);
         updateUi(runtime);
         requestRedraw();
         return true;
+    }
+
+    if (gisColorEyedropperActive_)
+    {
+        if (message == WM_SETCURSOR)
+        {
+            SetCursor(LoadCursorW(nullptr, IDC_CROSS));
+            return true;
+        }
+        if (message == WM_MOUSEMOVE)
+        {
+            SetCursor(LoadCursorW(nullptr, IDC_CROSS));
+            sampleGisColorAtScreenCursor(runtime);
+            return true;
+        }
+        if (message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN)
+        {
+            return true;
+        }
+        if (message == WM_RBUTTONUP)
+        {
+            setGisColorEyedropperActive(false);
+            updateUi(runtime);
+            requestRedraw();
+            return true;
+        }
+        if (message == WM_LBUTTONUP)
+        {
+            sampleGisColorAtScreenCursor(runtime);
+            setGisColorEyedropperActive(false);
+            updateUi(runtime);
+            requestRedraw();
+            return true;
+        }
     }
 
     if (searchPopupOpen_ &&
@@ -935,7 +1084,14 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         dragging_ = false;
         gisColorFieldDragging_ = false;
         gisColorHueDragging_ = false;
-        if (message == WM_KILLFOCUS && (gisOverlayPopupOpen_ || gisColorPopupOpen_))
+        if (message == WM_CANCELMODE && gisColorEyedropperActive_)
+        {
+            setGisColorEyedropperActive(false);
+            updateUi(runtime);
+            requestRedraw();
+        }
+        if (message == WM_KILLFOCUS && !gisColorEyedropperActive_ &&
+            (gisOverlayPopupOpen_ || gisColorPopupOpen_))
         {
             gisOverlayPopupOpen_ = false;
             gisColorPopupOpen_ = false;
@@ -952,6 +1108,7 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         {
             ReleaseCapture();
         }
+        scheduleMapUiRefresh(window, clientPoint(lParam));
         return true;
     }
 
@@ -1011,15 +1168,13 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
             const double deltaY = static_cast<double>(point.y - lastDragPoint_.y);
             lastDragPoint_ = point;
             renderer_.panBy(deltaX, deltaY);
-            updateUi(runtime);
-            updateCursor(runtime, point.x, point.y);
+            scheduleMapUiRefresh(window, point);
             return true;
         }
 
         if (isMapPoint(window, point.x, point.y))
         {
-            updateCursor(runtime, point.x, point.y);
-            return true;
+            scheduleMapUiRefresh(window, point);
         }
     }
 
@@ -1332,6 +1487,54 @@ void DomDownToolPreview::PreviewController::applyGisColorPicker(skui::Runtime& r
     requestRedraw();
 }
 
+void DomDownToolPreview::PreviewController::setGisColorEyedropperActive(bool active)
+{
+    gisColorEyedropperActive_ = active;
+    const HWND window = window_.load(std::memory_order_relaxed);
+    if (!window)
+    {
+        return;
+    }
+    if (active)
+    {
+        if (SetTimer(window, kPreviewEyedropperTimerId,
+                     kPreviewEyedropperTimerIntervalMilliseconds, nullptr) == 0)
+        {
+            gisColorEyedropperActive_ = false;
+        }
+        return;
+    }
+    KillTimer(window, kPreviewEyedropperTimerId);
+}
+
+bool DomDownToolPreview::PreviewController::sampleGisColorAtScreenCursor(skui::Runtime& runtime)
+{
+    POINT screenPoint{};
+    if (!GetCursorPos(&screenPoint))
+    {
+        return false;
+    }
+    const std::optional<DownTool::AmapVectorColor> color = screenPixelColor(screenPoint);
+    if (!color.has_value())
+    {
+        return false;
+    }
+
+    const DownTool::AmapVectorColor currentColor =
+        renderer_.GetGisOverlayColor(gisColorPaletteCategory_);
+    if (currentColor.red == color->red && currentColor.green == color->green &&
+        currentColor.blue == color->blue && currentColor.alpha == color->alpha)
+    {
+        return false;
+    }
+
+    renderer_.SetGisOverlayColor(gisColorPaletteCategory_, *color);
+    selectGisColorCategory(gisColorPaletteCategory_);
+    updateUi(runtime);
+    requestRedraw();
+    return true;
+}
+
 void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
 {
     const MapSourceSummary source = renderer_.activeSource();
@@ -1391,6 +1594,13 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
         }
     }
     runtime.setTextById("gis-color-palette-target", paletteTargetLabel);
+    const bool eyedropperActive = gisColorEyedropperActive_;
+    runtime.setAttributeById("gis-color-eyedropper", "aria-pressed",
+                             eyedropperActive ? "true" : "false");
+    runtime.setAttributeById("gis-color-eyedropper", "aria-label",
+                             eyedropperActive ? "取消屏幕取色" : "从屏幕吸取颜色");
+    runtime.setAttributeById("gis-color-eyedropper", "title",
+                             eyedropperActive ? "取消屏幕取色" : "从屏幕吸取颜色");
     const DownTool::AmapVectorColor pickerColor =
         fromHsv(HsvColor{gisColorHue_, gisColorSaturation_, gisColorBrightness_});
     const std::string pickerHex = gisColorHex(pickerColor);
@@ -1427,17 +1637,67 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
     runtime.setVisibleById("gis-color-panel", gisColorPopupOpen_);
 }
 
-void DomDownToolPreview::PreviewController::updateCursor(skui::Runtime& runtime, double screenX,
+bool DomDownToolPreview::PreviewController::updateCursor(skui::Runtime& runtime, double screenX,
                                                          double screenY)
 {
     const std::optional<DownTool::LonLat> coordinate = renderer_.lonLatAt(screenX, screenY);
     if (!coordinate.has_value())
     {
+        return false;
+    }
+
+    const std::string coordinateText =
+        fmt::format("{:.6f}, {:.6f}", coordinate->lon, coordinate->lat);
+    if (coordinateText == lastCursorCoordinate_)
+    {
+        return false;
+    }
+
+    runtime.setTextById("cursor-coordinate", coordinateText);
+    lastCursorCoordinate_ = coordinateText;
+    return true;
+}
+
+void DomDownToolPreview::PreviewController::scheduleMapUiRefresh(HWND window, const POINT& point)
+{
+    pendingMapUiPoint_ = point;
+    if (mapUiRefreshPosted_)
+    {
         return;
     }
 
-    runtime.setTextById("cursor-coordinate",
-                        fmt::format("{:.6f}, {:.6f}", coordinate->lon, coordinate->lat));
+    mapUiRefreshPosted_ = true;
+    if (!PostMessageW(window, kPreviewMapUiRefreshMessage, 0, 0))
+    {
+        mapUiRefreshPosted_ = false;
+    }
+}
+
+void DomDownToolPreview::PreviewController::updateMapInteractionUi(
+    skui::Runtime& runtime, const POINT& point)
+{
+    const bool cursorChanged = updateCursor(runtime, point.x, point.y);
+    const std::string centerText =
+        fmt::format("{:.6f}, {:.6f}", renderer_.center().lon, renderer_.center().lat);
+    const std::string zoomText = fmt::format("Z {:.2f}", renderer_.zoom());
+    bool statusChanged = false;
+    if (centerText != lastCenterCoordinate_)
+    {
+        runtime.setTextById("center-coordinate", centerText);
+        lastCenterCoordinate_ = centerText;
+        statusChanged = true;
+    }
+    if (zoomText != lastZoomValue_)
+    {
+        runtime.setTextById("zoom-value", zoomText);
+        lastZoomValue_ = zoomText;
+        statusChanged = true;
+    }
+
+    if (cursorChanged || statusChanged)
+    {
+        requestRedraw();
+    }
 }
 
 void DomDownToolPreview::PreviewController::scheduleUiRefresh()

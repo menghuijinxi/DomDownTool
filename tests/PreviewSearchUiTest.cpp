@@ -203,11 +203,46 @@ bool runTest()
         return false;
     }
 
-    sendMouse(runtime, skui::EventType::MouseDown, 960.F, 500.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 960.F, 500.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 940.F, 500.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 940.F, 500.F);
     if (!postprocess_test::Require(lastMouseDownId == "gis-color-picker-hue" &&
                                        lastClickId == "gis-color-picker-hue",
                                    "GIS hue strip did not receive pointer input"))
+    {
+        return false;
+    }
+
+    const std::vector<std::string> readoutChildren =
+        runtime.childElementIdsById("gis-color-picker-readout");
+    if (!postprocess_test::Require(
+            std::ranges::find(readoutChildren, "gis-color-picker-actions") !=
+                readoutChildren.end(),
+            "GIS color picker is missing its tool button group"))
+    {
+        return false;
+    }
+    const std::vector<std::string> actionChildren =
+        runtime.childElementIdsById("gis-color-picker-actions");
+    if (!postprocess_test::Require(
+            std::ranges::find(actionChildren, "gis-color-eyedropper") !=
+                    actionChildren.end() &&
+                std::ranges::find(actionChildren, "gis-color-reset") !=
+                    actionChildren.end(),
+            "GIS color picker is missing an eyedropper or reset button"))
+    {
+        return false;
+    }
+    sendMouse(runtime, skui::EventType::MouseDown, 970.F, 554.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 970.F, 554.F);
+    if (!postprocess_test::Require(lastClickId == "gis-color-eyedropper",
+                                   "GIS screen eyedropper button did not receive pointer input"))
+    {
+        return false;
+    }
+    sendMouse(runtime, skui::EventType::MouseDown, 1008.F, 554.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 1008.F, 554.F);
+    if (!postprocess_test::Require(lastClickId == "gis-color-reset",
+                                   "GIS color reset button did not receive pointer input"))
     {
         return false;
     }

@@ -77,6 +77,8 @@ class MapRenderer
     [[nodiscard]] DownTool::AmapVectorColor GetGisOverlayColor(
         GisOverlayCategory category) const;
 
+    void ResetGisOverlayColors();
+
     [[nodiscard]] std::vector<MapSourceSummary> sources() const;
 
     [[nodiscard]] MapSourceSummary activeSource() const;

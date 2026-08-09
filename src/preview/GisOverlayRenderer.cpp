@@ -438,6 +438,21 @@ DownTool::AmapVectorColor DomDownToolPreview::GisOverlayRenderer::GetColor(
     return iterator == colors_.end() ? defaultColor(category) : iterator->second;
 }
 
+void DomDownToolPreview::GisOverlayRenderer::ResetColors()
+{
+    {
+        const std::lock_guard lock(mutex_);
+        for (auto& [category, color] : colors_)
+        {
+            color = defaultColor(category);
+        }
+    }
+    if (requestRedraw_)
+    {
+        requestRedraw_();
+    }
+}
+
 void DomDownToolPreview::GisOverlayRenderer::UpdateContext(
     const DownTool::LonLat& centerWgs84, double radiusMeters, uint32_t zoom)
 {

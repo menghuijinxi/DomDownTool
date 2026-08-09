@@ -80,7 +80,15 @@ class PreviewController
 
     void applyGisColorPicker(skui::Runtime& runtime);
 
-    void updateCursor(skui::Runtime& runtime, double screenX, double screenY);
+    void setGisColorEyedropperActive(bool active);
+
+    bool sampleGisColorAtScreenCursor(skui::Runtime& runtime);
+
+    bool updateCursor(skui::Runtime& runtime, double screenX, double screenY);
+
+    void scheduleMapUiRefresh(HWND window, const POINT& point);
+
+    void updateMapInteractionUi(skui::Runtime& runtime, const POINT& point);
 
     void scheduleUiRefresh();
 
@@ -109,10 +117,16 @@ class PreviewController
     double gisColorBrightness_ = 0.;
     bool gisColorFieldDragging_ = false;
     bool gisColorHueDragging_ = false;
+    bool gisColorEyedropperActive_ = false;
     std::optional<GisOverlayCategories> lastUiGisCategories_;
     std::array<std::string, 9> lastUiGisColorValues_{};
     std::string lastUiGisPickerState_;
+    std::string lastCursorCoordinate_;
+    std::string lastCenterCoordinate_;
+    std::string lastZoomValue_;
     bool dragging_ = false;
     POINT lastDragPoint_{};
+    std::optional<POINT> pendingMapUiPoint_;
+    bool mapUiRefreshPosted_ = false;
 };
 } // namespace DomDownToolPreview

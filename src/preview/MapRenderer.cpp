@@ -276,6 +276,11 @@ DownTool::AmapVectorColor DomDownToolPreview::MapRenderer::GetGisOverlayColor(
     return gisOverlay_.GetColor(category);
 }
 
+void DomDownToolPreview::MapRenderer::ResetGisOverlayColors()
+{
+    gisOverlay_.ResetColors();
+}
+
 std::vector<DomDownToolPreview::MapSourceSummary> DomDownToolPreview::MapRenderer::sources() const
 {
     std::vector<MapSourceSummary> result;

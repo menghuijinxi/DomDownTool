@@ -160,6 +160,15 @@ int main()
             throw std::runtime_error("GIS overlay color change was not applied");
         }
 
+        renderer.ResetColors();
+        const DownTool::AmapVectorColor defaultWaterColor{66, 165, 245, 190};
+        if (!colorsEqual(renderer.GetColor(DomDownToolPreview::GisOverlayCategory::Water),
+                         defaultWaterColor) ||
+            redrawCount.load() != 4)
+        {
+            throw std::runtime_error("GIS overlay colors were not restored to defaults");
+        }
+
         DownTool::AmapVectorFeature feature;
         feature.layerName = "road";
         feature.mainKey = 20001;
