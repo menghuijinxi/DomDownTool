@@ -252,6 +252,18 @@ DomDownToolPreview::MapRenderer::GetGisOverlayCategory() const
     return gisOverlay_.GetCategory();
 }
 
+void DomDownToolPreview::MapRenderer::SetGisOverlayCategories(
+    const GisOverlayCategories& categories)
+{
+    gisOverlay_.SetCategories(categories);
+}
+
+DomDownToolPreview::GisOverlayCategories
+DomDownToolPreview::MapRenderer::GetGisOverlayCategories() const
+{
+    return gisOverlay_.GetCategories();
+}
+
 void DomDownToolPreview::MapRenderer::SetGisOverlayColor(
     GisOverlayCategory category, const DownTool::AmapVectorColor& color)
 {

@@ -67,6 +67,10 @@ class MapRenderer
 
     [[nodiscard]] GisOverlayCategory GetGisOverlayCategory() const;
 
+    void SetGisOverlayCategories(const GisOverlayCategories& categories);
+
+    [[nodiscard]] GisOverlayCategories GetGisOverlayCategories() const;
+
     void SetGisOverlayColor(GisOverlayCategory category,
                              const DownTool::AmapVectorColor& color);
 

@@ -206,6 +206,58 @@ bool isKnownCategory(GisOverlayCategory category)
 {
     return static_cast<unsigned>(category) <= static_cast<unsigned>(GisOverlayCategory::Other);
 }
+
+DomDownToolPreview::GisOverlayCategories allGisCategories()
+{
+    return {kAllDrawOrder.begin(), kAllDrawOrder.end()};
+}
+
+DomDownToolPreview::GisOverlayCategories normalizeCategories(
+    const DomDownToolPreview::GisOverlayCategories& categories)
+{
+    if (categories.contains(GisOverlayCategory::All))
+    {
+        return allGisCategories();
+    }
+
+    DomDownToolPreview::GisOverlayCategories normalized;
+    for (const GisOverlayCategory category : categories)
+    {
+        if (isKnownCategory(category) && category != GisOverlayCategory::None &&
+            category != GisOverlayCategory::All)
+        {
+            normalized.insert(category);
+        }
+    }
+    return normalized;
+}
+
+std::string categoriesName(const DomDownToolPreview::GisOverlayCategories& categories)
+{
+    if (categories.empty())
+    {
+        return categoryName(GisOverlayCategory::None);
+    }
+    if (categories == allGisCategories())
+    {
+        return categoryName(GisOverlayCategory::All);
+    }
+
+    std::string names;
+    for (const GisOverlayCategory category : kAllDrawOrder)
+    {
+        if (!categories.contains(category))
+        {
+            continue;
+        }
+        if (!names.empty())
+        {
+            names += ',';
+        }
+        names += categoryName(category);
+    }
+    return names;
+}
 } // namespace
 
 struct DomDownToolPreview::GisOverlayRenderer::PreparedData
@@ -264,8 +316,7 @@ DomDownToolPreview::GisOverlayRenderer::GisOverlayRenderer(
         colors_.emplace(category, defaultColor(category));
     }
     writeSearchTrace("GIS", "constructed",
-                     fmt::format("category={} raw={}", categoryName(category_),
-                                 static_cast<unsigned>(category_)));
+                     fmt::format("categories={}", categoriesName(categories_)));
     worker_ = std::thread([this] { workerLoop(); });
     meshWorker_ = std::thread([this] { meshWorkerLoop(); });
 }
@@ -291,17 +342,49 @@ DomDownToolPreview::GisOverlayRenderer::~GisOverlayRenderer()
 
 void DomDownToolPreview::GisOverlayRenderer::SetCategory(GisOverlayCategory category)
 {
-    GisOverlayCategory previousCategory = GisOverlayCategory::None;
+    if (category == GisOverlayCategory::None)
+    {
+        SetCategories({});
+        return;
+    }
+    if (category == GisOverlayCategory::All)
+    {
+        SetCategories(allGisCategories());
+        return;
+    }
+    SetCategories({category});
+}
+
+DomDownToolPreview::GisOverlayCategory
+DomDownToolPreview::GisOverlayRenderer::GetCategory() const
+{
+    const GisOverlayCategories categories = GetCategories();
+    if (categories.empty())
+    {
+        return GisOverlayCategory::None;
+    }
+    if (categories.size() == 1)
+    {
+        return *categories.begin();
+    }
+    return GisOverlayCategory::All;
+}
+
+void DomDownToolPreview::GisOverlayRenderer::SetCategories(
+    const GisOverlayCategories& categories)
+{
+    const GisOverlayCategories normalizedCategories = normalizeCategories(categories);
+    GisOverlayCategories previousCategories;
     uint64_t generation = 0;
     {
         const std::lock_guard lock(mutex_);
-        previousCategory = category_;
-        if (category_ == category)
+        previousCategories = categories_;
+        if (categories_ == normalizedCategories)
         {
             return;
         }
-        category_ = category;
-        if (category == GisOverlayCategory::None)
+        categories_ = normalizedCategories;
+        if (categories_.empty())
         {
             pendingRequest_.reset();
             pendingMeshRequest_.reset();
@@ -312,9 +395,10 @@ void DomDownToolPreview::GisOverlayRenderer::SetCategory(GisOverlayCategory cate
         }
         generation = generation_;
     }
-    writeSearchTrace("GIS", "category_changed",
-                     fmt::format("from={} to={} generation={}", categoryName(previousCategory),
-                                 categoryName(category), generation));
+    writeSearchTrace(
+        "GIS", "categories_changed",
+        fmt::format("from={} to={} generation={}", categoriesName(previousCategories),
+                    categoriesName(normalizedCategories), generation));
     condition_.notify_all();
     if (requestRedraw_)
     {
@@ -322,11 +406,11 @@ void DomDownToolPreview::GisOverlayRenderer::SetCategory(GisOverlayCategory cate
     }
 }
 
-DomDownToolPreview::GisOverlayCategory
-DomDownToolPreview::GisOverlayRenderer::GetCategory() const
+DomDownToolPreview::GisOverlayCategories
+DomDownToolPreview::GisOverlayRenderer::GetCategories() const
 {
     const std::lock_guard lock(mutex_);
-    return category_;
+    return categories_;
 }
 
 void DomDownToolPreview::GisOverlayRenderer::SetColor(
@@ -366,16 +450,7 @@ void DomDownToolPreview::GisOverlayRenderer::UpdateContext(
     std::string requestDetail;
     {
         const std::lock_guard lock(mutex_);
-        if (!isKnownCategory(category_))
-        {
-            writeSearchTrace("GIS", "invalid_category",
-                             fmt::format("raw={} reset=none", static_cast<unsigned>(category_)));
-            category_ = GisOverlayCategory::None;
-            pendingRequest_.reset();
-            ++generation_;
-            loading_ = false;
-        }
-        if (category_ == GisOverlayCategory::None || stopping_)
+        if (categories_.empty() || stopping_)
         {
             return;
         }
@@ -401,8 +476,8 @@ void DomDownToolPreview::GisOverlayRenderer::UpdateContext(
             centerWgs84, radiusMeters * kPreloadRadiusFactor, zoom, ++generation_};
         loading_ = true;
         requestDetail =
-            fmt::format("category={} lon={:.6f} lat={:.6f} radius={:.1f} zoom={} generation={}",
-                        categoryName(category_), centerWgs84.lon, centerWgs84.lat,
+            fmt::format("categories={} lon={:.6f} lat={:.6f} radius={:.1f} zoom={} generation={}",
+                        categoriesName(categories_), centerWgs84.lon, centerWgs84.lat,
                         radiusMeters * kPreloadRadiusFactor, zoom, generation_);
     }
     writeSearchTrace("GIS", "load_requested", requestDetail);
@@ -414,12 +489,12 @@ void DomDownToolPreview::GisOverlayRenderer::Draw(
     TileYAxisDirection yDirection, uint32_t tileSize)
 {
     std::shared_ptr<const PreparedData> preparedData;
-    GisOverlayCategory selectedCategory;
+    GisOverlayCategories selectedCategories;
     std::map<GisOverlayCategory, DownTool::AmapVectorColor> colors;
     {
         const std::lock_guard lock(mutex_);
-        selectedCategory = category_;
-        if (selectedCategory == GisOverlayCategory::None || !preparedData_)
+        selectedCategories = categories_;
+        if (selectedCategories.empty() || !preparedData_)
         {
             return;
         }
@@ -456,13 +531,12 @@ void DomDownToolPreview::GisOverlayRenderer::Draw(
 
     const uint32_t zoom = viewport.sourceZoom();
     std::vector<GisOverlayCategory> categories;
-    if (selectedCategory == GisOverlayCategory::All)
+    for (const GisOverlayCategory category : kAllDrawOrder)
     {
-        categories.assign(kAllDrawOrder.begin(), kAllDrawOrder.end());
-    }
-    else
-    {
-        categories.push_back(selectedCategory);
+        if (selectedCategories.contains(category))
+        {
+            categories.push_back(category);
+        }
     }
 
     const auto meshRequestMatches = [&](const MeshBuildRequest* request)
@@ -686,16 +760,9 @@ void DomDownToolPreview::GisOverlayRenderer::Draw(
                            transform->displayScale));
     canvas.scale(static_cast<float>(transform->displayScale),
                  static_cast<float>(transform->displayScale));
-    if (selectedCategory == GisOverlayCategory::All)
+    for (const GisOverlayCategory category : categories)
     {
-        for (const GisOverlayCategory category : kAllDrawOrder)
-        {
-            drawCategory(category);
-        }
-    }
-    else
-    {
-        drawCategory(selectedCategory);
+        drawCategory(category);
     }
     canvas.restore();
 }
@@ -937,8 +1004,7 @@ void DomDownToolPreview::GisOverlayRenderer::workerLoop()
             {
                 activeRequest_.reset();
             }
-            if (!stopping_ && request.generation == generation_ &&
-                category_ != GisOverlayCategory::None)
+            if (!stopping_ && request.generation == generation_ && !categories_.empty())
             {
                 if (result.success)
                 {

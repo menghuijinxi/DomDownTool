@@ -133,12 +133,29 @@ int main()
             throw std::runtime_error("unchanged GIS overlay category requested a redraw");
         }
 
+        const DomDownToolPreview::GisOverlayCategories combinedCategories = {
+            DomDownToolPreview::GisOverlayCategory::Road,
+            DomDownToolPreview::GisOverlayCategory::Water};
+        renderer.SetCategories(combinedCategories);
+        if (renderer.GetCategories() != combinedCategories ||
+            renderer.GetCategory() != DomDownToolPreview::GisOverlayCategory::All ||
+            redrawCount.load() != 2)
+        {
+            throw std::runtime_error("GIS overlay multiple categories were not applied");
+        }
+
+        renderer.SetCategories(combinedCategories);
+        if (redrawCount.load() != 2)
+        {
+            throw std::runtime_error("unchanged GIS overlay categories requested a redraw");
+        }
+
         const DownTool::AmapVectorColor customWaterColor{12, 34, 56, 78};
         renderer.SetColor(DomDownToolPreview::GisOverlayCategory::Water,
                           customWaterColor);
         if (!colorsEqual(renderer.GetColor(DomDownToolPreview::GisOverlayCategory::Water),
                          customWaterColor) ||
-            redrawCount.load() != 2)
+            redrawCount.load() != 3)
         {
             throw std::runtime_error("GIS overlay color change was not applied");
         }

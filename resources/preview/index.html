@@ -83,8 +83,83 @@
             width: 160px;
         }
 
-        #gis-overlay-select {
-            width: 132px;
+        .gis-field {
+            flex: 0 0 171px;
+            width: 171px;
+            height: 30px;
+        }
+
+        #gis-overlay-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 141px;
+            height: 30px;
+            padding: 0 8px;
+            border: 1px solid #505854;
+            border-radius: 4px;
+            background: #181c1b;
+            color: #edf1ef;
+            font: 13px "Microsoft YaHei", "Segoe UI", sans-serif;
+        }
+
+        #gis-overlay-toggle:focus {
+            border-color: #50a38b;
+        }
+
+        #gis-overlay-summary {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        #gis-overlay-arrow {
+            flex: 0 0 auto;
+            margin-left: 8px;
+            color: #b8c1bd;
+        }
+
+        .gis-overlay-panel {
+            position: absolute;
+            z-index: 90;
+            top: 48px;
+            left: 735px;
+            display: flex;
+            flex-direction: column;
+            width: 184px;
+            padding: 6px;
+            border: 1px solid #4a524e;
+            border-radius: 4px;
+            background: #1b201e;
+            box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
+        }
+
+        .gis-overlay-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 28px;
+            padding: 0 8px;
+            color: #d8dfdc;
+        }
+
+        .gis-overlay-option:hover {
+            background: #2c3934;
+        }
+
+        .gis-overlay-option.quick-option {
+            border-bottom: 1px solid #343b38;
+        }
+
+        .gis-overlay-option input {
+            flex: 0 0 auto;
+            width: 16px;
+            height: 16px;
+        }
+
+        .gis-overlay-option span {
+            flex: 1;
         }
 
         .search-control {
@@ -444,22 +519,14 @@
                     <option value="none">无</option>
                 </select>
             </label>
-            <label class="field">
+            <div class="field gis-field">
                 <span>GIS</span>
-                <select id="gis-overlay-select">
-                    <option value="none" selected>无</option>
-                    <option value="all">全部</option>
-                    <option value="road">道路</option>
-                    <option value="water">水</option>
-                    <option value="green">绿地</option>
-                    <option value="highway">高速</option>
-                    <option value="subway">地铁</option>
-                    <option value="building">建筑</option>
-                    <option value="point">点</option>
-                    <option value="boundary">边界</option>
-                    <option value="other">其他</option>
-                </select>
-            </label>
+                <button id="gis-overlay-toggle" type="button" data-action="toggle-gis-overlay"
+                        aria-haspopup="true" aria-expanded="false">
+                    <span id="gis-overlay-summary">无</span>
+                    <span id="gis-overlay-arrow">v</span>
+                </button>
+            </div>
             <button id="gis-color-toggle" type="button" data-action="toggle-gis-colors">颜色</button>
             <div class="zoom-controls">
                 <button id="zoom-out" type="button" data-action="zoom-out" title="缩小">-</button>
@@ -470,6 +537,53 @@
             <button id="reload-tiles" type="button" data-action="reload-tiles" title="重新读取缓存">&#x21bb;</button>
             <div class="toolbar-spacer"></div>
         </header>
+
+        <div id="gis-overlay-panel" class="gis-overlay-panel" style="display: none">
+            <label class="gis-overlay-option quick-option" for="gis-overlay-none">
+                <input id="gis-overlay-none" type="checkbox" name="gis-overlay" value="none" checked>
+                <span>无</span>
+            </label>
+            <label class="gis-overlay-option quick-option" for="gis-overlay-all">
+                <input id="gis-overlay-all" type="checkbox" name="gis-overlay" value="all">
+                <span>全部</span>
+            </label>
+            <label class="gis-overlay-option" for="gis-overlay-road">
+                <input id="gis-overlay-road" type="checkbox" name="gis-overlay" value="road">
+                <span>道路</span>
+            </label>
+            <label class="gis-overlay-option" for="gis-overlay-water">
+                <input id="gis-overlay-water" type="checkbox" name="gis-overlay" value="water">
+                <span>水</span>
+            </label>
+            <label class="gis-overlay-option" for="gis-overlay-green">
+                <input id="gis-overlay-green" type="checkbox" name="gis-overlay" value="green">
+                <span>绿地</span>
+            </label>
+            <label class="gis-overlay-option" for="gis-overlay-highway">
+                <input id="gis-overlay-highway" type="checkbox" name="gis-overlay" value="highway">
+                <span>高速</span>
+            </label>
+            <label class="gis-overlay-option" for="gis-overlay-subway">
+                <input id="gis-overlay-subway" type="checkbox" name="gis-overlay" value="subway">
+                <span>地铁</span>
+            </label>
+            <label class="gis-overlay-option" for="gis-overlay-building">
+                <input id="gis-overlay-building" type="checkbox" name="gis-overlay" value="building">
+                <span>建筑</span>
+            </label>
+            <label class="gis-overlay-option" for="gis-overlay-point">
+                <input id="gis-overlay-point" type="checkbox" name="gis-overlay" value="point">
+                <span>点</span>
+            </label>
+            <label class="gis-overlay-option" for="gis-overlay-boundary">
+                <input id="gis-overlay-boundary" type="checkbox" name="gis-overlay" value="boundary">
+                <span>边界</span>
+            </label>
+            <label class="gis-overlay-option" for="gis-overlay-other">
+                <input id="gis-overlay-other" type="checkbox" name="gis-overlay" value="other">
+                <span>其他</span>
+            </label>
+        </div>
 
         <div id="gis-color-panel" class="gis-color-panel" style="display: none">
             <div class="gis-color-row"><span>道路</span><input id="gis-color-road" type="text" value="#F0C641" maxlength="7"></div>

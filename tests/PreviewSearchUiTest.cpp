@@ -45,6 +45,8 @@ bool runTest()
     std::string lastClickId;
     std::string lastChangeId;
     std::string lastChangeValue;
+    bool lastChangeChecked = false;
+    bool gisPanelOpen = false;
     runtime.setElementEventCallback(
         [&](const skui::ElementEvent& event)
         {
@@ -56,11 +58,17 @@ bool runTest()
             else if (event.type == skui::ElementEventType::Click)
             {
                 lastClickId = event.id;
+                if (event.id == "gis-overlay-toggle")
+                {
+                    gisPanelOpen = !gisPanelOpen;
+                    runtime.setVisibleById("gis-overlay-panel", gisPanelOpen);
+                }
             }
             else if (event.type == skui::ElementEventType::Change)
             {
                 lastChangeId = event.id;
                 lastChangeValue = event.value;
+                lastChangeChecked = event.checked;
             }
         });
 
@@ -138,12 +146,26 @@ bool runTest()
 
     sendMouse(runtime, skui::EventType::MouseDown, 800.F, 26.F);
     sendMouse(runtime, skui::EventType::MouseUp, 800.F, 26.F);
-    sendMouse(runtime, skui::EventType::MouseDown, 800.F, 112.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 800.F, 112.F);
-    if (!postprocess_test::Require(lastChangeId == "gis-overlay-select" &&
-                                       lastChangeValue == "road",
-                                   "GIS select did not commit the road option: " +
-                                       lastChangeId + "=" + lastChangeValue))
+    if (!postprocess_test::Require(lastClickId == "gis-overlay-toggle" && gisPanelOpen,
+                                   "GIS multi-select trigger did not open the popup"))
+    {
+        return false;
+    }
+
+    sendMouse(runtime, skui::EventType::MouseDown, 756.F, 124.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 756.F, 124.F);
+    if (!postprocess_test::Require(lastChangeId == "gis-overlay-road" &&
+                                       lastChangeValue == "road" && lastChangeChecked,
+                                   "GIS road checkbox did not receive the popup click"))
+    {
+        return false;
+    }
+
+    sendMouse(runtime, skui::EventType::MouseDown, 756.F, 152.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 756.F, 152.F);
+    if (!postprocess_test::Require(lastChangeId == "gis-overlay-water" &&
+                                       lastChangeValue == "water" && lastChangeChecked,
+                                   "GIS water checkbox did not support multiple selection"))
     {
         return false;
     }

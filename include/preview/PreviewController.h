@@ -55,8 +55,11 @@ class PreviewController
 
     [[nodiscard]] bool isSearchInteractionPoint(const skui::Runtime& runtime, int x, int y) const;
 
+    [[nodiscard]] bool isGisOverlayInteractionPoint(const skui::Runtime& runtime, int x,
+                                                     int y) const;
+
     [[nodiscard]] bool isGisColorInteractionPoint(const skui::Runtime& runtime, int x,
-                                                  int y) const;
+                                                   int y) const;
 
     void submitPlaceSearch(skui::Runtime& runtime);
 
@@ -93,8 +96,9 @@ class PreviewController
     std::optional<PendingLocationRequest> pendingLocationRequest_;
     SearchState searchState_ = SearchState::Idle;
     bool searchPopupOpen_ = false;
+    bool gisOverlayPopupOpen_ = false;
     bool gisColorPopupOpen_ = false;
-    std::optional<GisOverlayCategory> lastUiGisCategory_;
+    std::optional<GisOverlayCategories> lastUiGisCategories_;
     bool dragging_ = false;
     POINT lastDragPoint_{};
 };

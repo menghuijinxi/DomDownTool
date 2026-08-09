@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 
@@ -39,6 +40,8 @@ enum class GisOverlayCategory
     Other
 };
 
+using GisOverlayCategories = std::set<GisOverlayCategory>;
+
 class GisOverlayRenderer
 {
   public:
@@ -52,6 +55,10 @@ class GisOverlayRenderer
     void SetCategory(GisOverlayCategory category);
 
     [[nodiscard]] GisOverlayCategory GetCategory() const;
+
+    void SetCategories(const GisOverlayCategories& categories);
+
+    [[nodiscard]] GisOverlayCategories GetCategories() const;
 
     [[nodiscard]] static GisOverlayCategory ClassifyFeature(
         const DownTool::AmapVectorFeature& feature);
@@ -109,7 +116,7 @@ class GisOverlayRenderer
     std::shared_ptr<const PreparedData> preparedData_;
     std::map<GisOverlayCategory, DownTool::AmapVectorColor> colors_;
     std::unique_ptr<PreparedRenderCache> renderCache_;
-    GisOverlayCategory category_ = GisOverlayCategory::None;
+    GisOverlayCategories categories_;
     uint64_t generation_ = 0;
     std::chrono::steady_clock::time_point retryAfter_{};
     bool loading_ = false;

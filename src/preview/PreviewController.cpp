@@ -1,6 +1,7 @@
 #include "preview/PreviewController.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstdint>
 #include <iterator>
@@ -25,10 +26,19 @@ constexpr double kSearchControlWidth = 300.;
 constexpr double kSearchPopupWidth = 360.;
 constexpr double kSearchPopupTop = 46.;
 constexpr double kSearchPopupHeight = 374.;
+constexpr double kGisOverlayPanelLeft = 735.;
+constexpr double kGisOverlayPanelTop = 48.;
+constexpr double kGisOverlayPanelWidth = 184.;
+constexpr double kGisOverlayPanelHeight = 322.;
 constexpr double kGisColorPanelLeft = 720.;
 constexpr double kGisColorPanelTop = 48.;
 constexpr double kGisColorPanelWidth = 238.;
 constexpr double kGisColorPanelHeight = 288.;
+
+bool isPointInside(double x, double y, double left, double top, double width, double height)
+{
+    return x >= left && x <= left + width && y >= top && y <= top + height;
+}
 
 POINT clientPoint(LPARAM lParam)
 {
@@ -158,6 +168,138 @@ std::string gisCategoryValue(DomDownToolPreview::GisOverlayCategory category)
     return "none";
 }
 
+DomDownToolPreview::GisOverlayCategories allGisCategories()
+{
+    return {DomDownToolPreview::GisOverlayCategory::Road,
+            DomDownToolPreview::GisOverlayCategory::Water,
+            DomDownToolPreview::GisOverlayCategory::Green,
+            DomDownToolPreview::GisOverlayCategory::Highway,
+            DomDownToolPreview::GisOverlayCategory::Subway,
+            DomDownToolPreview::GisOverlayCategory::Building,
+            DomDownToolPreview::GisOverlayCategory::Point,
+            DomDownToolPreview::GisOverlayCategory::Boundary,
+            DomDownToolPreview::GisOverlayCategory::Other};
+}
+
+struct GisCategoryControl
+{
+    std::string_view id;
+    std::string_view value;
+    std::string_view label;
+    DomDownToolPreview::GisOverlayCategory category;
+};
+
+constexpr std::array kGisCategoryControls = {
+    GisCategoryControl{"gis-overlay-road", "road", "道路",
+                       DomDownToolPreview::GisOverlayCategory::Road},
+    GisCategoryControl{"gis-overlay-water", "water", "水",
+                       DomDownToolPreview::GisOverlayCategory::Water},
+    GisCategoryControl{"gis-overlay-green", "green", "绿地",
+                       DomDownToolPreview::GisOverlayCategory::Green},
+    GisCategoryControl{"gis-overlay-highway", "highway", "高速",
+                       DomDownToolPreview::GisOverlayCategory::Highway},
+    GisCategoryControl{"gis-overlay-subway", "subway", "地铁",
+                       DomDownToolPreview::GisOverlayCategory::Subway},
+    GisCategoryControl{"gis-overlay-building", "building", "建筑",
+                       DomDownToolPreview::GisOverlayCategory::Building},
+    GisCategoryControl{"gis-overlay-point", "point", "点",
+                       DomDownToolPreview::GisOverlayCategory::Point},
+    GisCategoryControl{"gis-overlay-boundary", "boundary", "边界",
+                       DomDownToolPreview::GisOverlayCategory::Boundary},
+    GisCategoryControl{"gis-overlay-other", "other", "其他",
+                       DomDownToolPreview::GisOverlayCategory::Other}};
+
+std::vector<std::string> gisSelectionValues(
+    const DomDownToolPreview::GisOverlayCategories& categories)
+{
+    if (categories.empty())
+    {
+        return {"none"};
+    }
+    if (categories == allGisCategories())
+    {
+        return {"all"};
+    }
+
+    std::vector<std::string> values;
+    values.reserve(categories.size());
+    for (const DomDownToolPreview::GisOverlayCategory category : categories)
+    {
+        values.push_back(gisCategoryValue(category));
+    }
+    return values;
+}
+
+std::string gisCategoriesValue(
+    const DomDownToolPreview::GisOverlayCategories& categories)
+{
+    const std::vector<std::string> values = gisSelectionValues(categories);
+    std::string result;
+    for (const std::string& value : values)
+    {
+        if (!result.empty())
+        {
+            result += ',';
+        }
+        result += value;
+    }
+    return result;
+}
+
+std::string gisCategoriesSummary(
+    const DomDownToolPreview::GisOverlayCategories& categories)
+{
+    if (categories.empty())
+    {
+        return "无";
+    }
+    if (categories == allGisCategories())
+    {
+        return "全部";
+    }
+    if (categories.size() > 2)
+    {
+        return fmt::format("已选 {} 项", categories.size());
+    }
+
+    std::string summary;
+    for (const GisCategoryControl& control : kGisCategoryControls)
+    {
+        if (!categories.contains(control.category))
+        {
+            continue;
+        }
+        if (!summary.empty())
+        {
+            summary += "、";
+        }
+        summary += control.label;
+    }
+    return summary;
+}
+
+void setCheckboxChecked(skui::Runtime& runtime, std::string_view id, bool checked)
+{
+    if (checked)
+    {
+        runtime.setAttributeById(id, "checked", "");
+        return;
+    }
+    runtime.removeAttributeById(id, "checked");
+}
+
+void syncGisCheckboxes(skui::Runtime& runtime,
+                       const DomDownToolPreview::GisOverlayCategories& categories)
+{
+    setCheckboxChecked(runtime, "gis-overlay-none", categories.empty());
+    setCheckboxChecked(runtime, "gis-overlay-all", categories == allGisCategories());
+    for (const GisCategoryControl& control : kGisCategoryControls)
+    {
+        setCheckboxChecked(runtime, control.id, categories.contains(control.category));
+    }
+    runtime.setTextById("gis-overlay-summary", gisCategoriesSummary(categories));
+}
+
 std::optional<DomDownToolPreview::GisOverlayCategory> gisColorCategoryFromId(
     std::string_view id)
 {
@@ -199,82 +341,6 @@ std::optional<DownTool::AmapVectorColor> parseGisColor(std::string_view value)
     return DownTool::AmapVectorColor{*red, *green, *blue, 255};
 }
 
-std::optional<skui::Event> runtimeMouseEvent(HWND window, UINT message, WPARAM wParam,
-                                              LPARAM lParam)
-{
-    skui::Event event;
-    const POINT client = clientPoint(lParam);
-    switch (message)
-    {
-    case WM_MOUSEMOVE:
-        event.type = skui::EventType::MouseMove;
-        event.x = static_cast<float>(client.x);
-        event.y = static_cast<float>(client.y);
-        break;
-    case WM_MOUSELEAVE:
-        event.type = skui::EventType::MouseLeave;
-        break;
-    case WM_LBUTTONDOWN:
-        event.type = skui::EventType::MouseDown;
-        event.button = skui::MouseButton::Left;
-        event.x = static_cast<float>(client.x);
-        event.y = static_cast<float>(client.y);
-        break;
-    case WM_LBUTTONUP:
-        event.type = skui::EventType::MouseUp;
-        event.button = skui::MouseButton::Left;
-        event.x = static_cast<float>(client.x);
-        event.y = static_cast<float>(client.y);
-        break;
-    case WM_LBUTTONDBLCLK:
-        event.type = skui::EventType::MouseDoubleClick;
-        event.button = skui::MouseButton::Left;
-        event.x = static_cast<float>(client.x);
-        event.y = static_cast<float>(client.y);
-        break;
-    case WM_MBUTTONDOWN:
-        event.type = skui::EventType::MouseDown;
-        event.button = skui::MouseButton::Middle;
-        event.x = static_cast<float>(client.x);
-        event.y = static_cast<float>(client.y);
-        break;
-    case WM_MBUTTONUP:
-        event.type = skui::EventType::MouseUp;
-        event.button = skui::MouseButton::Middle;
-        event.x = static_cast<float>(client.x);
-        event.y = static_cast<float>(client.y);
-        break;
-    case WM_RBUTTONDOWN:
-        event.type = skui::EventType::MouseDown;
-        event.button = skui::MouseButton::Right;
-        event.x = static_cast<float>(client.x);
-        event.y = static_cast<float>(client.y);
-        break;
-    case WM_RBUTTONUP:
-        event.type = skui::EventType::MouseUp;
-        event.button = skui::MouseButton::Right;
-        event.x = static_cast<float>(client.x);
-        event.y = static_cast<float>(client.y);
-        break;
-    case WM_MOUSEWHEEL:
-    case WM_MOUSEHWHEEL:
-    {
-        POINT point{static_cast<LONG>(static_cast<int16_t>(LOWORD(lParam))),
-                    static_cast<LONG>(static_cast<int16_t>(HIWORD(lParam)))};
-        ScreenToClient(window, &point);
-        event.type = skui::EventType::MouseWheel;
-        event.x = static_cast<float>(point.x);
-        event.y = static_cast<float>(point.y);
-        event.wheelDelta = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam));
-        event.shiftKey = message == WM_MOUSEHWHEEL ||
-            (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-        break;
-    }
-    default:
-        return std::nullopt;
-    }
-    return event;
-}
 } // namespace
 
 DomDownToolPreview::PreviewController::PreviewController()
@@ -292,6 +358,16 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
     runtime.setElementEventCallback(
         [this, &runtime](const skui::ElementEvent& event)
         {
+            if (event.type == skui::ElementEventType::MouseDown && gisOverlayPopupOpen_ &&
+                event.id != "gis-overlay-toggle" &&
+                !isPointInside(event.x, event.y, kGisOverlayPanelLeft, kGisOverlayPanelTop,
+                               kGisOverlayPanelWidth, kGisOverlayPanelHeight))
+            {
+                gisOverlayPopupOpen_ = false;
+                updateUi(runtime);
+                requestRedraw();
+            }
+
             if (event.id == "place-search-input" &&
                 event.type == skui::ElementEventType::Input)
             {
@@ -325,6 +401,8 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             if (event.id == "place-search-input" &&
                 event.type == skui::ElementEventType::MouseDown)
             {
+                writeSearchTrace("Controller", "input_mouse_down",
+                                 fmt::format("x={} y={}", event.x, event.y));
                 if (!searchResults_.empty() || searchState_ == SearchState::Error)
                 {
                     searchPopupOpen_ = true;
@@ -334,7 +412,7 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 return;
             }
 
-            if ((event.id == "provider-select" || event.id == "gis-overlay-select") &&
+            if (event.id == "provider-select" &&
                 event.type == skui::ElementEventType::MouseDown)
             {
                 writeSearchTrace("Controller",
@@ -356,19 +434,45 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 return;
             }
 
-            if (event.id == "gis-overlay-select" && event.type == skui::ElementEventType::Change)
+            if (event.type == skui::ElementEventType::Change &&
+                event.id.starts_with("gis-overlay-"))
             {
-                writeSearchTrace("Controller",
-                                 fmt::format("select_change id={} value={}", event.id,
-                                             event.value));
                 const std::optional<GisOverlayCategory> category =
                     gisCategoryFromValue(event.value);
-                if (category.has_value())
+                if (!category.has_value())
                 {
-                    renderer_.SetGisOverlayCategory(*category);
-                    updateUi(runtime);
-                    requestRedraw();
+                    return;
                 }
+
+                GisOverlayCategories categories = renderer_.GetGisOverlayCategories();
+                if (*category == GisOverlayCategory::None)
+                {
+                    if (event.checked)
+                    {
+                        categories.clear();
+                    }
+                }
+                else if (*category == GisOverlayCategory::All)
+                {
+                    categories = event.checked ? allGisCategories() : GisOverlayCategories{};
+                }
+                else if (event.checked)
+                {
+                    categories.insert(*category);
+                }
+                else
+                {
+                    categories.erase(*category);
+                }
+
+                writeSearchTrace("Controller",
+                                 fmt::format("checkbox_change id={} checked={} values={}",
+                                             event.id, event.checked,
+                                             gisCategoriesValue(categories)));
+                renderer_.SetGisOverlayCategories(categories);
+                syncGisCheckboxes(runtime, categories);
+                updateUi(runtime);
+                requestRedraw();
                 return;
             }
 
@@ -413,6 +517,14 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             else if (event.id == "gis-color-toggle")
             {
                 gisColorPopupOpen_ = !gisColorPopupOpen_;
+                gisOverlayPopupOpen_ = false;
+            }
+            else if (event.id == "gis-overlay-toggle")
+            {
+                gisOverlayPopupOpen_ = !gisOverlayPopupOpen_;
+                gisColorPopupOpen_ = false;
+                writeSearchTrace("Controller", "gis_popup_toggle",
+                                 fmt::format("open={}", gisOverlayPopupOpen_));
             }
             else if (event.id == "view-span-decrease")
             {
@@ -445,6 +557,13 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
     runtime.setElementKeyDownCallback(
         [this, &runtime](const skui::ElementEvent& event)
         {
+            if (event.key == VK_ESCAPE && gisOverlayPopupOpen_)
+            {
+                gisOverlayPopupOpen_ = false;
+                updateUi(runtime);
+                requestRedraw();
+                return true;
+            }
             if (event.id != "place-search-input")
             {
                 return false;
@@ -529,15 +648,14 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         return true;
     }
 
-    const std::optional<skui::Event> mouseEvent =
-        runtimeMouseEvent(window, message, wParam, lParam);
-    if (mouseEvent.has_value())
+    if (message == WM_KEYDOWN && wParam == VK_ESCAPE &&
+        (gisOverlayPopupOpen_ || gisColorPopupOpen_))
     {
-        if (runtime.handleEvent(*mouseEvent))
-        {
-            requestRedraw();
-            return true;
-        }
+        gisOverlayPopupOpen_ = false;
+        gisColorPopupOpen_ = false;
+        updateUi(runtime);
+        requestRedraw();
+        return true;
     }
 
     if (searchPopupOpen_ &&
@@ -553,7 +671,7 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         }
         if (isSearchInteractionPoint(runtime, point.x, point.y))
         {
-            return mouseEvent.has_value();
+            return true;
         }
         if (message == WM_LBUTTONDOWN)
         {
@@ -561,6 +679,29 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
             pendingLocationRequest_.reset();
             searchPopupOpen_ = false;
             updateSearchUi(runtime);
+        }
+    }
+
+    if (gisOverlayPopupOpen_ &&
+        (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_MOUSEMOVE ||
+         message == WM_MOUSEWHEEL))
+    {
+        POINT point = clientPoint(lParam);
+        if (message == WM_MOUSEWHEEL)
+        {
+            point = POINT{static_cast<LONG>(static_cast<int16_t>(LOWORD(lParam))),
+                          static_cast<LONG>(static_cast<int16_t>(HIWORD(lParam)))};
+            ScreenToClient(window, &point);
+        }
+        if (isGisOverlayInteractionPoint(runtime, point.x, point.y))
+        {
+            return true;
+        }
+        if (message == WM_LBUTTONDOWN)
+        {
+            gisOverlayPopupOpen_ = false;
+            updateUi(runtime);
+            requestRedraw();
         }
     }
 
@@ -577,12 +718,13 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         }
         if (isGisColorInteractionPoint(runtime, point.x, point.y))
         {
-            return mouseEvent.has_value();
+            return true;
         }
         if (message == WM_LBUTTONDOWN)
         {
             gisColorPopupOpen_ = false;
             updateUi(runtime);
+            requestRedraw();
         }
     }
 
@@ -590,6 +732,13 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         message == WM_KILLFOCUS)
     {
         dragging_ = false;
+        if (message == WM_KILLFOCUS && (gisOverlayPopupOpen_ || gisColorPopupOpen_))
+        {
+            gisOverlayPopupOpen_ = false;
+            gisColorPopupOpen_ = false;
+            updateUi(runtime);
+            requestRedraw();
+        }
         return false;
     }
 
@@ -610,7 +759,7 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         ScreenToClient(window, &point);
         if (!isMapPoint(window, point.x, point.y))
         {
-            return mouseEvent.has_value();
+            return false;
         }
 
         const double wheelSteps = static_cast<double>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
@@ -625,7 +774,7 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         const POINT point = clientPoint(lParam);
         if (!isMapPoint(window, point.x, point.y))
         {
-            return mouseEvent.has_value();
+            return false;
         }
         renderer_.zoomAt(point.x, point.y, 1.);
         updateUi(runtime);
@@ -642,7 +791,7 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
             {
                 ReleaseCapture();
             }
-            return mouseEvent.has_value();
+            return false;
         }
         dragging_ = true;
         lastDragPoint_ = point;
@@ -671,7 +820,7 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         }
     }
 
-    return mouseEvent.has_value();
+    return false;
 }
 
 bool DomDownToolPreview::PreviewController::isMapPoint(HWND window, int x, int y) const
@@ -686,7 +835,7 @@ bool DomDownToolPreview::PreviewController::isMapPoint(HWND window, int x, int y
 bool DomDownToolPreview::PreviewController::isSearchInteractionPoint(
     const skui::Runtime& runtime, int x, int y) const
 {
-    const double scale = std::max(0.1F, runtime.dpiScale());
+    const double scale = std::max(0.1F, runtime.effectiveScale());
     const double logicalX = static_cast<double>(x) / scale;
     const double logicalY = static_cast<double>(y) / scale;
     const bool insideControl = logicalX >= kSearchControlLeft &&
@@ -697,16 +846,24 @@ bool DomDownToolPreview::PreviewController::isSearchInteractionPoint(
     return insideControl || insidePopup;
 }
 
+bool DomDownToolPreview::PreviewController::isGisOverlayInteractionPoint(
+    const skui::Runtime& runtime, int x, int y) const
+{
+    const double scale = std::max(0.1F, runtime.effectiveScale());
+    const double logicalX = static_cast<double>(x) / scale;
+    const double logicalY = static_cast<double>(y) / scale;
+    return isPointInside(logicalX, logicalY, kGisOverlayPanelLeft, kGisOverlayPanelTop,
+                         kGisOverlayPanelWidth, kGisOverlayPanelHeight);
+}
+
 bool DomDownToolPreview::PreviewController::isGisColorInteractionPoint(
     const skui::Runtime& runtime, int x, int y) const
 {
-    const double scale = std::max(0.1F, runtime.dpiScale());
+    const double scale = std::max(0.1F, runtime.effectiveScale());
     const double logicalX = static_cast<double>(x) / scale;
     const double logicalY = static_cast<double>(y) / scale;
-    return logicalX >= kGisColorPanelLeft &&
-        logicalX <= kGisColorPanelLeft + kGisColorPanelWidth &&
-        logicalY >= kGisColorPanelTop &&
-        logicalY <= kGisColorPanelTop + kGisColorPanelHeight;
+    return isPointInside(logicalX, logicalY, kGisColorPanelLeft, kGisColorPanelTop,
+                         kGisColorPanelWidth, kGisColorPanelHeight);
 }
 
 void DomDownToolPreview::PreviewController::submitPlaceSearch(skui::Runtime& runtime)
@@ -972,14 +1129,18 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
                       stats.visibleTiles, stats.readyTiles, stats.cache.pendingTiles,
                       stats.downloads.activeTiles, stats.downloads.queuedTiles,
                       stats.downloads.failedTiles, memoryMegabytes)}});
-    const GisOverlayCategory gisCategory = renderer_.GetGisOverlayCategory();
-    if (!lastUiGisCategory_.has_value() || *lastUiGisCategory_ != gisCategory)
+    const GisOverlayCategories gisCategories = renderer_.GetGisOverlayCategories();
+    if (!lastUiGisCategories_.has_value() || *lastUiGisCategories_ != gisCategories)
     {
         writeSearchTrace("Controller", "gis_ui_sync",
-                         fmt::format("category={}", gisCategoryValue(gisCategory)));
-        lastUiGisCategory_ = gisCategory;
+                         fmt::format("categories={}", gisCategoriesValue(gisCategories)));
+        syncGisCheckboxes(runtime, gisCategories);
+        lastUiGisCategories_ = gisCategories;
     }
-    runtime.setValueById("gis-overlay-select", gisCategoryValue(gisCategory));
+    runtime.setVisibleById("gis-overlay-panel", gisOverlayPopupOpen_);
+    runtime.setTextById("gis-overlay-arrow", gisOverlayPopupOpen_ ? "^" : "v");
+    runtime.setAttributeById("gis-overlay-toggle", "aria-expanded",
+                             gisOverlayPopupOpen_ ? "true" : "false");
     runtime.setVisibleById("gis-color-panel", gisColorPopupOpen_);
 }
 
