@@ -31,6 +31,7 @@
     "openssl",
     "assimp",
     "protobuf",
+    "earcut-hpp",
     {
       "name": "skiaui",
       "features": [

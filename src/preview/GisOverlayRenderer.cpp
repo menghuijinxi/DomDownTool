@@ -21,6 +21,7 @@
 #include "include/core/SkPath.h"
 #include "include/core/SkPathBuilder.h"
 
+#include "preview/Dx12GisRenderer.h"
 #include "preview/SearchTrace.h"
 
 namespace
@@ -209,23 +210,7 @@ bool isKnownCategory(GisOverlayCategory category)
 
 struct DomDownToolPreview::GisOverlayRenderer::PreparedData
 {
-    struct Bounds
-    {
-        double minLon = 0.;
-        double maxLon = 0.;
-        double minLat = 0.;
-        double maxLat = 0.;
-        bool initialized = false;
-    };
-
-    struct Feature
-    {
-        DownTool::AmapVectorGeometryType geometryType = DownTool::AmapVectorGeometryType::Point;
-        std::vector<std::vector<DownTool::LonLat>> geometryParts;
-        Bounds bounds;
-        uint32_t minZoom = 0;
-        uint32_t maxZoom = 0;
-    };
+    using Feature = GisMeshFeature;
 
     std::array<std::vector<Feature>, kCategoryCount> featuresByCategory;
 };
@@ -239,11 +224,30 @@ struct DomDownToolPreview::GisOverlayRenderer::PreparedRenderCache
     uint32_t sourceZoom = 0;
     std::array<std::vector<SkPath>, kCategoryCount> paths;
     std::array<std::vector<uint8_t>, kCategoryCount> initialized;
+    std::array<std::shared_ptr<const GisGeometryMesh>, kCategoryCount> meshes;
+    std::array<uint8_t, kCategoryCount> meshInitialized{};
+};
+
+struct DomDownToolPreview::GisOverlayRenderer::MeshBuildRequest
+{
+    std::shared_ptr<const PreparedData> data;
+    ViewportTransform transform;
+};
+
+struct DomDownToolPreview::GisOverlayRenderer::MeshBuildResult
+{
+    std::shared_ptr<const PreparedData> data;
+    const DownTool::DownToolBase* projection = nullptr;
+    TileYAxisDirection yDirection = TileYAxisDirection::Down;
+    uint32_t tileSize = 0;
+    uint32_t sourceZoom = 0;
+    std::array<std::shared_ptr<const GisGeometryMesh>, kCategoryCount> meshes;
 };
 
 DomDownToolPreview::GisOverlayRenderer::GisOverlayRenderer(
     std::function<void()> requestRedraw)
-    : requestRedraw_(std::move(requestRedraw))
+    : requestRedraw_(std::move(requestRedraw)),
+      dx12Renderer_(std::make_unique<Dx12GisRenderer>(requestRedraw_))
 {
     const GisOverlayCategory categories[] = {
         GisOverlayCategory::Road,
@@ -263,6 +267,7 @@ DomDownToolPreview::GisOverlayRenderer::GisOverlayRenderer(
                      fmt::format("category={} raw={}", categoryName(category_),
                                  static_cast<unsigned>(category_)));
     worker_ = std::thread([this] { workerLoop(); });
+    meshWorker_ = std::thread([this] { meshWorkerLoop(); });
 }
 
 DomDownToolPreview::GisOverlayRenderer::~GisOverlayRenderer()
@@ -273,9 +278,14 @@ DomDownToolPreview::GisOverlayRenderer::~GisOverlayRenderer()
         pendingRequest_.reset();
     }
     condition_.notify_all();
+    meshCondition_.notify_all();
     if (worker_.joinable())
     {
         worker_.join();
+    }
+    if (meshWorker_.joinable())
+    {
+        meshWorker_.join();
     }
 }
 
@@ -294,6 +304,8 @@ void DomDownToolPreview::GisOverlayRenderer::SetCategory(GisOverlayCategory cate
         if (category == GisOverlayCategory::None)
         {
             pendingRequest_.reset();
+            pendingMeshRequest_.reset();
+            readyMeshResult_.reset();
             ++generation_;
             retryAfter_ = {};
             loading_ = false;
@@ -443,6 +455,126 @@ void DomDownToolPreview::GisOverlayRenderer::Draw(
     }
 
     const uint32_t zoom = viewport.sourceZoom();
+    std::vector<GisOverlayCategory> categories;
+    if (selectedCategory == GisOverlayCategory::All)
+    {
+        categories.assign(kAllDrawOrder.begin(), kAllDrawOrder.end());
+    }
+    else
+    {
+        categories.push_back(selectedCategory);
+    }
+
+    const auto meshRequestMatches = [&](const MeshBuildRequest* request)
+    {
+        return request != nullptr && request->data.get() == preparedData.get() &&
+            request->transform.projection == transform->projection &&
+            request->transform.yDirection == transform->yDirection &&
+            request->transform.tileSize == transform->tileSize &&
+            request->transform.sourceZoom == transform->sourceZoom;
+    };
+    const auto meshResultMatches = [&](const MeshBuildResult* result)
+    {
+        return result != nullptr && result->data.get() == preparedData.get() &&
+            result->projection == transform->projection &&
+            result->yDirection == transform->yDirection &&
+            result->tileSize == transform->tileSize &&
+            result->sourceZoom == transform->sourceZoom;
+    };
+
+    Dx12GisRenderer& dx12Renderer = *dx12Renderer_;
+    const bool dx12Supported = dx12Renderer.SupportsCanvas(canvas);
+    bool notifyMeshWorker = false;
+    if (dx12Supported)
+    {
+        const std::lock_guard lock(mutex_);
+        if (readyMeshResult_)
+        {
+            if (meshResultMatches(readyMeshResult_.get()))
+            {
+                renderCache_->meshes = std::move(readyMeshResult_->meshes);
+                renderCache_->meshInitialized.fill(uint8_t{1});
+            }
+            readyMeshResult_.reset();
+        }
+        const bool meshesReady = std::all_of(
+            renderCache_->meshInitialized.begin(), renderCache_->meshInitialized.end(),
+            [](uint8_t initialized) { return initialized != 0; });
+        if (!meshesReady && !meshRequestMatches(pendingMeshRequest_.get()) &&
+            !meshRequestMatches(activeMeshRequest_.get()))
+        {
+            pendingMeshRequest_ = std::make_unique<MeshBuildRequest>(
+                MeshBuildRequest{preparedData, *transform});
+            notifyMeshWorker = true;
+        }
+    }
+    if (notifyMeshWorker)
+    {
+        meshCondition_.notify_one();
+    }
+
+    const bool meshesReady = dx12Supported && std::all_of(
+        renderCache_->meshInitialized.begin(), renderCache_->meshInitialized.end(),
+        [](uint8_t initialized) { return initialized != 0; });
+    if (dx12Supported)
+    {
+        Dx12GisRenderFrame dx12Frame;
+        dx12Frame.transform = *transform;
+        dx12Frame.meshSetReady = meshesReady;
+        const SkISize surfaceSize = canvas.getBaseLayerSize();
+        dx12Frame.width = surfaceSize.width();
+        dx12Frame.height = surfaceSize.height();
+        SkIRect clipBounds;
+        if (canvas.getDeviceClipBounds(&clipBounds))
+        {
+            dx12Frame.clipTop = static_cast<float>(clipBounds.top());
+            dx12Frame.clipBottom = static_cast<float>(clipBounds.bottom());
+        }
+        else
+        {
+            dx12Frame.clipTop = 0.F;
+            dx12Frame.clipBottom = static_cast<float>(dx12Frame.height);
+        }
+        if (meshesReady)
+        {
+            for (const std::shared_ptr<const GisGeometryMesh>& mesh : renderCache_->meshes)
+            {
+                if (mesh)
+                {
+                    dx12Frame.residentMeshes.push_back(mesh);
+                }
+            }
+            for (const GisOverlayCategory category : categories)
+            {
+                const size_t index = categoryIndex(category);
+                const std::shared_ptr<const GisGeometryMesh>& mesh =
+                    renderCache_->meshes[index];
+                const bool hasGeometry = mesh && (!mesh->fillIndices.empty() ||
+                    !mesh->lineIndices.empty() || !mesh->pointIndices.empty());
+                if (!hasGeometry)
+                {
+                    continue;
+                }
+                const auto colorIterator = colors.find(category);
+                const AmapVectorColor color = colorIterator == colors.end()
+                    ? defaultColor(category)
+                    : colorIterator->second;
+                dx12Frame.batches.push_back(
+                    {mesh,
+                     static_cast<float>(color.red) / 255.F,
+                     static_cast<float>(color.green) / 255.F,
+                     static_cast<float>(color.blue) / 255.F,
+                     static_cast<float>(color.alpha) / 255.F,
+                     lineWidthForCategory(category),
+                     5.F});
+            }
+        }
+        if (dx12Renderer.Draw(canvas, dx12Frame))
+        {
+            return;
+        }
+    }
+
     const auto drawCategory = [&](GisOverlayCategory category)
     {
         const size_t index = categoryIndex(category);
@@ -574,13 +706,17 @@ void DomDownToolPreview::GisOverlayRenderer::Clear()
         const std::lock_guard lock(mutex_);
         preparedData_.reset();
         renderCache_.reset();
+        dx12Renderer_->Clear();
         pendingRequest_.reset();
+        pendingMeshRequest_.reset();
+        readyMeshResult_.reset();
         loadedContext_.reset();
         ++generation_;
         retryAfter_ = {};
         loading_ = false;
     }
     condition_.notify_all();
+    meshCondition_.notify_all();
 }
 
 bool DomDownToolPreview::GisOverlayRenderer::IsLoading() const
@@ -818,6 +954,68 @@ void DomDownToolPreview::GisOverlayRenderer::workerLoop()
                 accepted = true;
             }
         }
+        if (accepted && requestRedraw_)
+        {
+            requestRedraw_();
+        }
+    }
+}
+
+void DomDownToolPreview::GisOverlayRenderer::meshWorkerLoop()
+{
+    while (true)
+    {
+        MeshBuildRequest request;
+        {
+            std::unique_lock lock(mutex_);
+            meshCondition_.wait(
+                lock, [this] { return stopping_ || pendingMeshRequest_ != nullptr; });
+            if (stopping_)
+            {
+                return;
+            }
+            activeMeshRequest_ = std::move(pendingMeshRequest_);
+            request = *activeMeshRequest_;
+        }
+
+        const auto buildStart = std::chrono::steady_clock::now();
+        auto result = std::make_unique<MeshBuildResult>();
+        result->data = request.data;
+        result->projection = request.transform.projection;
+        result->yDirection = request.transform.yDirection;
+        result->tileSize = request.transform.tileSize;
+        result->sourceZoom = request.transform.sourceZoom;
+        size_t vertexCount = 0;
+        size_t indexCount = 0;
+        for (size_t index = 0; index < kCategoryCount; ++index)
+        {
+            result->meshes[index] = std::make_shared<GisGeometryMesh>(GisMeshBuilder::Build(
+                request.data->featuresByCategory[index], request.transform,
+                request.transform.sourceZoom));
+            const GisGeometryMesh& mesh = *result->meshes[index];
+            vertexCount += mesh.fillVertices.size() + mesh.lineVertices.size() +
+                mesh.pointVertices.size();
+            indexCount += mesh.fillIndices.size() + mesh.lineIndices.size() +
+                mesh.pointIndices.size();
+        }
+        const auto buildMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - buildStart);
+
+        bool accepted = false;
+        {
+            const std::lock_guard lock(mutex_);
+            activeMeshRequest_.reset();
+            if (!stopping_ && preparedData_.get() == request.data.get())
+            {
+                readyMeshResult_ = std::move(result);
+                accepted = true;
+            }
+        }
+        writeSearchTrace(
+            "GIS", "mesh_build_complete",
+            fmt::format("accepted={} elapsed_ms={} vertices={} indices={} source_zoom={}",
+                        accepted, buildMilliseconds.count(), vertexCount, indexCount,
+                        request.transform.sourceZoom));
         if (accepted && requestRedraw_)
         {
             requestRedraw_();

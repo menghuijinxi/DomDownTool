@@ -1,0 +1,3 @@
+#pragma once
+
+#define DOMDOWNTOOL_PREVIEW_HTML_RESOURCE_ID 101

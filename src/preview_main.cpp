@@ -1,5 +1,7 @@
 #include <cstdlib>
 #include <filesystem>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -9,6 +11,7 @@
 #include "skui_win32_app.h"
 
 #include "preview/PreviewController.h"
+#include "preview/PreviewResourceIds.h"
 #include "preview/SearchTrace.h"
 
 namespace
@@ -26,10 +29,29 @@ std::filesystem::path executableDirectory()
     return std::filesystem::path(std::wstring(pathBuffer.data(), pathLength)).parent_path();
 }
 
-std::string pathToUtf8(const std::filesystem::path& path)
+std::optional<std::string> loadEmbeddedPreviewDocument(HINSTANCE instance)
 {
-    const std::u8string value = path.generic_u8string();
-    return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+    const HRSRC resource = FindResourceW(
+        instance, MAKEINTRESOURCEW(DOMDOWNTOOL_PREVIEW_HTML_RESOURCE_ID), RT_RCDATA);
+    if (resource == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    const DWORD resourceSize = SizeofResource(instance, resource);
+    const HGLOBAL resourceHandle = LoadResource(instance, resource);
+    if (resourceSize == 0 || resourceHandle == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    const void* resourceBytes = LockResource(resourceHandle);
+    if (resourceBytes == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    return std::string(static_cast<const char*>(resourceBytes), resourceSize);
 }
 } // namespace
 
@@ -54,8 +76,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
                                               "amap-search.log");
     DomDownToolPreview::writeSearchTrace("App", "preview_starting");
 
-    const std::filesystem::path documentPath =
-        applicationRoot / "resources" / "preview" / "index.html";
+    const std::optional<std::string> embeddedDocument =
+        loadEmbeddedPreviewDocument(instance);
+    if (!embeddedDocument.has_value())
+    {
+        DomDownToolPreview::writeSearchTrace("App", "embedded_preview_document_missing");
+        MessageBoxW(nullptr, L"Failed to load the embedded preview UI.", L"DomDownTool",
+                    MB_OK | MB_ICONERROR);
+        return EXIT_FAILURE;
+    }
 
     DomDownToolPreview::PreviewController controller;
     skui::win32::WindowOptions options;
@@ -63,10 +92,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     options.logicalWidth = 1440;
     options.logicalHeight = 900;
     options.clearColor = RGB(31, 34, 33);
-    options.documentPath = pathToUtf8(documentPath);
-    options.runtime.assetRoot = pathToUtf8(documentPath.parent_path());
-    options.onRuntimeReady = [&controller](skui::Runtime& runtime)
-    { controller.attachRuntime(runtime); };
+    options.onRuntimeReady = [&controller, &embeddedDocument](skui::Runtime& runtime)
+    {
+        if (!runtime.loadDocumentFromString(*embeddedDocument))
+        {
+            DomDownToolPreview::writeSearchTrace(
+                "App", "embedded_preview_document_load_failed", runtime.lastError());
+            throw std::runtime_error("Failed to parse the embedded preview UI.");
+        }
+        controller.attachRuntime(runtime);
+    };
     options.onRuntimeResize = [&controller](skui::Runtime& runtime)
     { controller.resizeRuntime(runtime); };
     options.onAfterUiRender =
@@ -76,7 +111,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
                                             skui::Runtime& runtime)
     { return controller.handleWindowMessage(window, message, wParam, lParam, runtime); };
 
-    skui::win32::Dx12WindowApp application(std::move(options));
-    application.setFrameRateLimit(120.);
-    return application.run(instance, showCommand);
+    try
+    {
+        skui::win32::Dx12WindowApp application(std::move(options));
+        application.setFrameRateLimit(120.);
+        return application.run(instance, showCommand);
+    }
+    catch (const std::exception& exception)
+    {
+        DomDownToolPreview::writeSearchTrace("App", "preview_startup_failed", exception.what());
+        MessageBoxW(nullptr, L"Failed to start the embedded preview UI.", L"DomDownTool",
+                    MB_OK | MB_ICONERROR);
+        return EXIT_FAILURE;
+    }
 }

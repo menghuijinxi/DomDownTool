@@ -14,6 +14,7 @@
 #include "AmapVectorDecoder.h"
 #include "AmapVectorPngDownloader.h"
 #include "DownToolBase.h"
+#include "preview/GisMeshBuilder.h"
 #include "preview/MapViewport.h"
 
 class SkCanvas;
@@ -21,6 +22,7 @@ class SkCanvas;
 namespace DomDownToolPreview
 {
 class GisOverlayRendererTestAccess;
+class Dx12GisRenderer;
 
 enum class GisOverlayCategory
 {
@@ -73,6 +75,8 @@ class GisOverlayRenderer
 
     struct PreparedData;
     struct PreparedRenderCache;
+    struct MeshBuildRequest;
+    struct MeshBuildResult;
 
     struct LoadRequest
     {
@@ -90,12 +94,18 @@ class GisOverlayRenderer
 
     void workerLoop();
 
+    void meshWorkerLoop();
+
     std::function<void()> requestRedraw_;
     mutable std::mutex mutex_;
     std::condition_variable condition_;
+    std::condition_variable meshCondition_;
     std::optional<LoadRequest> pendingRequest_;
     std::optional<LoadRequest> activeRequest_;
     std::optional<LoadRequest> loadedContext_;
+    std::unique_ptr<MeshBuildRequest> pendingMeshRequest_;
+    std::unique_ptr<MeshBuildRequest> activeMeshRequest_;
+    std::unique_ptr<MeshBuildResult> readyMeshResult_;
     std::shared_ptr<const PreparedData> preparedData_;
     std::map<GisOverlayCategory, DownTool::AmapVectorColor> colors_;
     std::unique_ptr<PreparedRenderCache> renderCache_;
@@ -105,5 +115,7 @@ class GisOverlayRenderer
     bool loading_ = false;
     bool stopping_ = false;
     std::thread worker_;
+    std::thread meshWorker_;
+    std::unique_ptr<Dx12GisRenderer> dx12Renderer_;
 };
 } // namespace DomDownToolPreview

@@ -1,3 +1,4 @@
 /.vs
 /tmp/
 /cache
+/vcpkg_installed/

@@ -35,3 +35,29 @@
 - 处理策略：默认行为不强制重生成，以保留缓存复用性能。需要隔离任务时，为不同项目设置不同的
   `PostProcessOutputPath`；需要修复已有结果时，仅清理受影响项目的后处理输出目录或已定位的
   瓦片父子链后重新运行，保留 `CachePath/{z}` 下的原始下载缓存。
+
+## DX12 GIS 首次显示卡顿与边缘锯齿
+
+- 现象：GIS mesh 提交后的持续绘制很流畅，但新的大范围 mesh 首次显示时 UI 会明显掉帧；
+  面、宽线和兴趣点边缘还有明显锯齿。
+- 影响范围：`Dx12GisRenderer` 绘制百万级顶点和索引的 GIS 叠加层时，尤其是切换数据范围或
+  源缩放层级后的第一帧。
+- 根因：CPU mesh 虽然在线程中生成，DEFAULT/UPLOAD buffer 的创建、`Map`、全量
+  `memcpy` 和 `CopyBufferRegion` 原先仍在 UI 绘制帧中执行。后续每帧只有少量 draw call，
+  因此稳定绘制不是瓶颈。锯齿则来自单采样 back buffer 和点 shader 的硬 `clip`，与 draw call
+  数量无关。
+- 解决方案：GIS 先绘制到独立的透明 4x MSAA render target，不支持 4x 时降为 2x/1x；
+  Resolve 到单采样纹理后，以预乘 alpha 合成到 Skia back buffer。点使用导数覆盖率平滑圆形
+  边缘。GPU buffer 在后台线程通过独立 Copy Queue 创建和提交，Direct Queue 只插入 GPU
+  fence wait 和 COPY_DEST 到顶点/索引状态的 barrier，不做 CPU fence wait。上传期间继续绘制
+  上一组 GPU mesh，并按源缩放层级换算坐标。
+- 生命周期约束：上传任务必须持有 CPU mesh 的共享所有权；UPLOAD、DEFAULT buffer、Copy
+  Queue、allocator、command list 和 fence 至少保留到使用它们的 Direct Queue 帧 fence 完成。
+  设备或数据代际变化时，旧上传结果只能丢弃内容，不能提前释放仍在 Copy Queue 中使用的资源。
+- 验证方式：Release 构建通过，`GisOverlayRendererTest` 和 `GisMeshBuilderTest` 通过；运行日志
+  中通过 `dx12_draw_succeeded` 的 `msaa` 字段确认采样数，通过
+  `dx12_background_upload_ready` 的字节数和提交耗时确认后台上传路径。
+- 快速检查清单：首次显示掉帧时先区分 CPU mesh 生成、CPU 到上传堆拷贝和稳定 draw 的耗时；
+  检查 UI 线程是否调用 `Map`/`memcpy`/`CreateCommittedResource`；检查 Copy Queue 与 Direct
+  Queue 是否只做 GPU fence 同步；检查 PSO 的 `SampleMask` 是否显式设置为
+  `D3D12_DEFAULT_SAMPLE_MASK`；检查 Resolve 前后资源状态及预乘 alpha blend 是否匹配。

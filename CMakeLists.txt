@@ -191,30 +191,32 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
 
   find_package(SkiaUI CONFIG REQUIRED)
   add_executable(DomDownToolPreview WIN32
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewResources.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview_main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapPlaceSearch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapWebViewSearch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/Dx12GisRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisOverlayRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisMeshBuilder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/MapRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewController.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SearchTrace.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SkiaImageCodecs.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TileDownloadQueue.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TileImageCache.cpp)
+  set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewResources.rc
+    APPEND PROPERTY OBJECT_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/preview/index.html)
   target_link_libraries(DomDownToolPreview PRIVATE
     DomDownToolCore
     SkiaUI::SkuiWin32Dx12
     webview::core
-    comctl32)
+    comctl32
+    d3d12
+    d3dcompiler)
   target_compile_definitions(DomDownToolPreview PRIVATE
     NOMINMAX
     WIN32_LEAN_AND_MEAN)
-  add_custom_target(DomDownToolPreviewResources
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-      "${CMAKE_CURRENT_SOURCE_DIR}/resources/preview"
-      "$<TARGET_FILE_DIR:DomDownToolPreview>/resources/preview"
-    COMMENT "Syncing DomDownToolPreview resources")
-  add_dependencies(DomDownToolPreview DomDownToolPreviewResources)
   set_property(TARGET DomDownToolPreview PROPERTY CXX_STANDARD 23)
   set_property(TARGET DomDownToolPreview PROPERTY CXX_STANDARD_REQUIRED ON)
   if(MSVC)
@@ -315,11 +317,15 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
 
   add_executable(GisOverlayRendererTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/GisOverlayRendererTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/Dx12GisRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisOverlayRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisMeshBuilder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SearchTrace.cpp)
   target_link_libraries(GisOverlayRendererTest PRIVATE
     DomDownToolCore
-    SkiaUI::SkuiWin32Dx12)
+    SkiaUI::SkuiWin32Dx12
+    d3d12
+    d3dcompiler)
   target_compile_definitions(GisOverlayRendererTest PRIVATE
     NOMINMAX
     WIN32_LEAN_AND_MEAN)
@@ -329,6 +335,18 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     target_compile_options(GisOverlayRendererTest PRIVATE /EHsc /permissive-)
   endif()
   add_test(NAME GisOverlayRendererTest COMMAND GisOverlayRendererTest)
+
+  add_executable(GisMeshBuilderTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/GisMeshBuilderTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisMeshBuilder.cpp)
+  target_link_libraries(GisMeshBuilderTest PRIVATE DomDownToolCore)
+  target_compile_definitions(GisMeshBuilderTest PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+  set_property(TARGET GisMeshBuilderTest PROPERTY CXX_STANDARD 23)
+  set_property(TARGET GisMeshBuilderTest PROPERTY CXX_STANDARD_REQUIRED ON)
+  if(MSVC)
+    target_compile_options(GisMeshBuilderTest PRIVATE /EHsc /permissive-)
+  endif()
+  add_test(NAME GisMeshBuilderTest COMMAND GisMeshBuilderTest)
 
   add_executable(PreviewSearchUiTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/PreviewSearchUiTest.cpp)

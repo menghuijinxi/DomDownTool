@@ -23,6 +23,7 @@ class GisOverlayRendererTestAccess
         const std::lock_guard lock(renderer.mutex_);
         renderer.preparedData_ = GisOverlayRenderer::prepareData(decodedData);
     }
+
 };
 } // namespace DomDownToolPreview
 
