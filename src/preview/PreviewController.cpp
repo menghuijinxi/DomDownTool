@@ -775,10 +775,6 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             {
                 renderer_.clearCache();
             }
-            else if (event.id == "auto-download-toggle")
-            {
-                renderer_.setAutoDownloadEnabled(!renderer_.autoDownloadEnabled());
-            }
             else if (event.id == "gis-color-toggle")
             {
                 gisColorPopupOpen_ = !gisColorPopupOpen_;
@@ -1544,8 +1540,6 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
         static_cast<double>(stats.cache.cpuBytes + stats.cache.gpuBytes) / (1024. * 1024.);
 
     runtime.setValueById("provider-select", source.id);
-    runtime.setTextById("auto-download-toggle",
-                        renderer_.autoDownloadEnabled() ? "自动下载" : "仅缓存");
     runtime.setTextsById(
         {{"active-provider", source.name},
          {"coordinate-system", source.coordinateSystem},

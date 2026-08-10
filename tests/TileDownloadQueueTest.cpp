@@ -161,7 +161,7 @@ int main()
         {
             throw std::runtime_error("无效响应没有进入失败状态");
         }
-        queue.setEnabled(false);
+        queue.cancelPending();
         if (std::filesystem::exists(invalidPath) ||
             std::filesystem::exists(partialPathFor(invalidPath)))
         {

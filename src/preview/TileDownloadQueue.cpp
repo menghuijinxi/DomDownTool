@@ -188,33 +188,12 @@ DomDownToolPreview::TileDownloadQueue::~TileDownloadQueue()
     }
 }
 
-void DomDownToolPreview::TileDownloadQueue::setEnabled(bool enabled)
-{
-    {
-        const std::lock_guard lock(mutex_);
-        enabled_ = enabled;
-        if (!enabled_)
-        {
-            pendingJobs_.clear();
-            pendingPaths_.clear();
-            visiblePaths_.clear();
-        }
-    }
-    condition_.notify_all();
-}
-
-bool DomDownToolPreview::TileDownloadQueue::enabled() const
-{
-    const std::lock_guard lock(mutex_);
-    return enabled_;
-}
-
 void DomDownToolPreview::TileDownloadQueue::updateVisibleRequests(
     const std::vector<TileDownloadJob>& jobs)
 {
     {
         const std::lock_guard lock(mutex_);
-        if (!enabled_ || stopping_)
+        if (stopping_)
         {
             return;
         }
@@ -480,7 +459,7 @@ void DomDownToolPreview::TileDownloadQueue::workerLoop()
             if (!succeeded)
             {
                 ++failedTileCount_;
-                if (enabled_ && visiblePaths_.contains(job.destination) && !stopping_)
+                if (visiblePaths_.contains(job.destination) && !stopping_)
                 {
                     pendingPaths_.insert(job.destination);
                     pendingJobs_.push_back({

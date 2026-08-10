@@ -102,10 +102,6 @@ class MapRenderer
 
     void clearCache();
 
-    void setAutoDownloadEnabled(bool enabled);
-
-    [[nodiscard]] bool autoDownloadEnabled() const;
-
     [[nodiscard]] double toolbarHeight() const
     {
         return toolbarHeight_;

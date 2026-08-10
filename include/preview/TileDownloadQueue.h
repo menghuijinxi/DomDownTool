@@ -44,10 +44,6 @@ class TileDownloadQueue
     TileDownloadQueue(const TileDownloadQueue&) = delete;
     TileDownloadQueue& operator=(const TileDownloadQueue&) = delete;
 
-    void setEnabled(bool enabled);
-
-    [[nodiscard]] bool enabled() const;
-
     [[nodiscard]] size_t GetWorkerCount() const noexcept { return workers_.size(); }
 
     void updateVisibleRequests(const std::vector<TileDownloadJob>& jobs);
@@ -87,7 +83,6 @@ class TileDownloadQueue
     std::deque<DownloadResult> completed_;
     std::vector<std::thread> workers_;
     size_t failedTileCount_ = 0;
-    bool enabled_ = true;
     bool stopping_ = false;
 };
 } // namespace DomDownToolPreview

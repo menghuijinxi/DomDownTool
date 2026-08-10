@@ -123,7 +123,7 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
             sk_sp<SkImage> image = imageCache_.findOrRequest(tilePath, canvas);
             if (!image)
             {
-                if (downloadQueue_.enabled() && imageCache_.isKnownMissing(tilePath))
+                if (imageCache_.isKnownMissing(tilePath))
                 {
                     TileDownloadJob job{
                         tilePath,
@@ -307,16 +307,6 @@ void DomDownToolPreview::MapRenderer::clearCache()
     downloadQueue_.cancelPending();
     imageCache_.clear();
     gisOverlay_.Clear();
-}
-
-void DomDownToolPreview::MapRenderer::setAutoDownloadEnabled(bool enabled)
-{
-    downloadQueue_.setEnabled(enabled);
-}
-
-bool DomDownToolPreview::MapRenderer::autoDownloadEnabled() const
-{
-    return downloadQueue_.enabled();
 }
 
 DomDownToolPreview::MapRenderer::MapSource& DomDownToolPreview::MapRenderer::currentSource()
