@@ -4,7 +4,6 @@
 cmake_minimum_required (VERSION 3.24)
 
 option(IS_AUTODOWNLOAD_VCPKG "是否自动下载vcpkg，并配置vcpkg为工具链" ON)
-option(DOMDOWNTOOL_BUILD_UI "是否构建 WebView UI 预览界面" OFF)
 option(DOMDOWNTOOL_BUILD_PREVIEW "是否构建 SkiaUI 瓦块预览工具" ON)
 
 message(设置代理：127.0.0.1:10090)
@@ -109,8 +108,7 @@ file(GLOB DOMDOWNTOOL_CORE_SOURCES CONFIGURE_DEPENDS
 list(REMOVE_ITEM DOMDOWNTOOL_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/amap_gis_main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview_main.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_main.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview_main.cpp)
 
 add_library(DomDownToolCore STATIC ${DOMDOWNTOOL_CORE_SOURCES})
 target_sources(DomDownToolCore PRIVATE
@@ -146,7 +144,7 @@ if(MSVC)
   target_compile_options(DomDownTool PRIVATE /EHsc)
 endif()
 
-if(DOMDOWNTOOL_BUILD_UI OR DOMDOWNTOOL_BUILD_PREVIEW)
+if(DOMDOWNTOOL_BUILD_PREVIEW)
   include(FetchContent)
 
   set(WEBVIEW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -159,29 +157,6 @@ if(DOMDOWNTOOL_BUILD_UI OR DOMDOWNTOOL_BUILD_PREVIEW)
     GIT_REPOSITORY https://github.com/webview/webview
     GIT_TAG 0.12.0)
   FetchContent_MakeAvailable(webview)
-endif()
-
-if(DOMDOWNTOOL_BUILD_UI)
-  if(WIN32)
-    add_executable(DomDownToolUi WIN32
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_main.cpp
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/UiBridge.cpp)
-  else()
-    add_executable(DomDownToolUi
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_main.cpp
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/UiBridge.cpp)
-  endif()
-
-  target_link_libraries(DomDownToolUi PRIVATE webview::core DomDownToolCore)
-  target_compile_definitions(DomDownToolUi PRIVATE
-    DOMDOWNTOOL_UI_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources/ui")
-  if (CMAKE_VERSION VERSION_GREATER 3.12)
-    set_property(TARGET DomDownToolUi PROPERTY CXX_STANDARD 20)
-  endif()
-  if(MSVC)
-    target_compile_definitions(DomDownToolUi PRIVATE NOMINMAX)
-    target_compile_options(DomDownToolUi PRIVATE /EHsc)
-  endif()
 endif()
 
 if(DOMDOWNTOOL_BUILD_PREVIEW)
@@ -284,9 +259,6 @@ add_domdown_test(RealDataIntegrationTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/RealDataIntegrationTest.cpp)
 add_domdown_test(RealDataFbxIntegrationTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/RealDataFbxIntegrationTest.cpp)
-add_domdown_test(UiBridgeSmokeTest
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/UiBridgeSmokeTest.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/UiBridge.cpp)
 add_domdown_test(AmapVectorGeoJsonTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorGeoJsonTest.cpp)
 add_domdown_test(MapViewportTest

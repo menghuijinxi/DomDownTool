@@ -12,7 +12,6 @@
           "CMAKE_CXX_COMPILER": "cl.exe",
           "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>",
           "BUILD_SHARED_LIBS": "OFF",
-          "DOMDOWNTOOL_BUILD_UI": "OFF",
           "DOMDOWNTOOL_BUILD_PREVIEW": "ON"
         },
         "condition": {

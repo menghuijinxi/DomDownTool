@@ -36,6 +36,22 @@ bool colorsEqual(const DownTool::AmapVectorColor& left,
         left.blue == right.blue && left.alpha == right.alpha;
 }
 
+bool defaultColorsMatch(const DomDownToolPreview::GisOverlayRenderer& renderer)
+{
+    using DomDownToolPreview::GisOverlayCategory;
+
+    return colorsEqual(renderer.GetColor(GisOverlayCategory::Road),
+                       {255, 218, 113, 255}) &&
+        colorsEqual(renderer.GetColor(GisOverlayCategory::Water),
+                    {106, 142, 202, 255}) &&
+        colorsEqual(renderer.GetColor(GisOverlayCategory::Green),
+                    {83, 133, 78, 255}) &&
+        colorsEqual(renderer.GetColor(GisOverlayCategory::Building),
+                    {255, 255, 255, 255}) &&
+        colorsEqual(renderer.GetColor(GisOverlayCategory::Boundary),
+                    {54, 55, 56, 255});
+}
+
 bool pointRendersAfterPanningAndColorChange()
 {
     const DownTool::LonLat centerWgs84{116.397389, 39.908722};
@@ -107,6 +123,10 @@ int main()
         {
             throw std::runtime_error("GIS overlay must be disabled by default");
         }
+        if (!defaultColorsMatch(renderer))
+        {
+            throw std::runtime_error("GIS overlay defaults do not match the Preview palette");
+        }
 
         if (!pointRendersAfterPanningAndColorChange())
         {
@@ -161,9 +181,7 @@ int main()
         }
 
         renderer.ResetColors();
-        const DownTool::AmapVectorColor defaultWaterColor{66, 165, 245, 190};
-        if (!colorsEqual(renderer.GetColor(DomDownToolPreview::GisOverlayCategory::Water),
-                         defaultWaterColor) ||
+        if (!defaultColorsMatch(renderer) ||
             redrawCount.load() != 4)
         {
             throw std::runtime_error("GIS overlay colors were not restored to defaults");

@@ -852,21 +852,21 @@ DownTool::AmapVectorColor DomDownToolPreview::GisOverlayRenderer::defaultColor(
     switch (category)
     {
     case GisOverlayCategory::Road:
-        return {240, 198, 65, 255};
+        return {255, 218, 113, 255};
     case GisOverlayCategory::Water:
-        return {66, 165, 245, 190};
+        return {106, 142, 202, 255};
     case GisOverlayCategory::Green:
-        return {67, 160, 71, 190};
+        return {83, 133, 78, 255};
     case GisOverlayCategory::Highway:
         return {255, 111, 56, 255};
     case GisOverlayCategory::Subway:
         return {210, 75, 220, 255};
     case GisOverlayCategory::Building:
-        return {180, 180, 180, 170};
+        return {255, 255, 255, 255};
     case GisOverlayCategory::Point:
         return {229, 57, 53, 255};
     case GisOverlayCategory::Boundary:
-        return {83, 110, 122, 255};
+        return {54, 55, 56, 255};
     case GisOverlayCategory::Other:
         return {96, 125, 139, 255};
     case GisOverlayCategory::None:

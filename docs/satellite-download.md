@@ -8,7 +8,7 @@ Web Mercator 金字塔、合并大图或 FBX。程序不依赖已经暂停维护
 在已配置 MSVC 和 Ninja 的开发终端中执行：
 
 ```powershell
-cmake --preset x64-release -DDOMDOWNTOOL_BUILD_UI=OFF
+cmake --preset x64-release
 cmake --build ..\out\DomDownTool\build\x64-release --config Release
 ```
 

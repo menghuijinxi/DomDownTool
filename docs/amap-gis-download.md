@@ -10,7 +10,7 @@ FBX 后处理，但当前命令行工具没有直接启用 FBX 的参数，需�
 在已配置 MSVC 和 Ninja 的开发终端中执行：
 
 ```powershell
-cmake --preset x64-release -DDOMDOWNTOOL_BUILD_UI=OFF
+cmake --preset x64-release
 cmake --build ..\out\DomDownTool\build\x64-release --config Release
 ```
 
