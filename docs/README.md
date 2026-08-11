@@ -6,6 +6,8 @@
   输出目录和 C++ 调用示例。
 - [卫星图和栅格地图命令行下载](satellite-download.md)：地图源、下载范围、缓存、合并大图、
   金字塔和 FBX 参数。
+- [预览器导出与导出任务](preview-export.md)：在 `DomDownToolPreview.exe` 中配置范围、GIS
+  分组、输出格式，并查看排队任务、实时进度和历史记录。
 
 ## 设计与实现
 

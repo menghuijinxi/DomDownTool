@@ -8,6 +8,7 @@
 #include "BaiduDown.h"
 #include "GaoDeDown.h"
 #include "GoogleDownBase.h"
+#include "preview/MapHoverRefreshThrottle.h"
 #include "preview/MapViewport.h"
 
 namespace
@@ -235,10 +236,32 @@ bool testViewSpanShowsMoreTilesWithoutChangingSourceZoom()
                                   "view span limits were not enforced");
 }
 
+bool testMapHoverRefreshThrottle()
+{
+    using namespace std::chrono_literals;
+    using Clock = DomDownToolPreview::MapHoverRefreshThrottle::Clock;
+
+    DomDownToolPreview::MapHoverRefreshThrottle throttle(50ms);
+    const Clock::time_point start{};
+    const bool firstRefresh = throttle.shouldRefresh(start);
+    const bool earlyRefresh = throttle.shouldRefresh(start + 49ms);
+    const bool intervalRefresh = throttle.shouldRefresh(start + 50ms);
+    const bool secondEarlyRefresh = throttle.shouldRefresh(start + 99ms);
+    const bool secondIntervalRefresh = throttle.shouldRefresh(start + 100ms);
+    throttle.reset();
+    const bool refreshAfterReset = throttle.shouldRefresh(start + 101ms);
+
+    return postprocess_test::Require(firstRefresh && !earlyRefresh && intervalRefresh &&
+                                         !secondEarlyRefresh && secondIntervalRefresh &&
+                                         refreshAfterReset,
+                                     "map hover UI refresh throttle did not enforce its interval");
+}
+
 bool runTest()
 {
     if (!testStandardTileSelection() || !testBaiduTileSelection() ||
-        !testViewSpanShowsMoreTilesWithoutChangingSourceZoom())
+        !testViewSpanShowsMoreTilesWithoutChangingSourceZoom() ||
+        !testMapHoverRefreshThrottle())
     {
         return false;
     }

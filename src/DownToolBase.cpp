@@ -1775,6 +1775,7 @@ void DownTool::DownToolBase::WaitDown()
 	if (hasProgressUpdate)
 	{
 		fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
+		ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
 		return;
 	}
 
@@ -1838,6 +1839,7 @@ void DownTool::DownToolBase::StartDown()
 	std::vector<Tile> targetTiles;
 	BuildTargetTiles(targetTiles);
 	TotalDownCount = static_cast<uint32_t>(targetTiles.size());
+	ReportProgress("下载瓦片", 0, TotalDownCount);
 
 	fmt::print("下载范围：\n左上角经纬度：({}, {})\n右下角经纬度：({}, {})\n左上角瓦片坐标：({}, {})\n右下角瓦片坐标：({}, {})\n缓存路径：{}\n总下载切片数量预估：{}\n",
 		MinLonLat.lon, MaxLonLat.lat, MaxLonLat.lon, MinLonLat.lat,
@@ -1879,6 +1881,15 @@ void DownTool::DownToolBase::StartDown()
 	}*/
 
 	bDowning = false;
+}
+
+void DownTool::DownToolBase::ReportProgress(
+	std::string_view stage, uint64_t completed, uint64_t total, uint64_t failed) const
+{
+	if (ProgressCallback)
+	{
+		ProgressCallback(DownToolProgress{std::string(stage), completed, total, failed});
+	}
 }
 
 void DownTool::DownToolBase::BuildTargetTiles(std::vector<Tile>& targetTiles)
@@ -2201,6 +2212,7 @@ std::vector<DownTool::Tile> DownTool::DownToolBase::ScanCacheAndCollectPendingTi
 	if (updateProgress)
 	{
 		fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
+		ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
 	}
 
 	return pendingTiles;
@@ -2221,6 +2233,7 @@ void DownTool::DownToolBase::DownloadTile(int32_t x, int32_t y)
 	{
 		DowningCount++;
 		fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
+		ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
 		return;
 	}
 
@@ -2242,12 +2255,14 @@ void DownTool::DownToolBase::DownloadTile(int32_t x, int32_t y)
 
 			DowningCount++;
 			fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
+			ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
 			return;
 		}
 		else if (IsValidImageFile(nativePath))
 		{
 			DowningCount++;
 			fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
+			ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
 			return;
 		}
 	}
@@ -2256,6 +2271,7 @@ void DownTool::DownToolBase::DownloadTile(int32_t x, int32_t y)
 	{
 		DowningCount++;
 		fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
+		ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
 		return;
 	}
 
@@ -2263,6 +2279,7 @@ void DownTool::DownToolBase::DownloadTile(int32_t x, int32_t y)
 	{
 		DowningCount++;
 		fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
+		ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
 		return;
 	}
 
@@ -2270,6 +2287,7 @@ void DownTool::DownToolBase::DownloadTile(int32_t x, int32_t y)
 	{
 		DowningCount++;
 		fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
+		ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
 	}
 }
 
@@ -2857,6 +2875,11 @@ bool DownTool::DownToolBase::GeneratePostProcessMaxZoomTiles(
 				fmt::print("\r最高层级后处理: {}/{}",
 					currentCount, targetTiles.size());
 			}
+			if (currentCount % 64 == 0 || currentCount == targetTiles.size())
+			{
+				ReportProgress("转换 XYZ 瓦片", currentCount, targetTiles.size(),
+					failedCount.load(std::memory_order_relaxed));
+			}
 		});
 
 	fmt::print("\r最高层级后处理: {}/{}，失败 {}\n",
@@ -2952,6 +2975,11 @@ bool DownTool::DownToolBase::GeneratePostProcessTilesAtZoom(
 			{
 				fmt::print("\r{}: {}/{}",
 					phaseName, currentCount, targetTiles.size());
+			}
+			if (currentCount % 64 == 0 || currentCount == targetTiles.size())
+			{
+				ReportProgress(phaseName, currentCount, targetTiles.size(),
+					failedCount.load(std::memory_order_relaxed));
 			}
 		});
 
@@ -3415,10 +3443,16 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 				fmt::print("\r大图合并: {}/{}",
 					currentCount, sampleTiles.size());
 			}
+			if (currentCount % 64 == 0 || currentCount == sampleTiles.size())
+			{
+				ReportProgress("合并大图", currentCount, sampleTiles.size(),
+					failedCount.load(std::memory_order_relaxed));
+			}
 		});
 
 	fmt::print("\r大图合并: {}/{}，失败 {}\n",
 		sampleTiles.size(), sampleTiles.size(), failedCount.load());
+	ReportProgress("合并大图", sampleTiles.size(), sampleTiles.size(), failedCount.load());
 	fmt::print("大图像素合并耗时：{:.2f}s\n", SecondsSince(phaseStartTime));
 	if (failedCount.load() != 0)
 	{
@@ -3693,6 +3727,8 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 					currentCount,
 					textureInfos.size());
 			}
+			ReportProgress("生成 FBX 贴图", currentCount, textureInfos.size(),
+				failedCount.load(std::memory_order_relaxed));
 		});
 	fmt::print("\rFBX 贴图生成: {}/{}，失败 {}\n",
 		textureInfos.size(),

@@ -573,7 +573,9 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::Download(
             workers.emplace_back(
                 [&]()
                 {
-                    while (!cancellationRequested.load(std::memory_order_relaxed))
+                    while (!cancellationRequested.load(std::memory_order_relaxed) &&
+                           (!options.cancellationRequested ||
+                            !options.cancellationRequested()))
                     {
                         const size_t taskIndex =
                             nextTaskIndex.fetch_add(1, std::memory_order_relaxed);
@@ -608,6 +610,12 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::Download(
     for (std::thread& worker : workers)
     {
         worker.join();
+    }
+
+    if (options.cancellationRequested && options.cancellationRequested())
+    {
+        result.error = "高德 GIS 矢量任务已取消。";
+        return result;
     }
 
     if (cancellationRequested.load(std::memory_order_relaxed))

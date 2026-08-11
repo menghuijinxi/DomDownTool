@@ -1,6 +1,7 @@
 #include "preview/MapRenderer.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numbers>
 #include <utility>
@@ -24,7 +25,30 @@
 namespace
 {
 constexpr uint32_t kTileSize = 256;
+constexpr double kEarthRadiusMeters = 6378137.;
 } // namespace
+
+std::optional<DomDownToolPreview::ExportGeoBounds>
+DomDownToolPreview::calculateExportGeoBounds(
+    const DownTool::LonLat& centerWgs84, double radiusMeters)
+{
+    if (!std::isfinite(centerWgs84.lon) || !std::isfinite(centerWgs84.lat) ||
+        !std::isfinite(radiusMeters) || radiusMeters <= 0.)
+    {
+        return std::nullopt;
+    }
+
+    const double latitudeRadians = centerWgs84.lat * std::numbers::pi / 180.;
+    const double latitudeOffset = radiusMeters / kEarthRadiusMeters * 180. /
+        std::numbers::pi;
+    const double longitudeScale = std::max(0.000001, std::abs(std::cos(latitudeRadians)));
+    const double longitudeOffset = latitudeOffset / longitudeScale;
+    return ExportGeoBounds{
+        std::max(-180., centerWgs84.lon - longitudeOffset),
+        std::min(180., centerWgs84.lon + longitudeOffset),
+        std::max(-85.05112878, centerWgs84.lat - latitudeOffset),
+        std::min(85.05112878, centerWgs84.lat + latitudeOffset)};
+}
 
 DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw)
     : imageCache_(requestRedraw),
@@ -170,6 +194,7 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
     gisOverlay_.UpdateContext(viewport_.center(), radiusMeters, viewport_.sourceZoom());
     gisOverlay_.Draw(canvas, viewport_, *source.projection, source.yDirection, kTileSize);
 
+    drawExportBounds(canvas);
     drawCenterMarker(canvas, width, height);
     drawLocationMarker(canvas, width, height);
     renderStats_.cache = imageCache_.stats();
@@ -279,6 +304,11 @@ DownTool::AmapVectorColor DomDownToolPreview::MapRenderer::GetGisOverlayColor(
 void DomDownToolPreview::MapRenderer::ResetGisOverlayColors()
 {
     gisOverlay_.ResetColors();
+}
+
+void DomDownToolPreview::MapRenderer::SetExportRadiusMeters(double radiusMeters)
+{
+    exportRadiusMeters_ = std::isfinite(radiusMeters) ? std::max(0., radiusMeters) : 0.;
 }
 
 std::vector<DomDownToolPreview::MapSourceSummary> DomDownToolPreview::MapRenderer::sources() const
@@ -409,4 +439,54 @@ void DomDownToolPreview::MapRenderer::drawLocationMarker(SkCanvas& canvas, int w
     outlinePaint.setStrokeWidth(2.F);
     canvas.drawCircle(x, centerY, 9.F, outlinePaint);
     canvas.drawCircle(x, centerY, 3.F, outlinePaint);
+}
+
+void DomDownToolPreview::MapRenderer::drawExportBounds(SkCanvas& canvas) const
+{
+    const std::optional<ExportGeoBounds> bounds =
+        calculateExportGeoBounds(viewport_.center(), exportRadiusMeters_);
+    if (!bounds.has_value())
+    {
+        return;
+    }
+
+    const MapSource& source = currentSource();
+    const DownTool::LonLat corners[] = {
+        {bounds->minimumLongitude, bounds->maximumLatitude},
+        {bounds->maximumLongitude, bounds->maximumLatitude},
+        {bounds->maximumLongitude, bounds->minimumLatitude},
+        {bounds->minimumLongitude, bounds->minimumLatitude}};
+    std::array<ViewportPoint, 4> points{};
+    for (size_t index = 0; index < points.size(); ++index)
+    {
+        const std::optional<ViewportPoint> point = viewport_.screenPointForLonLat(
+            corners[index], *source.projection, source.yDirection, kTileSize);
+        if (!point.has_value())
+        {
+            return;
+        }
+        points[index] = *point;
+    }
+
+    SkPathBuilder builder;
+    builder.moveTo(static_cast<float>(points[0].x), static_cast<float>(points[0].y));
+    for (size_t index = 1; index < points.size(); ++index)
+    {
+        builder.lineTo(static_cast<float>(points[index].x), static_cast<float>(points[index].y));
+    }
+    builder.close();
+    const SkPath path = builder.detach();
+
+    SkPaint fillPaint;
+    fillPaint.setAntiAlias(true);
+    fillPaint.setColor(SkColorSetARGB(28, 255, 204, 74));
+    fillPaint.setStyle(SkPaint::kFill_Style);
+    canvas.drawPath(path, fillPaint);
+
+    SkPaint strokePaint;
+    strokePaint.setAntiAlias(true);
+    strokePaint.setColor(SkColorSetARGB(235, 255, 204, 74));
+    strokePaint.setStyle(SkPaint::kStroke_Style);
+    strokePaint.setStrokeWidth(2.F);
+    canvas.drawPath(path, strokePaint);
 }

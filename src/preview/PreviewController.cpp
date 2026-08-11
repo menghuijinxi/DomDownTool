@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <exception>
 #include <iterator>
 #include <string>
 #include <string_view>
@@ -12,6 +13,7 @@
 
 #include "fmt/format.h"
 #include "include/core/SkCanvas.h"
+#include "include/core/SkColor.h"
 #include "include/core/SkRect.h"
 #include "skui_runtime.h"
 
@@ -23,6 +25,9 @@ constexpr UINT kPreviewRedrawMessage = WM_APP + 0x642;
 constexpr UINT kPreviewUiRefreshMessage = WM_APP + 0x643;
 constexpr UINT kPreviewSearchRefreshMessage = WM_APP + 0x644;
 constexpr UINT kPreviewMapUiRefreshMessage = WM_APP + 0x646;
+constexpr UINT kPreviewExportTaskRefreshMessage = WM_APP + 0x647;
+constexpr UINT kPreviewPageChangeMessage = WM_APP + 0x648;
+constexpr UINT kPreviewImmediateMapRedrawMessage = WM_APP + 0x649;
 constexpr UINT_PTR kPreviewEyedropperTimerId = 0x645;
 constexpr UINT kPreviewEyedropperTimerIntervalMilliseconds = 16;
 constexpr double kSearchControlLeft = 192.;
@@ -165,6 +170,65 @@ std::optional<size_t> searchResultIndex(std::string_view id)
     return index;
 }
 
+std::optional<uint64_t> exportGisGroupId(std::string_view id)
+{
+    constexpr std::string_view kPrefix = "export-gis-group-";
+    if (!id.starts_with(kPrefix))
+    {
+        return std::nullopt;
+    }
+
+    uint64_t groupId = 0;
+    const std::string_view value = id.substr(kPrefix.size());
+    const auto result = std::from_chars(value.data(), value.data() + value.size(), groupId);
+    if (result.ec != std::errc{} || result.ptr != value.data() + value.size())
+    {
+        return std::nullopt;
+    }
+    return groupId;
+}
+
+std::optional<std::string> taskIdFromCancelButton(std::string_view id)
+{
+    constexpr std::string_view kPrefix = "task-cancel-";
+    if (!id.starts_with(kPrefix) || id.size() == kPrefix.size())
+    {
+        return std::nullopt;
+    }
+    return std::string(id.substr(kPrefix.size()));
+}
+
+std::optional<double> parseFiniteDouble(std::string_view value)
+{
+    try
+    {
+        size_t parsedLength = 0;
+        const double result = std::stod(std::string(value), &parsedLength);
+        if (parsedLength != value.size() || !std::isfinite(result))
+        {
+            return std::nullopt;
+        }
+        return result;
+    }
+    catch (const std::exception&)
+    {
+        return std::nullopt;
+    }
+}
+
+std::optional<uint32_t> parseUint32(std::string_view value)
+{
+    uint32_t result = 0;
+    const auto parseResult =
+        std::from_chars(value.data(), value.data() + value.size(), result);
+    if (parseResult.ec != std::errc{} ||
+        parseResult.ptr != value.data() + value.size())
+    {
+        return std::nullopt;
+    }
+    return result;
+}
+
 std::optional<DomDownToolPreview::GisOverlayCategory> gisCategoryFromValue(
     std::string_view value)
 {
@@ -220,6 +284,103 @@ std::string gisCategoryValue(DomDownToolPreview::GisOverlayCategory category)
     }
     return "none";
 }
+
+DownTool::AmapVectorRenderCategory exportCategory(
+    DomDownToolPreview::GisOverlayCategory category)
+{
+    switch (category)
+    {
+    case DomDownToolPreview::GisOverlayCategory::Point:
+        return DownTool::AmapVectorRenderCategory::Point;
+    case DomDownToolPreview::GisOverlayCategory::Road:
+        return DownTool::AmapVectorRenderCategory::Road;
+    case DomDownToolPreview::GisOverlayCategory::Green:
+        return DownTool::AmapVectorRenderCategory::Green;
+    case DomDownToolPreview::GisOverlayCategory::Highway:
+        return DownTool::AmapVectorRenderCategory::Highway;
+    case DomDownToolPreview::GisOverlayCategory::Subway:
+        return DownTool::AmapVectorRenderCategory::Subway;
+    case DomDownToolPreview::GisOverlayCategory::Building:
+        return DownTool::AmapVectorRenderCategory::Building;
+    case DomDownToolPreview::GisOverlayCategory::Water:
+        return DownTool::AmapVectorRenderCategory::Water;
+    case DomDownToolPreview::GisOverlayCategory::Boundary:
+        return DownTool::AmapVectorRenderCategory::Boundary;
+    case DomDownToolPreview::GisOverlayCategory::None:
+    case DomDownToolPreview::GisOverlayCategory::All:
+    case DomDownToolPreview::GisOverlayCategory::Other:
+        return DownTool::AmapVectorRenderCategory::Other;
+    }
+    return DownTool::AmapVectorRenderCategory::Other;
+}
+
+DomDownToolPreview::GisOverlayCategory previewCategory(
+    DownTool::AmapVectorRenderCategory category)
+{
+    switch (category)
+    {
+    case DownTool::AmapVectorRenderCategory::Point:
+        return DomDownToolPreview::GisOverlayCategory::Point;
+    case DownTool::AmapVectorRenderCategory::Road:
+        return DomDownToolPreview::GisOverlayCategory::Road;
+    case DownTool::AmapVectorRenderCategory::Green:
+        return DomDownToolPreview::GisOverlayCategory::Green;
+    case DownTool::AmapVectorRenderCategory::Highway:
+        return DomDownToolPreview::GisOverlayCategory::Highway;
+    case DownTool::AmapVectorRenderCategory::Subway:
+        return DomDownToolPreview::GisOverlayCategory::Subway;
+    case DownTool::AmapVectorRenderCategory::Building:
+        return DomDownToolPreview::GisOverlayCategory::Building;
+    case DownTool::AmapVectorRenderCategory::Water:
+        return DomDownToolPreview::GisOverlayCategory::Water;
+    case DownTool::AmapVectorRenderCategory::Boundary:
+        return DomDownToolPreview::GisOverlayCategory::Boundary;
+    case DownTool::AmapVectorRenderCategory::All:
+        return DomDownToolPreview::GisOverlayCategory::All;
+    case DownTool::AmapVectorRenderCategory::Other:
+        return DomDownToolPreview::GisOverlayCategory::Other;
+    }
+    return DomDownToolPreview::GisOverlayCategory::Other;
+}
+
+std::string exportCategoryLabel(DownTool::AmapVectorRenderCategory category)
+{
+    switch (category)
+    {
+    case DownTool::AmapVectorRenderCategory::Point:
+        return "点";
+    case DownTool::AmapVectorRenderCategory::Road:
+        return "道路";
+    case DownTool::AmapVectorRenderCategory::Green:
+        return "绿地";
+    case DownTool::AmapVectorRenderCategory::Highway:
+        return "高速";
+    case DownTool::AmapVectorRenderCategory::Subway:
+        return "地铁";
+    case DownTool::AmapVectorRenderCategory::Building:
+        return "建筑";
+    case DownTool::AmapVectorRenderCategory::Water:
+        return "水";
+    case DownTool::AmapVectorRenderCategory::Boundary:
+        return "边界";
+    case DownTool::AmapVectorRenderCategory::Other:
+        return "其他";
+    case DownTool::AmapVectorRenderCategory::All:
+        return "全部";
+    }
+    return "GIS";
+}
+
+constexpr std::array kExportCategories = {
+    DownTool::AmapVectorRenderCategory::Road,
+    DownTool::AmapVectorRenderCategory::Water,
+    DownTool::AmapVectorRenderCategory::Green,
+    DownTool::AmapVectorRenderCategory::Highway,
+    DownTool::AmapVectorRenderCategory::Subway,
+    DownTool::AmapVectorRenderCategory::Building,
+    DownTool::AmapVectorRenderCategory::Point,
+    DownTool::AmapVectorRenderCategory::Boundary,
+    DownTool::AmapVectorRenderCategory::Other};
 
 DomDownToolPreview::GisOverlayCategories allGisCategories()
 {
@@ -518,7 +679,8 @@ DomDownToolPreview::PreviewController::PreviewController()
     : renderer_([this] { requestRedraw(); }),
       placeSearch_([this] { scheduleSearchRefresh(); },
                    [this](const std::string& url) { return webViewSearch_.get(url); },
-                   [this] { webViewSearch_.cancelCurrent(); })
+                   [this] { webViewSearch_.cancelCurrent(); }),
+      exportTaskManager_([this] { scheduleExportTaskRefresh(); })
 {
 }
 
@@ -530,6 +692,139 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
     runtime.setElementEventCallback(
         [this, &runtime](const skui::ElementEvent& event)
         {
+            if (event.id == "export-radius" &&
+                event.type == skui::ElementEventType::Input)
+            {
+                previewRadiusValue_ = event.value;
+                const std::optional<double> radius = parseFiniteDouble(event.value);
+                if (radius.has_value() && *radius >= 0.)
+                {
+                    renderer_.SetExportRadiusMeters(*radius);
+                    requestRedraw();
+                }
+                return;
+            }
+
+            if (event.type == skui::ElementEventType::Input)
+            {
+                if (event.id == "export-lon")
+                {
+                    exportLongitudeValue_ = event.value;
+                    return;
+                }
+                if (event.id == "export-lat")
+                {
+                    exportLatitudeValue_ = event.value;
+                    return;
+                }
+                if (event.id == "export-config-radius")
+                {
+                    exportRadiusValue_ = event.value;
+                    return;
+                }
+                if (event.id == "export-zoom")
+                {
+                    exportZoomValue_ = event.value;
+                    return;
+                }
+                if (event.id == "export-satellite-output")
+                {
+                    exportSatelliteOutputValue_ = event.value;
+                    return;
+                }
+                if (event.id == "export-gis-output")
+                {
+                    exportGisOutputValue_ = event.value;
+                    return;
+                }
+                if (event.id == "export-merged-resolution")
+                {
+                    exportMergedResolutionValue_ = event.value;
+                    return;
+                }
+            }
+
+            if (event.type == skui::ElementEventType::Change)
+            {
+                if (event.id == "export-provider-select")
+                {
+                    exportMapSourceId_ = event.value;
+                    const std::vector<MapSourceSummary> sources = renderer_.sources();
+                    const auto source = std::find_if(
+                        sources.begin(), sources.end(),
+                        [this](const MapSourceSummary& item)
+                        { return item.id == exportMapSourceId_; });
+                    if (source != sources.end())
+                    {
+                        exportSatelliteOutputValue_ = source->cacheRoot.empty() ?
+                            std::string{} : pathToUtf8(
+                                source->cacheRoot /
+                                std::filesystem::u8path("Google_墨卡托"));
+                        runtime.setValueById(
+                            "export-satellite-output", exportSatelliteOutputValue_);
+                    }
+                    return;
+                }
+                if (event.id == "export-merged-format")
+                {
+                    exportMergedFormat_ = event.value;
+                    return;
+                }
+                if (event.id == "export-fbx-source")
+                {
+                    exportFbxSource_ = event.value == "gis" ?
+                        ExportFbxSource::Gis : ExportFbxSource::Satellite;
+                    return;
+                }
+                if (event.id == "export-fbx-size")
+                {
+                    exportFbxSizeValue_ = event.value;
+                    return;
+                }
+                if (event.id == "export-satellite-tiles")
+                {
+                    exportSatelliteTiles_ = event.checked;
+                    return;
+                }
+                if (event.id == "export-satellite-merged")
+                {
+                    exportSatelliteMergedImage_ = event.checked;
+                    return;
+                }
+                if (event.id == "export-gis-tiles")
+                {
+                    exportGisTiles_ = event.checked;
+                    return;
+                }
+                if (event.id == "export-gis-merged")
+                {
+                    exportGisMergedImage_ = event.checked;
+                    return;
+                }
+                if (event.id == "export-fbx")
+                {
+                    exportFbx_ = event.checked;
+                    return;
+                }
+                if (event.id == "export-building-height-colors")
+                {
+                    exportBuildingHeightColors_ = event.checked;
+                    return;
+                }
+            }
+
+            if (event.type == skui::ElementEventType::MouseDown &&
+                event.button == skui::MouseButton::Right)
+            {
+                if (const std::optional<uint64_t> groupId = exportGisGroupId(event.id))
+                {
+                    HandleExportGisGroupContextAction(*groupId);
+                    UpdateExportUi(runtime);
+                    requestRedraw();
+                    return;
+                }
+            }
+
             if (event.type == skui::ElementEventType::MouseDown && gisOverlayPopupOpen_ &&
                 event.id != "gis-overlay-toggle" &&
                 !isPointInside(event.x, event.y, kGisOverlayPanelLeft, kGisOverlayPanelTop,
@@ -734,6 +1029,50 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 return;
             }
 
+            if (event.id == "open-export-page" || event.id == "tasks-new-export")
+            {
+                schedulePageChange(Page::Export, runtime);
+                return;
+            }
+            if (event.id == "open-task-page" || event.id == "export-open-tasks")
+            {
+                schedulePageChange(Page::Tasks, runtime);
+                return;
+            }
+            if (event.id == "export-back-preview" || event.id == "export-cancel" ||
+                event.id == "tasks-back-preview")
+            {
+                schedulePageChange(Page::Preview, runtime);
+                return;
+            }
+            if (event.id == "export-submit")
+            {
+                SubmitExport(runtime);
+                return;
+            }
+            if (event.id == "tasks-clear-finished")
+            {
+                exportTaskManager_.ClearFinished();
+                UpdateTaskUi(runtime);
+                requestRedraw();
+                return;
+            }
+            if (const std::optional<std::string> taskId =
+                    taskIdFromCancelButton(event.id))
+            {
+                exportTaskManager_.Cancel(*taskId);
+                UpdateTaskUi(runtime);
+                requestRedraw();
+                return;
+            }
+            if (const std::optional<uint64_t> groupId = exportGisGroupId(event.id))
+            {
+                ToggleExportGisGroup(*groupId);
+                UpdateExportUi(runtime);
+                requestRedraw();
+                return;
+            }
+
             if (const std::optional<GisOverlayCategory> target =
                     gisColorTargetCategoryFromId(event.id))
             {
@@ -881,7 +1220,14 @@ void DomDownToolPreview::PreviewController::resizeRuntime(skui::Runtime& runtime
 void DomDownToolPreview::PreviewController::draw(SkCanvas& canvas, int width, int height,
                                                  float dpiScale)
 {
-    renderer_.draw(canvas, width, height, dpiScale);
+    if (page_ == Page::Preview)
+    {
+        renderer_.draw(canvas, width, height, dpiScale);
+    }
+    else
+    {
+        canvas.clear(SkColorSetRGB(25, 29, 28));
+    }
 
     if (runtime_)
     {
@@ -910,7 +1256,17 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
     if (message == WM_DESTROY)
     {
         pendingMapUiPoint_.reset();
+        immediateMapRedrawPosted_ = false;
         mapUiRefreshPosted_ = false;
+        mapDragRedrawThrottle_.reset();
+        mapHoverRefreshThrottle_.reset();
+    }
+    if (message == kPreviewImmediateMapRedrawMessage)
+    {
+        immediateMapRedrawPosted_ = false;
+        RedrawWindow(window, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_NOCHILDREN | RDW_UPDATENOW);
+        return false;
     }
     if (message == kPreviewRedrawMessage)
     {
@@ -925,6 +1281,29 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
     {
         writeSearchTrace("Controller", "search_refresh_message_received");
         processPlaceSearchResponses(runtime);
+        return true;
+    }
+    if (message == kPreviewExportTaskRefreshMessage)
+    {
+        exportTaskRefreshPosted_.store(false, std::memory_order_relaxed);
+        UpdateTaskUi(runtime);
+        requestRedraw();
+        return true;
+    }
+    if (message == kPreviewPageChangeMessage)
+    {
+        switch (static_cast<Page>(wParam))
+        {
+        case Page::Preview:
+            OpenPreviewPage(runtime);
+            break;
+        case Page::Export:
+            OpenExportPage(runtime);
+            break;
+        case Page::Tasks:
+            OpenTaskPage(runtime);
+            break;
+        }
         return true;
     }
     if (message == kPreviewMapUiRefreshMessage)
@@ -956,6 +1335,12 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
             }
         }
         return true;
+    }
+
+    if (page_ != Page::Preview)
+    {
+        dragging_ = false;
+        return false;
     }
 
     if (message == WM_KEYDOWN && wParam == VK_ESCAPE &&
@@ -1080,6 +1465,7 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         dragging_ = false;
         gisColorFieldDragging_ = false;
         gisColorHueDragging_ = false;
+        mapDragRedrawThrottle_.reset();
         if (message == WM_CANCELMODE && gisColorEyedropperActive_)
         {
             setGisColorEyedropperActive(false);
@@ -1104,6 +1490,9 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         {
             ReleaseCapture();
         }
+        mapDragRedrawThrottle_.reset();
+        scheduleImmediateMapRedraw(window);
+        mapHoverRefreshThrottle_.reset();
         scheduleMapUiRefresh(window, clientPoint(lParam));
         return true;
     }
@@ -1150,6 +1539,8 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
             return false;
         }
         dragging_ = true;
+        mapDragRedrawThrottle_.reset();
+        mapHoverRefreshThrottle_.reset();
         lastDragPoint_ = point;
         SetCapture(window);
         return true;
@@ -1163,12 +1554,21 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
             const double deltaX = static_cast<double>(point.x - lastDragPoint_.x);
             const double deltaY = static_cast<double>(point.y - lastDragPoint_.y);
             lastDragPoint_ = point;
-            renderer_.panBy(deltaX, deltaY);
-            scheduleMapUiRefresh(window, point);
+            if (renderer_.panBy(deltaX, deltaY))
+            {
+                scheduleImmediateMapRedraw(window);
+            }
+            if (mapHoverRefreshThrottle_.shouldRefresh(
+                    MapHoverRefreshThrottle::Clock::now()))
+            {
+                scheduleMapUiRefresh(window, point);
+            }
             return true;
         }
 
-        if (isMapPoint(window, point.x, point.y))
+        if (isMapPoint(window, point.x, point.y) &&
+            mapHoverRefreshThrottle_.shouldRefresh(
+                MapHoverRefreshThrottle::Clock::now()))
         {
             scheduleMapUiRefresh(window, point);
         }
@@ -1179,6 +1579,10 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
 
 bool DomDownToolPreview::PreviewController::isMapPoint(HWND window, int x, int y) const
 {
+    if (page_ != Page::Preview)
+    {
+        return false;
+    }
     RECT client{};
     GetClientRect(window, &client);
     return x >= 0 && x < client.right && static_cast<double>(y) >= renderer_.toolbarHeight() &&
@@ -1533,6 +1937,20 @@ bool DomDownToolPreview::PreviewController::sampleGisColorAtScreenCursor(skui::R
 
 void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
 {
+    runtime.setVisibleById("preview-page", page_ == Page::Preview);
+    runtime.setVisibleById("export-page", page_ == Page::Export);
+    runtime.setVisibleById("task-page", page_ == Page::Tasks);
+    if (page_ == Page::Export)
+    {
+        UpdateExportUi(runtime);
+        return;
+    }
+    if (page_ == Page::Tasks)
+    {
+        UpdateTaskUi(runtime);
+        return;
+    }
+
     const MapSourceSummary source = renderer_.activeSource();
     const DownTool::LonLat center = renderer_.center();
     const MapRenderStats stats = renderer_.stats();
@@ -1540,6 +1958,7 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
         static_cast<double>(stats.cache.cpuBytes + stats.cache.gpuBytes) / (1024. * 1024.);
 
     runtime.setValueById("provider-select", source.id);
+    runtime.setValueById("export-radius", previewRadiusValue_);
     runtime.setTextsById(
         {{"active-provider", source.name},
          {"coordinate-system", source.coordinateSystem},
@@ -1631,6 +2050,405 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
     runtime.setVisibleById("gis-color-panel", gisColorPopupOpen_);
 }
 
+void DomDownToolPreview::PreviewController::schedulePageChange(Page page,
+                                                                skui::Runtime& runtime)
+{
+    const HWND window = window_.load(std::memory_order_relaxed);
+    if (window && PostMessageW(window, kPreviewPageChangeMessage,
+                               static_cast<WPARAM>(page), 0))
+    {
+        return;
+    }
+
+    switch (page)
+    {
+    case Page::Preview:
+        OpenPreviewPage(runtime);
+        break;
+    case Page::Export:
+        OpenExportPage(runtime);
+        break;
+    case Page::Tasks:
+        OpenTaskPage(runtime);
+        break;
+    }
+}
+
+void DomDownToolPreview::PreviewController::OpenExportPage(skui::Runtime& runtime)
+{
+    InitializeExportDraft(runtime);
+    page_ = Page::Export;
+    updateUi(runtime);
+    requestRedraw();
+}
+
+void DomDownToolPreview::PreviewController::OpenTaskPage(skui::Runtime& runtime)
+{
+    page_ = Page::Tasks;
+    UpdateTaskUi(runtime);
+    updateUi(runtime);
+    requestRedraw();
+}
+
+void DomDownToolPreview::PreviewController::OpenPreviewPage(skui::Runtime& runtime)
+{
+    page_ = Page::Preview;
+    updateUi(runtime);
+    requestRedraw();
+}
+
+void DomDownToolPreview::PreviewController::InitializeExportDraft(skui::Runtime& runtime)
+{
+    const MapSourceSummary source = renderer_.activeSource();
+    const DownTool::LonLat center = renderer_.center();
+    exportLongitudeValue_ = fmt::format("{:.6f}", center.lon);
+    exportLatitudeValue_ = fmt::format("{:.6f}", center.lat);
+    exportRadiusValue_ = fmt::format("{:.0f}", renderer_.GetExportRadiusMeters());
+    exportZoomValue_ = fmt::format("{:.0f}", std::round(renderer_.zoom()));
+    exportMapSourceId_ = source.id;
+    exportSatelliteOutputValue_ = source.cacheRoot.empty() ?
+        std::string{} : pathToUtf8(
+            source.cacheRoot / std::filesystem::u8path("Google_墨卡托"));
+    exportValidationMessage_.clear();
+    exportSatelliteTiles_ = false;
+    exportSatelliteMergedImage_ = source.id != "none";
+    exportGisTiles_ = false;
+    exportFbx_ = false;
+    exportFbxSource_ = ExportFbxSource::Satellite;
+    exportBuildingHeightColors_ = false;
+
+    exportGisGroups_.clear();
+    const GisOverlayCategories categories = renderer_.GetGisOverlayCategories();
+    exportGisMergedImage_ = !categories.empty();
+    for (const DownTool::AmapVectorRenderCategory category : kExportCategories)
+    {
+        const GisOverlayCategory previewCategoryValue = previewCategory(category);
+        exportGisGroups_.push_back(
+            ExportGisUiGroup{
+                nextExportGisGroupId_++, {category},
+                categories.contains(previewCategoryValue)});
+    }
+
+    runtime.setValueById("export-lon", exportLongitudeValue_);
+    runtime.setValueById("export-lat", exportLatitudeValue_);
+    runtime.setValueById("export-config-radius", exportRadiusValue_);
+    runtime.setValueById("export-zoom", exportZoomValue_);
+    runtime.setValueById("export-provider-select", exportMapSourceId_);
+    runtime.setValueById("export-satellite-output", exportSatelliteOutputValue_);
+    runtime.setValueById("export-gis-output", exportGisOutputValue_);
+    runtime.setValueById("export-merged-format", exportMergedFormat_);
+    runtime.setValueById("export-merged-resolution", exportMergedResolutionValue_);
+    runtime.setValueById("export-fbx-size", exportFbxSizeValue_);
+    runtime.setValueById("export-fbx-source", "satellite");
+    setCheckboxChecked(runtime, "export-satellite-tiles", exportSatelliteTiles_);
+    setCheckboxChecked(runtime, "export-satellite-merged", exportSatelliteMergedImage_);
+    setCheckboxChecked(runtime, "export-gis-tiles", exportGisTiles_);
+    setCheckboxChecked(runtime, "export-gis-merged", exportGisMergedImage_);
+    setCheckboxChecked(runtime, "export-fbx", exportFbx_);
+    setCheckboxChecked(runtime, "export-building-height-colors", exportBuildingHeightColors_);
+    UpdateExportUi(runtime);
+}
+
+void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtime)
+{
+    const std::optional<double> radius = parseFiniteDouble(exportRadiusValue_);
+    runtime.setTextById(
+        "export-config-summary",
+        fmt::format("中心 {:.5f}, {:.5f} · z{} · 半径 {} 米",
+                    parseFiniteDouble(exportLongitudeValue_).value_or(0.),
+                    parseFiniteDouble(exportLatitudeValue_).value_or(0.),
+                    exportZoomValue_, radius.value_or(0.)));
+    runtime.setTextById("export-validation-message", exportValidationMessage_);
+
+    std::string groupsHtml;
+    for (const ExportGisUiGroup& group : exportGisGroups_)
+    {
+        std::string labels;
+        for (const DownTool::AmapVectorRenderCategory category : group.categories)
+        {
+            if (!labels.empty())
+            {
+                labels += "、";
+            }
+            labels += exportCategoryLabel(category);
+        }
+        const bool merged = group.categories.size() > 1;
+        groupsHtml += fmt::format(
+            "<button id=\"export-gis-group-{}\" class=\"gis-group-item{}\" "
+            "type=\"button\" data-action=\"toggle-export-gis-group\" "
+            "aria-pressed=\"{}\" "
+            "title=\"{}\">{}{}<span class=\"gis-group-count\">{}</span></button>",
+            group.id, merged ? " merged" : "", group.selected ? "true" : "false",
+            merged ? "右键拆分此组合" : "选择后右键可合并", escapeHtml(labels),
+            merged ? " · 合并" : "", group.categories.size());
+    }
+    if (groupsHtml.empty())
+    {
+        groupsHtml = "<div class=\"task-empty\">预览页没有选中的 GIS 分类</div>";
+    }
+    if (groupsHtml != lastExportGroupsHtml_)
+    {
+        runtime.replaceHtmlById("export-gis-groups", groupsHtml);
+        lastExportGroupsHtml_ = groupsHtml;
+    }
+}
+
+void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
+{
+    const std::vector<ExportTaskRecord> records = exportTaskManager_.GetRecords();
+    size_t queuedCount = 0;
+    size_t runningCount = 0;
+    size_t succeededCount = 0;
+    size_t failedCount = 0;
+    std::string listHtml;
+    for (const ExportTaskRecord& record : records)
+    {
+        switch (record.state)
+        {
+        case ExportTaskState::Queued:
+            ++queuedCount;
+            break;
+        case ExportTaskState::Running:
+            ++runningCount;
+            break;
+        case ExportTaskState::Succeeded:
+            ++succeededCount;
+            break;
+        case ExportTaskState::Failed:
+        case ExportTaskState::Canceled:
+            ++failedCount;
+            break;
+        }
+        const std::string stateValue =
+            record.state == ExportTaskState::Queued ? "queued" :
+            record.state == ExportTaskState::Running ? "running" :
+            record.state == ExportTaskState::Succeeded ? "succeeded" :
+            record.state == ExportTaskState::Canceled ? "canceled" : "failed";
+        const std::string progressText = record.total == 0 ?
+            fmt::format("{:.0f}%", record.progress * 100.) :
+            fmt::format("{:.0f}% · {}/{}", record.progress * 100.,
+                        record.completed, record.total);
+        const std::string action = record.state == ExportTaskState::Queued ||
+                record.state == ExportTaskState::Running ?
+            fmt::format("<button id=\"task-cancel-{}\" class=\"danger-command\" "
+                        "type=\"button\" data-action=\"cancel-export-task\">"
+                        "取消</button>", escapeHtml(record.id)) : "";
+        listHtml += fmt::format(
+            "<article class=\"task-row\"><div><div class=\"task-title\">{}</div>"
+            "<div class=\"task-detail\">{} · {}</div><div class=\"task-output\">{}</div>"
+            "<div class=\"task-error\">{}</div></div><div><div class=\"task-stage\">"
+            "<span>{}</span><span>{}</span></div><div class=\"progress-track\"><div "
+            "class=\"progress-value\" style=\"width: {:.2f}%;\"></div></div></div>"
+            "<div><span class=\"task-state {}\">{}</span><div class=\"task-time\">{}</div></div>"
+            "<div class=\"task-row-actions\">{}</div></article>",
+            escapeHtml(record.title), escapeHtml(record.detail), escapeHtml(record.createdAt),
+            escapeHtml(record.outputPath), escapeHtml(record.error), escapeHtml(record.stage),
+            progressText, record.progress * 100., stateValue,
+            ExportTaskStateName(record.state), escapeHtml(record.finishedAt), action);
+    }
+    if (listHtml.empty())
+    {
+        listHtml = "<div class=\"task-empty\">暂无导出任务</div>";
+    }
+    if (listHtml != lastTaskListHtml_)
+    {
+        runtime.replaceHtmlById("export-task-list", listHtml);
+        lastTaskListHtml_ = listHtml;
+    }
+    runtime.setTextsById({
+        {"task-count-queued", std::to_string(queuedCount)},
+        {"task-count-running", std::to_string(runningCount)},
+        {"task-count-succeeded", std::to_string(succeededCount)},
+        {"task-count-failed", std::to_string(failedCount)}});
+}
+
+void DomDownToolPreview::PreviewController::ToggleExportGisGroup(uint64_t groupId)
+{
+    const auto group = std::find_if(
+        exportGisGroups_.begin(), exportGisGroups_.end(),
+        [groupId](const ExportGisUiGroup& item) { return item.id == groupId; });
+    if (group == exportGisGroups_.end())
+    {
+        return;
+    }
+    group->selected = !group->selected;
+}
+
+void DomDownToolPreview::PreviewController::HandleExportGisGroupContextAction(uint64_t groupId)
+{
+    const auto group = std::find_if(
+        exportGisGroups_.begin(), exportGisGroups_.end(),
+        [groupId](const ExportGisUiGroup& item) { return item.id == groupId; });
+    if (group == exportGisGroups_.end())
+    {
+        return;
+    }
+    if (group->categories.size() > 1)
+    {
+        std::vector<ExportGisUiGroup> splitGroups;
+        for (const DownTool::AmapVectorRenderCategory category : group->categories)
+        {
+            splitGroups.push_back(
+                ExportGisUiGroup{nextExportGisGroupId_++, {category}, group->selected});
+        }
+        const size_t offset = static_cast<size_t>(std::distance(exportGisGroups_.begin(), group));
+        exportGisGroups_.erase(group);
+        exportGisGroups_.insert(exportGisGroups_.begin() + static_cast<ptrdiff_t>(offset),
+                                splitGroups.begin(), splitGroups.end());
+        return;
+    }
+
+    std::vector<size_t> selectedIndexes;
+    for (size_t index = 0; index < exportGisGroups_.size(); ++index)
+    {
+        if (exportGisGroups_[index].selected || index ==
+            static_cast<size_t>(std::distance(exportGisGroups_.begin(), group)))
+        {
+            selectedIndexes.push_back(index);
+        }
+    }
+    if (selectedIndexes.size() < 2)
+    {
+        group->selected = true;
+        return;
+    }
+
+    ExportGisUiGroup merged;
+    merged.id = nextExportGisGroupId_++;
+    merged.selected = true;
+    for (const size_t index : selectedIndexes)
+    {
+        merged.categories.insert(exportGisGroups_[index].categories.begin(),
+                                 exportGisGroups_[index].categories.end());
+    }
+    for (auto iterator = selectedIndexes.rbegin(); iterator != selectedIndexes.rend(); ++iterator)
+    {
+        exportGisGroups_.erase(exportGisGroups_.begin() + static_cast<ptrdiff_t>(*iterator));
+    }
+    exportGisGroups_.push_back(std::move(merged));
+}
+
+std::optional<DomDownToolPreview::ExportConfiguration>
+DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& error) const
+{
+    const std::optional<double> lon = parseFiniteDouble(exportLongitudeValue_);
+    const std::optional<double> lat = parseFiniteDouble(exportLatitudeValue_);
+    const std::optional<double> radius = parseFiniteDouble(exportRadiusValue_);
+    const std::optional<uint32_t> zoom = parseUint32(exportZoomValue_);
+    const std::optional<uint32_t> mergedResolution = parseUint32(exportMergedResolutionValue_);
+    const std::optional<uint32_t> fbxSize = parseUint32(exportFbxSizeValue_);
+    if (!lon || *lon < -180. || *lon > 180. || !lat || *lat < -85. || *lat > 85.)
+    {
+        error = "中心经纬度无效。";
+        return std::nullopt;
+    }
+    if (!radius || *radius <= 0.)
+    {
+        error = "导出半径必须大于 0 米。";
+        return std::nullopt;
+    }
+    if (!zoom || *zoom > 30 || !mergedResolution || *mergedResolution == 0 || !fbxSize)
+    {
+        error = "层级、合并大图尺寸或 FBX 贴图尺寸无效。";
+        return std::nullopt;
+    }
+
+    ExportConfiguration configuration;
+    const std::vector<MapSourceSummary> sources = renderer_.sources();
+    const auto source = std::find_if(
+        sources.begin(), sources.end(),
+        [this](const MapSourceSummary& item) { return item.id == exportMapSourceId_; });
+    if (source == sources.end())
+    {
+        error = "卫星图来源无效。";
+        return std::nullopt;
+    }
+    configuration.centerWgs84 = {*lon, *lat};
+    configuration.radiusMeters = *radius;
+    configuration.zoom = *zoom;
+    configuration.mapSourceId = exportMapSourceId_;
+    configuration.mapSourceName = source->name;
+    configuration.satelliteCachePath = source->cacheRoot;
+    configuration.satelliteOutputPath = std::filesystem::u8path(exportSatelliteOutputValue_);
+    configuration.gisOutputPath = std::filesystem::u8path(exportGisOutputValue_);
+    configuration.exportSatelliteTiles = exportSatelliteTiles_;
+    configuration.exportSatelliteMergedImage = exportSatelliteMergedImage_;
+    configuration.exportGisTiles = exportGisTiles_;
+    configuration.exportGisMergedImage = exportGisMergedImage_;
+    configuration.exportFbx = exportFbx_;
+    configuration.fbxSource = exportFbxSource_;
+    configuration.colorBuildingsByHeight = exportBuildingHeightColors_;
+    configuration.mergedImageResolution = *mergedResolution;
+    configuration.mergedImageFormat = exportMergedFormat_ == "jpg" ? "jpg" : "png";
+    configuration.fbxTextureSize = *fbxSize;
+    for (const ExportGisUiGroup& group : exportGisGroups_)
+    {
+        if (!group.selected)
+        {
+            continue;
+        }
+        configuration.gisGroups.push_back(
+            GisExportGroup{ {}, group.categories });
+    }
+    for (const DownTool::AmapVectorRenderCategory category : kExportCategories)
+    {
+        const DownTool::AmapVectorColor color = renderer_.GetGisOverlayColor(
+            previewCategory(category));
+        configuration.gisColors[category] = color;
+    }
+    if (!configuration.exportSatelliteTiles && !configuration.exportSatelliteMergedImage &&
+        !configuration.exportGisTiles && !configuration.exportGisMergedImage &&
+        !configuration.exportFbx)
+    {
+        error = "至少选择一种输出内容。";
+        return std::nullopt;
+    }
+    const bool satelliteRequested = configuration.exportSatelliteTiles ||
+        configuration.exportSatelliteMergedImage ||
+        (configuration.exportFbx && configuration.fbxSource == ExportFbxSource::Satellite);
+    if (satelliteRequested && source->id == "none")
+    {
+        error = "卫星图导出需要选择地图来源。";
+        return std::nullopt;
+    }
+    if (satelliteRequested && configuration.satelliteOutputPath.empty())
+    {
+        error = "卫星输出目录不能为空。";
+        return std::nullopt;
+    }
+    const bool gisRequested = configuration.exportGisTiles ||
+        configuration.exportGisMergedImage ||
+        (configuration.exportFbx && configuration.fbxSource == ExportFbxSource::Gis);
+    if (gisRequested && configuration.gisGroups.empty())
+    {
+        error = "GIS 导出至少需要选择一个 GIS 输出组。";
+        return std::nullopt;
+    }
+    if (gisRequested && configuration.gisOutputPath.empty())
+    {
+        error = "GIS 输出目录不能为空。";
+        return std::nullopt;
+    }
+    return configuration;
+}
+
+void DomDownToolPreview::PreviewController::SubmitExport(skui::Runtime& runtime)
+{
+    std::string error;
+    const std::optional<ExportConfiguration> configuration =
+        BuildExportConfiguration(error);
+    if (!configuration.has_value())
+    {
+        exportValidationMessage_ = error;
+        UpdateExportUi(runtime);
+        requestRedraw();
+        return;
+    }
+    exportTaskManager_.Enqueue(*configuration);
+    exportValidationMessage_.clear();
+    schedulePageChange(Page::Tasks, runtime);
+}
+
 bool DomDownToolPreview::PreviewController::updateCursor(skui::Runtime& runtime, double screenX,
                                                          double screenY)
 {
@@ -1650,6 +2468,21 @@ bool DomDownToolPreview::PreviewController::updateCursor(skui::Runtime& runtime,
     runtime.setTextById("cursor-coordinate", coordinateText);
     lastCursorCoordinate_ = coordinateText;
     return true;
+}
+
+void DomDownToolPreview::PreviewController::scheduleImmediateMapRedraw(HWND window)
+{
+    if (immediateMapRedrawPosted_ ||
+        !mapDragRedrawThrottle_.shouldRefresh(MapHoverRefreshThrottle::Clock::now()))
+    {
+        return;
+    }
+
+    immediateMapRedrawPosted_ = true;
+    if (!PostMessageW(window, kPreviewImmediateMapRedrawMessage, 0, 0))
+    {
+        immediateMapRedrawPosted_ = false;
+    }
 }
 
 void DomDownToolPreview::PreviewController::scheduleMapUiRefresh(HWND window, const POINT& point)
@@ -1722,6 +2555,19 @@ void DomDownToolPreview::PreviewController::scheduleSearchRefresh() const
     writeSearchTrace("Controller", posted ? "search_refresh_posted"
                                            : "search_refresh_post_failed",
                      posted ? "" : fmt::format("win32_error={}", GetLastError()));
+}
+
+void DomDownToolPreview::PreviewController::scheduleExportTaskRefresh()
+{
+    const HWND window = window_.load(std::memory_order_relaxed);
+    if (!window || exportTaskRefreshPosted_.exchange(true, std::memory_order_relaxed))
+    {
+        return;
+    }
+    if (!PostMessageW(window, kPreviewExportTaskRefreshMessage, 0, 0))
+    {
+        exportTaskRefreshPosted_.store(false, std::memory_order_relaxed);
+    }
 }
 
 void DomDownToolPreview::PreviewController::requestRedraw() const

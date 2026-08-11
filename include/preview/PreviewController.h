@@ -2,7 +2,9 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -10,6 +12,8 @@
 
 #include "preview/AmapPlaceSearch.h"
 #include "preview/AmapWebViewSearch.h"
+#include "preview/ExportTaskManager.h"
+#include "preview/MapHoverRefreshThrottle.h"
 #include "preview/MapRenderer.h"
 
 class SkCanvas;
@@ -36,6 +40,13 @@ class PreviewController
                              skui::Runtime& runtime);
 
   private:
+    enum class Page
+    {
+        Preview,
+        Export,
+        Tasks
+    };
+
     enum class SearchState
     {
         Idle,
@@ -50,6 +61,13 @@ class PreviewController
         uint64_t requestId = 0;
         std::string resultId;
         std::string resultName;
+    };
+
+    struct ExportGisUiGroup
+    {
+        uint64_t id = 0;
+        std::set<DownTool::AmapVectorRenderCategory> categories;
+        bool selected = false;
     };
 
     [[nodiscard]] bool isMapPoint(HWND window, int x, int y) const;
@@ -76,6 +94,29 @@ class PreviewController
 
     void updateUi(skui::Runtime& runtime);
 
+    void schedulePageChange(Page page, skui::Runtime& runtime);
+
+    void OpenExportPage(skui::Runtime& runtime);
+
+    void OpenTaskPage(skui::Runtime& runtime);
+
+    void OpenPreviewPage(skui::Runtime& runtime);
+
+    void InitializeExportDraft(skui::Runtime& runtime);
+
+    void UpdateExportUi(skui::Runtime& runtime);
+
+    void UpdateTaskUi(skui::Runtime& runtime);
+
+    void ToggleExportGisGroup(uint64_t groupId);
+
+    void HandleExportGisGroupContextAction(uint64_t groupId);
+
+    void SubmitExport(skui::Runtime& runtime);
+
+    [[nodiscard]] std::optional<ExportConfiguration> BuildExportConfiguration(
+        std::string& error) const;
+
     void selectGisColorCategory(GisOverlayCategory category);
 
     void applyGisColorPicker(skui::Runtime& runtime);
@@ -86,6 +127,8 @@ class PreviewController
 
     bool updateCursor(skui::Runtime& runtime, double screenX, double screenY);
 
+    void scheduleImmediateMapRedraw(HWND window);
+
     void scheduleMapUiRefresh(HWND window, const POINT& point);
 
     void updateMapInteractionUi(skui::Runtime& runtime, const POINT& point);
@@ -94,6 +137,8 @@ class PreviewController
 
     void scheduleSearchRefresh() const;
 
+    void scheduleExportTaskRefresh();
+
     void requestRedraw() const;
 
     std::atomic<HWND> window_{nullptr};
@@ -101,6 +146,30 @@ class PreviewController
     MapRenderer renderer_;
     AmapWebViewSearch webViewSearch_;
     AmapPlaceSearch placeSearch_;
+    Page page_ = Page::Preview;
+    std::vector<ExportGisUiGroup> exportGisGroups_;
+    uint64_t nextExportGisGroupId_ = 1;
+    std::string previewRadiusValue_ = "0";
+    std::string exportLongitudeValue_;
+    std::string exportLatitudeValue_;
+    std::string exportRadiusValue_ = "0";
+    std::string exportZoomValue_;
+    std::string exportMapSourceId_;
+    std::string exportSatelliteOutputValue_;
+    std::string exportGisOutputValue_ = "cache/高德地图/gis数据/输出";
+    std::string exportMergedFormat_ = "png";
+    std::string exportMergedResolutionValue_ = "16384";
+    std::string exportFbxSizeValue_ = "4096";
+    bool exportSatelliteTiles_ = false;
+    bool exportSatelliteMergedImage_ = false;
+    bool exportGisTiles_ = false;
+    bool exportGisMergedImage_ = false;
+    bool exportFbx_ = false;
+    ExportFbxSource exportFbxSource_ = ExportFbxSource::Satellite;
+    bool exportBuildingHeightColors_ = false;
+    std::string exportValidationMessage_;
+    std::string lastExportGroupsHtml_;
+    std::string lastTaskListHtml_;
     std::optional<MapRenderStats> scheduledStats_;
     std::string searchQuery_;
     std::string searchMessage_;
@@ -127,6 +196,12 @@ class PreviewController
     bool dragging_ = false;
     POINT lastDragPoint_{};
     std::optional<POINT> pendingMapUiPoint_;
+    bool immediateMapRedrawPosted_ = false;
     bool mapUiRefreshPosted_ = false;
+    MapHoverRefreshThrottle mapDragRedrawThrottle_{std::chrono::milliseconds(4)};
+    MapHoverRefreshThrottle mapHoverRefreshThrottle_{std::chrono::milliseconds(50)};
+    std::atomic_bool exportTaskRefreshPosted_ = false;
+    // 必须先于任务状态回调所访问的成员析构。
+    ExportTaskManager exportTaskManager_;
 };
 } // namespace DomDownToolPreview

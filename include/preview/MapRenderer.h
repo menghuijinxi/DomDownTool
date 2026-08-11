@@ -37,6 +37,17 @@ struct MapRenderStats
     TileDownloadStats downloads;
 };
 
+struct ExportGeoBounds
+{
+    double minimumLongitude = 0.;
+    double maximumLongitude = 0.;
+    double minimumLatitude = 0.;
+    double maximumLatitude = 0.;
+};
+
+[[nodiscard]] std::optional<ExportGeoBounds> calculateExportGeoBounds(
+    const DownTool::LonLat& centerWgs84, double radiusMeters);
+
 class MapRenderer
 {
   public:
@@ -78,6 +89,13 @@ class MapRenderer
         GisOverlayCategory category) const;
 
     void ResetGisOverlayColors();
+
+    void SetExportRadiusMeters(double radiusMeters);
+
+    [[nodiscard]] double GetExportRadiusMeters() const
+    {
+        return exportRadiusMeters_;
+    }
 
     [[nodiscard]] std::vector<MapSourceSummary> sources() const;
 
@@ -130,6 +148,8 @@ class MapRenderer
 
     void drawLocationMarker(SkCanvas& canvas, int width, int height) const;
 
+    void drawExportBounds(SkCanvas& canvas) const;
+
     std::vector<MapSource> sources_;
     size_t activeSourceIndex_ = 0;
     MapViewport viewport_;
@@ -138,6 +158,7 @@ class MapRenderer
     GisOverlayRenderer gisOverlay_;
     MapRenderStats renderStats_;
     std::optional<DownTool::LonLat> locationMarkerWgs84_;
+    double exportRadiusMeters_ = 0.;
     double toolbarHeight_ = 52.;
     double statusBarHeight_ = 28.;
 };

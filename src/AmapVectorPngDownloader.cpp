@@ -11,6 +11,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -88,41 +89,40 @@ namespace
         return false;
     }
 
-    AmapVectorRenderCategory GetDefaultCategory(const AmapVectorFeature& feature)
+    bool IsAmapGreenFeatureCode(uint32_t mainKey, uint32_t subKey)
     {
-        if (IsAmapWaterFeatureCode(feature.mainKey, feature.subKey))
+        return mainKey == 30001 && subKey == 3;
+    }
+
+    bool HasFeatureNameContaining(const AmapVectorFeature& feature, std::string_view text)
+    {
+        return std::ranges::any_of(
+            feature.names,
+            [text](const DownTool::AmapVectorName& name)
+            {
+                return name.text.find(text) != std::string::npos;
+            });
+    }
+
+    bool IsAmapHighwayFeature(const AmapVectorFeature& feature)
+    {
+        if (feature.layerName != "road")
         {
-            return AmapVectorRenderCategory::Water;
+            return false;
         }
-        if (feature.layerName == "poi")
+        if (feature.mainKey == 20001 || feature.mainKey == 20002)
         {
-            return AmapVectorRenderCategory::Point;
+            return true;
         }
-        if (feature.layerName == "road")
-        {
-            return AmapVectorRenderCategory::Road;
-        }
-        if (feature.layerName == "building")
-        {
-            return AmapVectorRenderCategory::Building;
-        }
-        if (feature.layerName == "region-line")
-        {
-            return AmapVectorRenderCategory::Line;
-        }
-        if (feature.layerName.starts_with("transit-"))
-        {
-            return AmapVectorRenderCategory::Transit;
-        }
-        if (feature.geometryType == AmapVectorGeometryType::Point)
-        {
-            return AmapVectorRenderCategory::Point;
-        }
-        if (feature.geometryType == AmapVectorGeometryType::LineString)
-        {
-            return AmapVectorRenderCategory::Line;
-        }
-        return AmapVectorRenderCategory::Other;
+        return feature.mainKey == 20018 &&
+            (HasFeatureNameContaining(feature, "高速") ||
+             HasFeatureNameContaining(feature, "快速路"));
+    }
+
+    bool IsAmapBoundaryFeature(const AmapVectorFeature& feature)
+    {
+        return feature.layerName == "region-line" && feature.mainKey != 20010 &&
+            feature.mainKey != 20014;
     }
 
     AmapVectorRenderCategory GetCategory(
@@ -145,7 +145,7 @@ namespace
         {
             return layerIterator->second;
         }
-        return GetDefaultCategory(feature);
+        return ClassifyAmapVectorFeature(feature);
     }
 
     bool IsCategorySelected(
@@ -154,30 +154,6 @@ namespace
     {
         return options.categories.contains(AmapVectorRenderCategory::All) ||
             options.categories.contains(category);
-    }
-
-    AmapVectorColor GetDefaultColor(AmapVectorRenderCategory category)
-    {
-        switch (category)
-        {
-        case AmapVectorRenderCategory::Point:
-            return { 229, 57, 53, 255 };
-        case AmapVectorRenderCategory::Road:
-            return { 240, 198, 65, 255 };
-        case AmapVectorRenderCategory::Line:
-            return { 83, 110, 122, 255 };
-        case AmapVectorRenderCategory::Building:
-            return { 128, 128, 128, 255 };
-        case AmapVectorRenderCategory::Water:
-            return { 76, 175, 80, 255 };
-        case AmapVectorRenderCategory::Transit:
-            return { 156, 39, 176, 255 };
-        case AmapVectorRenderCategory::Other:
-            return { 96, 125, 139, 255 };
-        case AmapVectorRenderCategory::All:
-            return { 0, 0, 0, 0 };
-        }
-        return { 0, 0, 0, 0 };
     }
 
     AmapVectorColor GetBuildingHeightColor(uint64_t height)
@@ -254,7 +230,7 @@ namespace
         }
         const auto colorIterator = options.colors.find(category);
         return colorIterator == options.colors.end() ?
-            GetDefaultColor(category) : colorIterator->second;
+            GetDefaultAmapVectorRenderColor(category) : colorIterator->second;
     }
 
     int GetRenderPhase(const ProjectedFeature& feature)
@@ -278,7 +254,7 @@ namespace
         {
             return options.roadLineWidth;
         }
-        if (feature.category == AmapVectorRenderCategory::Transit)
+        if (feature.category == AmapVectorRenderCategory::Subway)
         {
             return options.transitLineWidth;
         }
@@ -533,6 +509,73 @@ namespace
     }
 }
 
+DownTool::AmapVectorRenderCategory DownTool::ClassifyAmapVectorFeature(
+    const AmapVectorFeature& feature)
+{
+    if (IsAmapWaterFeatureCode(feature.mainKey, feature.subKey))
+    {
+        return AmapVectorRenderCategory::Water;
+    }
+    if (IsAmapGreenFeatureCode(feature.mainKey, feature.subKey))
+    {
+        return AmapVectorRenderCategory::Green;
+    }
+    if (IsAmapHighwayFeature(feature))
+    {
+        return AmapVectorRenderCategory::Highway;
+    }
+    if (feature.layerName == "road")
+    {
+        return AmapVectorRenderCategory::Road;
+    }
+    if (feature.layerName == "building")
+    {
+        return AmapVectorRenderCategory::Building;
+    }
+    if (IsAmapBoundaryFeature(feature))
+    {
+        return AmapVectorRenderCategory::Boundary;
+    }
+    if (feature.layerName.starts_with("transit-"))
+    {
+        return AmapVectorRenderCategory::Subway;
+    }
+    if (feature.layerName == "poi" || feature.geometryType == AmapVectorGeometryType::Point)
+    {
+        return AmapVectorRenderCategory::Point;
+    }
+    return AmapVectorRenderCategory::Other;
+}
+
+DownTool::AmapVectorColor DownTool::GetDefaultAmapVectorRenderColor(
+    AmapVectorRenderCategory category)
+{
+    switch (category)
+    {
+    case AmapVectorRenderCategory::Road:
+        return {255, 218, 113, 255};
+    case AmapVectorRenderCategory::Water:
+        return {106, 142, 202, 255};
+    case AmapVectorRenderCategory::Green:
+        return {83, 133, 78, 255};
+    case AmapVectorRenderCategory::Highway:
+        return {255, 111, 56, 255};
+    case AmapVectorRenderCategory::Subway:
+        return {210, 75, 220, 255};
+    case AmapVectorRenderCategory::Building:
+        return {255, 255, 255, 255};
+    case AmapVectorRenderCategory::Point:
+        return {229, 57, 53, 255};
+    case AmapVectorRenderCategory::Boundary:
+        return {54, 55, 56, 255};
+    case AmapVectorRenderCategory::Other:
+        return {96, 125, 139, 255};
+    case AmapVectorRenderCategory::All:
+        return {0, 0, 0, 0};
+    }
+    return {0, 0, 0, 0};
+}
+
 DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
     const AmapVectorDecodedData& decodedData,
     const AmapVectorDownloadOptions& vectorOptions,
@@ -753,7 +796,9 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
             workers.emplace_back(
                 [&]()
                 {
-                    while (!cancellationRequested.load(std::memory_order_relaxed))
+                    while (!cancellationRequested.load(std::memory_order_relaxed) &&
+                           (!renderOptions.cancellationRequested ||
+                            !renderOptions.cancellationRequested()))
                     {
                         const size_t tileIndex =
                             nextTileIndex.fetch_add(1, std::memory_order_relaxed);
@@ -822,6 +867,11 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
     }
 
     result.renderedTileCount = renderedTileCount.load(std::memory_order_relaxed);
+    if (renderOptions.cancellationRequested && renderOptions.cancellationRequested())
+    {
+        result.error = "高德 GIS PNG 渲染已取消。";
+        return result;
+    }
     if (cancellationRequested.load(std::memory_order_relaxed))
     {
         return result;

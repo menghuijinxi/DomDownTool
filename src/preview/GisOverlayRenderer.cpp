@@ -6,7 +6,6 @@
 #include <cmath>
 #include <cstdint>
 #include <numbers>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -28,7 +27,6 @@ namespace
 {
 using DomDownToolPreview::GisOverlayCategory;
 using DownTool::AmapVectorColor;
-using DownTool::AmapVectorFeature;
 using DownTool::AmapVectorGeometryType;
 
 constexpr double kEarthRadiusMeters = 6378137.;
@@ -67,64 +65,6 @@ constexpr size_t kCategoryCount =
 size_t categoryIndex(GisOverlayCategory category)
 {
     return static_cast<size_t>(category);
-}
-
-bool isWaterFeatureCode(uint32_t mainKey, uint32_t subKey)
-{
-    if (mainKey == 30001)
-    {
-        return subKey == 2 || subKey == 6 || subKey == 11 || subKey == 13;
-    }
-    if (mainKey == 20014)
-    {
-        return subKey == 1 || subKey == 2;
-    }
-    if (mainKey == 10002)
-    {
-        return subKey == 13 || subKey == 38;
-    }
-    return false;
-}
-
-bool isGreenFeatureCode(uint32_t mainKey, uint32_t subKey)
-{
-    return mainKey == 30001 && subKey == 3;
-}
-
-bool hasNameContaining(const AmapVectorFeature& feature, std::string_view text)
-{
-    for (const DownTool::AmapVectorName& name : feature.names)
-    {
-        if (name.text.find(text) != std::string::npos)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool isHighwayFeature(const AmapVectorFeature& feature)
-{
-    if (feature.layerName != "road")
-    {
-        return false;
-    }
-    if (feature.mainKey == 20001 || feature.mainKey == 20002)
-    {
-        return true;
-    }
-    return feature.mainKey == 20018 &&
-        (hasNameContaining(feature, "高速") || hasNameContaining(feature, "快速路"));
-}
-
-bool isBoundaryFeature(const AmapVectorFeature& feature)
-{
-    if (feature.layerName != "region-line")
-    {
-        return false;
-    }
-    // region-line 是容器图层；20010 为铁路、20014 为河流/水系线，其余当前样本为边界类线。
-    return feature.mainKey != 20010 && feature.mainKey != 20014;
 }
 
 SkColor toSkColor(const AmapVectorColor& color)
@@ -810,38 +750,28 @@ bool DomDownToolPreview::GisOverlayRenderer::IsLoading() const
 DomDownToolPreview::GisOverlayCategory DomDownToolPreview::GisOverlayRenderer::ClassifyFeature(
     const DownTool::AmapVectorFeature& feature)
 {
-    if (isWaterFeatureCode(feature.mainKey, feature.subKey))
+    switch (DownTool::ClassifyAmapVectorFeature(feature))
     {
-        return GisOverlayCategory::Water;
-    }
-    if (isGreenFeatureCode(feature.mainKey, feature.subKey))
-    {
-        return GisOverlayCategory::Green;
-    }
-    if (isHighwayFeature(feature))
-    {
-        return GisOverlayCategory::Highway;
-    }
-    if (feature.layerName == "road")
-    {
-        return GisOverlayCategory::Road;
-    }
-    if (feature.layerName == "building")
-    {
-        return GisOverlayCategory::Building;
-    }
-    if (isBoundaryFeature(feature))
-    {
-        return GisOverlayCategory::Boundary;
-    }
-    if (feature.layerName.starts_with("transit-"))
-    {
-        return GisOverlayCategory::Subway;
-    }
-    if (feature.layerName == "poi" ||
-        feature.geometryType == DownTool::AmapVectorGeometryType::Point)
-    {
+    case DownTool::AmapVectorRenderCategory::All:
+        return GisOverlayCategory::All;
+    case DownTool::AmapVectorRenderCategory::Point:
         return GisOverlayCategory::Point;
+    case DownTool::AmapVectorRenderCategory::Road:
+        return GisOverlayCategory::Road;
+    case DownTool::AmapVectorRenderCategory::Green:
+        return GisOverlayCategory::Green;
+    case DownTool::AmapVectorRenderCategory::Highway:
+        return GisOverlayCategory::Highway;
+    case DownTool::AmapVectorRenderCategory::Subway:
+        return GisOverlayCategory::Subway;
+    case DownTool::AmapVectorRenderCategory::Building:
+        return GisOverlayCategory::Building;
+    case DownTool::AmapVectorRenderCategory::Water:
+        return GisOverlayCategory::Water;
+    case DownTool::AmapVectorRenderCategory::Boundary:
+        return GisOverlayCategory::Boundary;
+    case DownTool::AmapVectorRenderCategory::Other:
+        return GisOverlayCategory::Other;
     }
     return GisOverlayCategory::Other;
 }
@@ -852,23 +782,32 @@ DownTool::AmapVectorColor DomDownToolPreview::GisOverlayRenderer::defaultColor(
     switch (category)
     {
     case GisOverlayCategory::Road:
-        return {255, 218, 113, 255};
+        return DownTool::GetDefaultAmapVectorRenderColor(
+            DownTool::AmapVectorRenderCategory::Road);
     case GisOverlayCategory::Water:
-        return {106, 142, 202, 255};
+        return DownTool::GetDefaultAmapVectorRenderColor(
+            DownTool::AmapVectorRenderCategory::Water);
     case GisOverlayCategory::Green:
-        return {83, 133, 78, 255};
+        return DownTool::GetDefaultAmapVectorRenderColor(
+            DownTool::AmapVectorRenderCategory::Green);
     case GisOverlayCategory::Highway:
-        return {255, 111, 56, 255};
+        return DownTool::GetDefaultAmapVectorRenderColor(
+            DownTool::AmapVectorRenderCategory::Highway);
     case GisOverlayCategory::Subway:
-        return {210, 75, 220, 255};
+        return DownTool::GetDefaultAmapVectorRenderColor(
+            DownTool::AmapVectorRenderCategory::Subway);
     case GisOverlayCategory::Building:
-        return {255, 255, 255, 255};
+        return DownTool::GetDefaultAmapVectorRenderColor(
+            DownTool::AmapVectorRenderCategory::Building);
     case GisOverlayCategory::Point:
-        return {229, 57, 53, 255};
+        return DownTool::GetDefaultAmapVectorRenderColor(
+            DownTool::AmapVectorRenderCategory::Point);
     case GisOverlayCategory::Boundary:
-        return {54, 55, 56, 255};
+        return DownTool::GetDefaultAmapVectorRenderColor(
+            DownTool::AmapVectorRenderCategory::Boundary);
     case GisOverlayCategory::Other:
-        return {96, 125, 139, 255};
+        return DownTool::GetDefaultAmapVectorRenderColor(
+            DownTool::AmapVectorRenderCategory::Other);
     case GisOverlayCategory::None:
     case GisOverlayCategory::All:
         return {0, 0, 0, 0};

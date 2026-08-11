@@ -275,9 +275,9 @@ namespace
             std::to_string(tile.X) / (std::to_string(tile.Y) + ".png");
         const cv::Mat image = cv::imread(tilePath.string(), cv::IMREAD_UNCHANGED);
         if (!Require(!image.empty() && image.channels() == 4, "PNG 瓦片不可读取") ||
-            !Require(HasColor(image, 76, 175, 80), "缺少水体默认绿色") ||
-            !Require(HasColor(image, 96, 125, 139), "绿地被错误分类为水体") ||
-            !Require(HasColor(image, 240, 198, 65), "缺少道路默认黄色"))
+            !Require(HasColor(image, 106, 142, 202), "缺少水体默认蓝色") ||
+            !Require(HasColor(image, 83, 133, 78), "缺少绿地默认绿色") ||
+            !Require(HasColor(image, 255, 218, 113), "缺少道路默认黄色"))
         {
             return false;
         }
@@ -352,12 +352,12 @@ namespace
             !Require(!SameRgb(sameHeightPixelA, differentHeightPixel),
                 "不同高度建筑没有使用不同颜色") ||
             !Require(
-                zeroHeightPixel[0] == 128 && zeroHeightPixel[1] == 128 &&
-                    zeroHeightPixel[2] == 128,
+                zeroHeightPixel[0] == 255 && zeroHeightPixel[1] == 255 &&
+                    zeroHeightPixel[2] == 255,
                 "零高度建筑没有沿用普通建筑颜色") ||
             !Require(
-                missingHeightPixel[0] == 128 && missingHeightPixel[1] == 128 &&
-                    missingHeightPixel[2] == 128,
+                missingHeightPixel[0] == 255 && missingHeightPixel[1] == 255 &&
+                    missingHeightPixel[2] == 255,
                 "无高度属性建筑没有沿用普通建筑颜色"))
         {
             return false;
@@ -391,7 +391,7 @@ namespace
             std::to_string(tile.X) / (std::to_string(tile.Y) + ".png");
         const cv::Mat buildingOnly =
             cv::imread(buildingOnlyPath.string(), cv::IMREAD_UNCHANGED);
-        if (!Require(!HasColor(buildingOnly, 128, 128, 128),
+        if (!Require(!HasColor(buildingOnly, 255, 255, 255),
             "z14 rendered a building whose minZoom is 15"))
         {
             return false;
@@ -402,9 +402,9 @@ namespace
         const cv::Mat forcedBuilding =
             cv::imread(buildingOnlyPath.string(), cv::IMREAD_UNCHANGED);
         if (!Require(renderResult.success, "forcing all feature zooms failed") ||
-            !Require(HasColor(forcedBuilding, 128, 128, 128),
+            !Require(HasColor(forcedBuilding, 255, 255, 255),
                 "forcing all feature zooms did not render the building") ||
-            !Require(!HasColor(forcedBuilding, 76, 175, 80),
+            !Require(!HasColor(forcedBuilding, 106, 142, 202),
                 "the building category rendered water"))
         {
             return false;
@@ -422,7 +422,7 @@ namespace
             cv::imread(buildingOnlyPath.string(), cv::IMREAD_UNCHANGED);
         if (!Require(renderResult.success && renderResult.renderedTileCount == 1,
             "临时 PNG 没有重新渲染") ||
-            !Require(HasColor(rebuiltBuildingOnly, 128, 128, 128),
+            !Require(HasColor(rebuiltBuildingOnly, 255, 255, 255),
                 "临时 PNG 仍然保留旧内容"))
         {
             return false;

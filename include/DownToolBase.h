@@ -2,8 +2,10 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 #include <fmt/base.h>
@@ -45,6 +47,16 @@ namespace DownTool
 		std::vector<std::string> headers;
 		std::string proxy;
 	};
+
+	struct DownToolProgress
+	{
+		std::string stage;
+		uint64_t completed = 0;
+		uint64_t total = 0;
+		uint64_t failed = 0;
+	};
+
+	using DownToolProgressCallback = std::function<void(const DownToolProgress&)>;
 
 	struct CurlMultiHandle
 	{
@@ -146,6 +158,11 @@ namespace DownTool
 		std::int32_t DowningCount = 0;
 
 		std::uint32_t TotalDownCount = 0;
+
+		DownToolProgressCallback ProgressCallback;
+
+		void ReportProgress(std::string_view stage, uint64_t completed,
+			uint64_t total, uint64_t failed = 0) const;
 
 		void WaitDown();
 
@@ -359,7 +376,7 @@ namespace DownTool
 			double pixelY,
 			LonLat& lonLat) const;
 
-        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Proxy, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTextureDistanceOffsets, TileSize)
+        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Proxy, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTextureDistanceOffsets, TileSize, ProgressCallback)
 		
 			//停止下载，正在下载的线程会尽快停止下载
 		void StopDown()

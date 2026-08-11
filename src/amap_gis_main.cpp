@@ -177,10 +177,14 @@ namespace
             { "all", DownTool::AmapVectorRenderCategory::All },
             { "point", DownTool::AmapVectorRenderCategory::Point },
             { "road", DownTool::AmapVectorRenderCategory::Road },
-            { "line", DownTool::AmapVectorRenderCategory::Line },
+            { "green", DownTool::AmapVectorRenderCategory::Green },
+            { "highway", DownTool::AmapVectorRenderCategory::Highway },
+            { "subway", DownTool::AmapVectorRenderCategory::Subway },
+            { "transit", DownTool::AmapVectorRenderCategory::Subway },
             { "building", DownTool::AmapVectorRenderCategory::Building },
             { "water", DownTool::AmapVectorRenderCategory::Water },
-            { "transit", DownTool::AmapVectorRenderCategory::Transit },
+            { "boundary", DownTool::AmapVectorRenderCategory::Boundary },
+            { "line", DownTool::AmapVectorRenderCategory::Boundary },
             { "other", DownTool::AmapVectorRenderCategory::Other }
         };
         const auto iterator = categories.find(ToLowerAscii(text));
@@ -276,9 +280,9 @@ namespace
         options.download.vectorDownload.progressCallback = PrintDownloadProgress;
         options.download.render.categories = { DownTool::AmapVectorRenderCategory::Water };
         options.download.render.progressCallback = PrintRenderProgress;
-        options.download.render.colors[DownTool::AmapVectorRenderCategory::Water] = {
-            45, 160, 80, 255
-        };
+        options.download.render.colors[DownTool::AmapVectorRenderCategory::Water] =
+            DownTool::GetDefaultAmapVectorRenderColor(
+                DownTool::AmapVectorRenderCategory::Water);
         return options;
     }
 

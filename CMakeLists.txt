@@ -6,6 +6,10 @@ cmake_minimum_required (VERSION 3.24)
 option(IS_AUTODOWNLOAD_VCPKG "是否自动下载vcpkg，并配置vcpkg为工具链" ON)
 option(DOMDOWNTOOL_BUILD_PREVIEW "是否构建 SkiaUI 瓦块预览工具" ON)
 
+list(APPEND VCPKG_OVERLAY_PORTS
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/vcpkg-overlays")
+list(REMOVE_DUPLICATES VCPKG_OVERLAY_PORTS)
+
 message(设置代理：127.0.0.1:10090)
 set(ENV{https_proxy} "127.0.0.1:10090")
 set(ENV{http_proxy} "127.0.0.1:10090")
@@ -56,6 +60,37 @@ IF(WIN32)
 ENDIF()
 
 project ("DomDownTool")
+
+function(domdowntool_configure_msvc_ninja_dependencies)
+    if(NOT MSVC OR NOT CMAKE_GENERATOR MATCHES "^Ninja")
+        return()
+    endif()
+
+    set(probe_directory "${CMAKE_BINARY_DIR}/CMakeFiles/DomDownToolShowIncludes")
+    file(MAKE_DIRECTORY "${probe_directory}")
+    file(WRITE "${probe_directory}/dependency.h" "\n")
+    file(WRITE "${probe_directory}/main.c"
+        "#include \"dependency.h\"\nint main(void) { return 0; }\n")
+    execute_process(
+        COMMAND "${CMAKE_CXX_COMPILER}" /nologo /showIncludes /c main.c
+        WORKING_DIRECTORY "${probe_directory}"
+        OUTPUT_VARIABLE compiler_output
+        ERROR_VARIABLE compiler_error
+        RESULT_VARIABLE compiler_result
+        ENCODING UTF-8)
+    if(NOT compiler_result EQUAL 0 OR
+       NOT compiler_output MATCHES
+           "(^|\n)([^:\n][^:\n]+:[^:\n]*[^: \n][^: \n]:?[ \t]+)([A-Za-z]:\\\\|\\./|\\.\\\\|/)")
+        message(FATAL_ERROR
+            "Failed to detect the MSVC /showIncludes prefix: ${compiler_error}")
+    endif()
+
+    set(CMAKE_CL_SHOWINCLUDES_PREFIX "${CMAKE_MATCH_2}" PARENT_SCOPE)
+    set(CMAKE_C_CL_SHOWINCLUDES_PREFIX "${CMAKE_MATCH_2}" PARENT_SCOPE)
+    set(CMAKE_CXX_CL_SHOWINCLUDES_PREFIX "${CMAKE_MATCH_2}" PARENT_SCOPE)
+endfunction()
+
+domdowntool_configure_msvc_ninja_dependencies()
 
 if(MSVC)
     # 混合工具链环境中，CMake 可能误用 PATH 里的 GNU ar/ld。
@@ -171,6 +206,7 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapPlaceSearch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapWebViewSearch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/Dx12GisRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportTaskManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisOverlayRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisMeshBuilder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/MapRenderer.cpp
@@ -335,6 +371,21 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     target_compile_options(PreviewSearchUiTest PRIVATE /EHsc /permissive-)
   endif()
   add_test(NAME PreviewSearchUiTest COMMAND PreviewSearchUiTest)
+
+  add_executable(ExportTaskManagerTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/ExportTaskManagerTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportTaskManager.cpp)
+  target_link_libraries(ExportTaskManagerTest PRIVATE DomDownToolCore)
+  target_compile_definitions(ExportTaskManagerTest PRIVATE
+    DOMDOWNTOOL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN)
+  set_property(TARGET ExportTaskManagerTest PROPERTY CXX_STANDARD 23)
+  set_property(TARGET ExportTaskManagerTest PROPERTY CXX_STANDARD_REQUIRED ON)
+  if(MSVC)
+    target_compile_options(ExportTaskManagerTest PRIVATE /EHsc /permissive-)
+  endif()
+  add_test(NAME ExportTaskManagerTest COMMAND ExportTaskManagerTest)
 endif()
 add_domdown_test(AmapVectorPngTileTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorPngTileTest.cpp)

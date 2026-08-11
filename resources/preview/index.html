@@ -657,10 +657,444 @@
         #tile-stats {
             white-space: nowrap;
         }
+
+        button {
+            cursor: pointer;
+        }
+
+        .radius-control {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: #aeb7b2;
+            white-space: nowrap;
+        }
+
+        .radius-control input {
+            width: 72px;
+            height: 30px;
+            padding: 0 7px;
+            border: 1px solid #505854;
+            border-radius: 4px;
+            outline: none;
+            background: #181c1b;
+            color: #edf1ef;
+            font: inherit;
+            text-align: right;
+        }
+
+        .radius-control input:focus,
+        .form-field input:focus,
+        .form-field select:focus {
+            border-color: #50a38b;
+        }
+
+        .primary-command,
+        .secondary-command,
+        .danger-command {
+            height: 30px;
+            padding: 0 12px;
+            border: 1px solid #4e5a55;
+            border-radius: 4px;
+            background: #252c29;
+            color: #edf1ef;
+            font: inherit;
+            white-space: nowrap;
+        }
+
+        .primary-command {
+            border-color: #4cae91;
+            background: #285a4b;
+        }
+
+        .primary-command:hover {
+            background: #32705d;
+        }
+
+        .secondary-command:hover {
+            border-color: #6d7973;
+            background: #303835;
+        }
+
+        .danger-command {
+            border-color: #774f4d;
+            color: #ffc7c2;
+        }
+
+        #open-export-page,
+        #open-task-page,
+        #export-back-preview,
+        #tasks-back-preview {
+            flex: 0 0 64px;
+            width: 64px;
+            min-width: 64px;
+        }
+
+        .workspace-page {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #191d1c;
+        }
+
+        .page-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 0 0 56px;
+            height: 56px;
+            padding: 0 18px;
+            border-bottom: 1px solid #3b403e;
+            background: #222725;
+        }
+
+        .page-header h1 {
+            margin: 0;
+            color: #f3f6f5;
+            font-size: 17px;
+            font-weight: 650;
+            letter-spacing: 0;
+        }
+
+        .page-header-summary {
+            flex: 0 0 420px;
+            width: 420px;
+            min-width: 0;
+            overflow: hidden;
+            color: #929d98;
+            font-size: 12px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .page-header-spacer {
+            flex: 0 0 650px;
+            width: 650px;
+            min-width: 650px;
+        }
+
+        #task-page .page-header-spacer {
+            flex-basis: 580px;
+            width: 580px;
+            min-width: 580px;
+        }
+
+        #export-open-tasks {
+            width: 96px;
+            min-width: 96px;
+        }
+
+        #tasks-new-export {
+            width: 90px;
+            min-width: 90px;
+        }
+
+        #tasks-clear-finished {
+            width: 110px;
+            min-width: 110px;
+        }
+
+        .page-content {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+        }
+
+        .export-layout {
+            display: grid;
+            grid-template-columns: minmax(420px, 0.95fr) minmax(480px, 1.05fr);
+            gap: 0;
+            min-height: 100%;
+        }
+
+        .export-column {
+            min-width: 0;
+            padding: 20px 24px 28px;
+        }
+
+        .export-column + .export-column {
+            border-left: 1px solid #343a37;
+        }
+
+        .settings-section {
+            margin-bottom: 24px;
+        }
+
+        .settings-section h2 {
+            margin: 0 0 12px;
+            color: #e8edeb;
+            font-size: 14px;
+            font-weight: 650;
+            letter-spacing: 0;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .form-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 0;
+            color: #aab4af;
+            font-size: 12px;
+        }
+
+        .form-field.full {
+            grid-column: 1 / -1;
+        }
+
+        .form-field input,
+        .form-field select {
+            width: 100%;
+            height: 34px;
+            padding: 0 9px;
+            border: 1px solid #4d5551;
+            border-radius: 4px;
+            outline: none;
+            background: #151918;
+            color: #edf1ef;
+            font: 13px "Microsoft YaHei", "Segoe UI", sans-serif;
+        }
+
+        .output-options {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            border-top: 1px solid #343a37;
+        }
+
+        .output-option {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            min-height: 42px;
+            padding: 0 8px;
+            border-bottom: 1px solid #343a37;
+            color: #dce3df;
+        }
+
+        .output-option:nth-child(odd) {
+            border-right: 1px solid #343a37;
+        }
+
+        .output-option input {
+            width: 16px;
+            height: 16px;
+        }
+
+        .gis-group-list {
+            display: flex;
+            flex-wrap: wrap;
+            align-content: flex-start;
+            gap: 8px;
+            min-height: 92px;
+            padding: 12px;
+            border: 1px solid #3e4642;
+            background: #151918;
+        }
+
+        .gis-group-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            width: 148px;
+            min-width: 148px;
+            min-height: 32px;
+            padding: 0 10px;
+            border: 1px solid #4a5550;
+            border-radius: 4px;
+            background: #252b28;
+            color: #d8dfdc;
+            font: inherit;
+        }
+
+        .gis-group-item[aria-pressed="true"] {
+            border-color: #58af94;
+            background: #294b40;
+            color: #f1faf6;
+        }
+
+        .gis-group-item.merged {
+            border-color: #b59245;
+            background: #423923;
+        }
+
+        .gis-group-count {
+            color: #9eaaa4;
+            font-size: 11px;
+        }
+
+        .export-footer {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding-top: 16px;
+            border-top: 1px solid #343a37;
+        }
+
+        .validation-message {
+            width: 420px;
+            min-width: 420px;
+            color: #ffaaa2;
+            font-size: 12px;
+        }
+
+        #export-cancel {
+            width: 64px;
+            min-width: 64px;
+        }
+
+        #export-submit {
+            width: 128px;
+            min-width: 128px;
+        }
+
+        .task-summary-band {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            height: 48px;
+            padding: 0 24px;
+            border-bottom: 1px solid #343a37;
+            background: #1d2220;
+            color: #a8b2ad;
+        }
+
+        .task-summary-band strong {
+            color: #eef3f0;
+            font-weight: 600;
+        }
+
+        .task-list {
+            width: 100%;
+        }
+
+        .task-row {
+            display: grid;
+            grid-template-columns: minmax(240px, 1.3fr) minmax(220px, 1fr) 150px 90px;
+            gap: 18px;
+            align-items: center;
+            min-height: 96px;
+            padding: 14px 24px;
+            border-bottom: 1px solid #343a37;
+            background: #191d1c;
+        }
+
+        .task-row:hover {
+            background: #1d2321;
+        }
+
+        .task-title {
+            margin-bottom: 5px;
+            color: #eef3f0;
+            font-weight: 600;
+        }
+
+        .task-detail,
+        .task-output,
+        .task-time,
+        .task-error {
+            overflow: hidden;
+            color: #8f9a95;
+            font-size: 11px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .task-error {
+            margin-top: 4px;
+            color: #ffaaa2;
+        }
+
+        .task-stage {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 7px;
+            color: #cbd4d0;
+            font-size: 12px;
+        }
+
+        .progress-track {
+            width: 100%;
+            height: 6px;
+            overflow: hidden;
+            background: #303633;
+        }
+
+        .progress-value {
+            height: 100%;
+            background: #55aa8f;
+        }
+
+        .task-state {
+            justify-self: start;
+            padding: 4px 8px;
+            border: 1px solid #4b5550;
+            border-radius: 3px;
+            color: #cdd6d2;
+            font-size: 11px;
+        }
+
+        .task-state.running {
+            border-color: #4cae91;
+            color: #88d9be;
+        }
+
+        .task-state.succeeded {
+            border-color: #668d69;
+            color: #9bd49e;
+        }
+
+        .task-state.failed,
+        .task-state.canceled {
+            border-color: #855955;
+            color: #ffaaa2;
+        }
+
+        .task-row-actions .danger-command {
+            width: 64px;
+            min-width: 64px;
+        }
+
+        .task-empty {
+            padding: 80px 24px;
+            color: #828d88;
+            text-align: center;
+        }
+
+        @media (max-width: 1100px) {
+            .page-header-spacer {
+                display: none;
+            }
+
+            .export-layout {
+                grid-template-columns: 1fr;
+            }
+
+            .export-column + .export-column {
+                border-top: 1px solid #343a37;
+                border-left: 0;
+            }
+
+            .task-row {
+                grid-template-columns: minmax(220px, 1fr) minmax(200px, 1fr) 100px;
+            }
+
+            .task-row-actions {
+                grid-column: 1 / -1;
+            }
+        }
     </style>
 </head>
 <body>
-    <main class="shell">
+    <main id="preview-page" class="shell">
         <header class="toolbar">
             <div class="brand">DomDownTool <span>瓦块预览</span></div>
             <div class="search-control">
@@ -699,6 +1133,16 @@
                 <span id="zoom-value">Z 15.00</span>
                 <button id="zoom-in" type="button" data-action="zoom-in" title="放大">+</button>
             </div>
+            <label class="radius-control">
+                <span>半径</span>
+                <input id="export-radius" type="number" min="0" step="100" value="0"
+                       aria-label="导出半径（米）">
+                <span>米</span>
+            </label>
+            <button id="open-export-page" class="primary-command" type="button"
+                    data-action="open-export-config">导出</button>
+            <button id="open-task-page" class="secondary-command" type="button"
+                    data-action="open-export-tasks">任务</button>
             <button id="reload-tiles" type="button" data-action="reload-tiles" title="重新读取缓存">&#x21bb;</button>
             <div class="toolbar-spacer"></div>
         </header>
@@ -898,5 +1342,179 @@
             <span id="tile-stats">可见 0  已载入 0  读取 0  下载 0/0  失败 0  缓存 0.0 MB</span>
         </footer>
     </main>
+
+    <section id="export-page" class="workspace-page" style="display: none">
+        <header class="page-header">
+            <button id="export-back-preview" class="secondary-command" type="button"
+                    data-action="back-to-preview">返回</button>
+            <h1>导出配置</h1>
+            <span id="export-config-summary" class="page-header-summary"></span>
+            <div class="page-header-spacer"></div>
+            <button id="export-open-tasks" class="secondary-command" type="button"
+                    data-action="open-export-tasks">导出任务</button>
+        </header>
+        <div class="page-content">
+            <div class="export-layout">
+                <div class="export-column">
+                    <section class="settings-section">
+                        <h2>导出范围</h2>
+                        <div class="form-grid">
+                            <label class="form-field">
+                                <span>中心经度</span>
+                                <input id="export-lon" type="number" step="0.000001">
+                            </label>
+                            <label class="form-field">
+                                <span>中心纬度</span>
+                                <input id="export-lat" type="number" step="0.000001">
+                            </label>
+                            <label class="form-field">
+                                <span>半径（米）</span>
+                                <input id="export-config-radius" type="number" min="0" step="100">
+                            </label>
+                            <label class="form-field">
+                                <span>层级</span>
+                                <input id="export-zoom" type="number" min="1" max="21" step="1">
+                            </label>
+                            <label class="form-field full">
+                                <span>卫星图来源</span>
+                                <select id="export-provider-select">
+                                    <option value="gaode.satellite">高德卫星</option>
+                                    <option value="gaode.electronic">高德电子地图</option>
+                                    <option value="gaode.roads">高德透明路网</option>
+                                    <option value="tencent.satellite">腾讯卫星</option>
+                                    <option value="tianditu.satellite">天地图影像</option>
+                                    <option value="baidu.satellite">百度卫星</option>
+                                    <option value="google.satellite">Google 卫星</option>
+                                    <option value="bing.satellite">Bing 卫星</option>
+                                    <option value="arcgis.satellite">ArcGIS 影像</option>
+                                    <option value="none">无</option>
+                                </select>
+                            </label>
+                        </div>
+                    </section>
+
+                    <section class="settings-section">
+                        <h2>输出内容</h2>
+                        <div class="output-options">
+                            <label class="output-option">
+                                <input id="export-satellite-tiles" type="checkbox">
+                                <span>卫星 XYZ 切片</span>
+                            </label>
+                            <label class="output-option">
+                                <input id="export-gis-tiles" type="checkbox">
+                                <span>GIS XYZ 切片</span>
+                            </label>
+                            <label class="output-option">
+                                <input id="export-satellite-merged" type="checkbox">
+                                <span>卫星合并大图</span>
+                            </label>
+                            <label class="output-option">
+                                <input id="export-gis-merged" type="checkbox">
+                                <span>GIS 合并大图</span>
+                            </label>
+                            <label class="output-option">
+                                <input id="export-fbx" type="checkbox">
+                                <span>FBX 切片与网格</span>
+                            </label>
+                            <label class="form-field" style="padding: 6px 8px">
+                                <span>FBX 数据来源</span>
+                                <select id="export-fbx-source">
+                                    <option value="satellite">卫星图</option>
+                                    <option value="gis">GIS</option>
+                                </select>
+                            </label>
+                        </div>
+                    </section>
+
+                    <section class="settings-section">
+                        <h2>输出参数</h2>
+                        <div class="form-grid">
+                            <label class="form-field">
+                                <span>大图格式</span>
+                                <select id="export-merged-format">
+                                    <option value="png">PNG</option>
+                                    <option value="jpg">JPG</option>
+                                </select>
+                            </label>
+                            <label class="form-field">
+                                <span>大图最大边</span>
+                                <input id="export-merged-resolution" type="number" min="256"
+                                       step="256" value="16384">
+                            </label>
+                            <label class="form-field">
+                                <span>FBX 贴图尺寸</span>
+                                <select id="export-fbx-size">
+                                    <option value="1024">1024</option>
+                                    <option value="2048">2048</option>
+                                    <option value="4096" selected>4096</option>
+                                    <option value="8192">8192</option>
+                                    <option value="16384">16384</option>
+                                </select>
+                            </label>
+                            <label class="output-option" style="border: 0; padding: 16px 0 0">
+                                <input id="export-building-height-colors" type="checkbox">
+                                <span>建筑按高度着色</span>
+                            </label>
+                        </div>
+                    </section>
+                </div>
+
+                <div class="export-column">
+                    <section class="settings-section">
+                        <h2>GIS 输出组</h2>
+                        <div id="export-gis-groups" class="gis-group-list"></div>
+                    </section>
+
+                    <section class="settings-section">
+                        <h2>输出位置</h2>
+                        <div class="form-grid">
+                            <label class="form-field full">
+                                <span>卫星输出目录</span>
+                                <input id="export-satellite-output" type="text">
+                            </label>
+                            <label class="form-field full">
+                                <span>GIS 输出目录</span>
+                                <input id="export-gis-output" type="text"
+                                       value="cache/高德地图/gis数据/输出">
+                            </label>
+                        </div>
+                    </section>
+
+                    <div class="export-footer">
+                        <span id="export-validation-message" class="validation-message"></span>
+                        <button id="export-cancel" class="secondary-command" type="button"
+                                data-action="cancel-export-config">取消</button>
+                        <button id="export-submit" class="primary-command" type="button"
+                                data-action="submit-export">加入导出队列</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="task-page" class="workspace-page" style="display: none">
+        <header class="page-header">
+            <button id="tasks-back-preview" class="secondary-command" type="button"
+                    data-action="back-to-preview">返回</button>
+            <h1>导出任务</h1>
+            <span class="page-header-summary">所有导出记录与实时进度</span>
+            <div class="page-header-spacer"></div>
+            <button id="tasks-new-export" class="primary-command" type="button"
+                    data-action="open-export-config">新建导出</button>
+            <button id="tasks-clear-finished" class="secondary-command" type="button"
+                    data-action="clear-finished-export-tasks">清除已结束</button>
+        </header>
+        <div class="task-summary-band">
+            <span>排队 <strong id="task-count-queued">0</strong></span>
+            <span>运行 <strong id="task-count-running">0</strong></span>
+            <span>完成 <strong id="task-count-succeeded">0</strong></span>
+            <span>失败/取消 <strong id="task-count-failed">0</strong></span>
+        </div>
+        <div class="page-content">
+            <div id="export-task-list" class="task-list">
+                <div class="task-empty">暂无导出任务</div>
+            </div>
+        </div>
+    </section>
 </body>
 </html>

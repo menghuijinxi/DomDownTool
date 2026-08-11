@@ -30,10 +30,12 @@ namespace DownTool
         All,
         Point,
         Road,
-        Line,
+        Green,
+        Highway,
+        Subway,
         Building,
         Water,
-        Transit,
+        Boundary,
         Other
     };
 
@@ -44,6 +46,12 @@ namespace DownTool
         uint8_t blue = 0;
         uint8_t alpha = 255;
     };
+
+    [[nodiscard]] AmapVectorRenderCategory ClassifyAmapVectorFeature(
+        const AmapVectorFeature& feature);
+
+    [[nodiscard]] AmapVectorColor GetDefaultAmapVectorRenderColor(
+        AmapVectorRenderCategory category);
 
     struct AmapVectorRenderOptions
     {
@@ -69,6 +77,8 @@ namespace DownTool
         uint32_t maxConcurrency = std::thread::hardware_concurrency();
         // 回调由工作线程串行调用；Render 返回后不会再调用。
         AmapVectorRenderProgressCallback progressCallback;
+        // 返回 true 时尽快停止领取新任务。
+        std::function<bool()> cancellationRequested;
         uint32_t tileSize = 256;
         int roadLineWidth = 4;
         int lineWidth = 2;
