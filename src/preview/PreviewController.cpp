@@ -16,6 +16,7 @@
 #include "include/core/SkColor.h"
 #include "include/core/SkRect.h"
 #include "skui_runtime.h"
+#include "skui_runtime_helpers.h"
 
 #include "preview/SearchTrace.h"
 
@@ -1937,6 +1938,7 @@ bool DomDownToolPreview::PreviewController::sampleGisColorAtScreenCursor(skui::R
 
 void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
 {
+    const skui::RuntimeUpdateBatch updateBatch(runtime);
     runtime.setVisibleById("preview-page", page_ == Page::Preview);
     runtime.setVisibleById("export-page", page_ == Page::Export);
     runtime.setVisibleById("task-page", page_ == Page::Tasks);
@@ -2503,6 +2505,7 @@ void DomDownToolPreview::PreviewController::scheduleMapUiRefresh(HWND window, co
 void DomDownToolPreview::PreviewController::updateMapInteractionUi(
     skui::Runtime& runtime, const POINT& point)
 {
+    const skui::RuntimeUpdateBatch updateBatch(runtime);
     const bool cursorChanged = updateCursor(runtime, point.x, point.y);
     const std::string centerText =
         fmt::format("{:.6f}, {:.6f}", renderer_.center().lon, renderer_.center().lat);
