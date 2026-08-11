@@ -771,15 +771,8 @@
         }
 
         .page-header-spacer {
-            flex: 0 0 650px;
-            width: 650px;
-            min-width: 650px;
-        }
-
-        #task-page .page-header-spacer {
-            flex-basis: 580px;
-            width: 580px;
-            min-width: 580px;
+            flex: 1;
+            min-width: 0;
         }
 
         #export-open-tasks {
@@ -793,8 +786,8 @@
         }
 
         #tasks-clear-finished {
-            width: 110px;
-            min-width: 110px;
+            width: 128px;
+            min-width: 128px;
         }
 
         .page-content {
@@ -889,43 +882,50 @@
         }
 
         .gis-group-list {
-            display: flex;
-            flex-wrap: wrap;
-            align-content: flex-start;
-            gap: 8px;
-            min-height: 92px;
-            padding: 12px;
-            border: 1px solid #3e4642;
-            background: #151918;
+            min-height: 42px;
+            display: grid;
+            border-top: 1px solid #343a37;
+        }
+
+        .gis-group-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
         }
 
         .gis-group-item {
-            display: inline-flex;
+            display: flex;
             align-items: center;
-            gap: 6px;
-            width: 148px;
-            min-width: 148px;
-            min-height: 32px;
-            padding: 0 10px;
-            border: 1px solid #4a5550;
-            border-radius: 4px;
-            background: #252b28;
-            color: #d8dfdc;
-            font: inherit;
+            gap: 9px;
+            min-width: 0;
+            min-height: 42px;
+            padding: 0 8px;
+            border-bottom: 1px solid #343a37;
+            color: #dce3df;
         }
 
-        .gis-group-item[aria-pressed="true"] {
-            border-color: #58af94;
-            background: #294b40;
-            color: #f1faf6;
+        .gis-group-item:nth-child(odd) {
+            border-right: 1px solid #343a37;
+        }
+
+        .gis-group-item input {
+            flex: 0 0 16px;
+            width: 16px;
+            height: 16px;
         }
 
         .gis-group-item.merged {
-            border-color: #b59245;
-            background: #423923;
+            background: #2d2a20;
+        }
+
+        .gis-group-label {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .gis-group-count {
+            margin-left: auto;
             color: #9eaaa4;
             font-size: 11px;
         }
@@ -1344,14 +1344,14 @@
     </main>
 
     <section id="export-page" class="workspace-page" style="display: none">
-        <header class="page-header">
-            <button id="export-back-preview" class="secondary-command" type="button"
-                    data-action="back-to-preview">返回</button>
+        <header id="export-page-header" class="page-header">
             <h1>导出配置</h1>
             <span id="export-config-summary" class="page-header-summary"></span>
             <div class="page-header-spacer"></div>
             <button id="export-open-tasks" class="secondary-command" type="button"
                     data-action="open-export-tasks">导出任务</button>
+            <button id="export-back-preview" class="secondary-command" type="button"
+                    data-action="back-to-preview">返回</button>
         </header>
         <div class="page-content">
             <div class="export-layout">
@@ -1493,16 +1493,17 @@
     </section>
 
     <section id="task-page" class="workspace-page" style="display: none">
-        <header class="page-header">
-            <button id="tasks-back-preview" class="secondary-command" type="button"
-                    data-action="back-to-preview">返回</button>
+        <header id="task-page-header" class="page-header">
             <h1>导出任务</h1>
             <span class="page-header-summary">所有导出记录与实时进度</span>
             <div class="page-header-spacer"></div>
+            <button id="tasks-clear-finished" class="secondary-command" type="button"
+                    data-action="clear-finished-export-tasks"
+                    title="移除成功、失败和已取消的任务记录">移除已结束任务</button>
             <button id="tasks-new-export" class="primary-command" type="button"
                     data-action="open-export-config">新建导出</button>
-            <button id="tasks-clear-finished" class="secondary-command" type="button"
-                    data-action="clear-finished-export-tasks">清除已结束</button>
+            <button id="tasks-back-preview" class="secondary-command" type="button"
+                    data-action="back-to-preview">返回</button>
         </header>
         <div class="task-summary-band">
             <span>排队 <strong id="task-count-queued">0</strong></span>

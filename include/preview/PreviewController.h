@@ -108,7 +108,7 @@ class PreviewController
 
     void UpdateTaskUi(skui::Runtime& runtime);
 
-    void ToggleExportGisGroup(uint64_t groupId);
+    void setExportGisGroupSelected(uint64_t groupId, bool selected);
 
     void HandleExportGisGroupContextAction(uint64_t groupId);
 

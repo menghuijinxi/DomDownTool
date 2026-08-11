@@ -53,6 +53,34 @@ bool runTest()
         return false;
     }
 
+    const std::vector<std::string> exportHeaderChildren =
+        runtime.childElementIdsById("export-page-header");
+    const std::vector<std::string> taskHeaderChildren =
+        runtime.childElementIdsById("task-page-header");
+    const auto exportTasksButton =
+        std::ranges::find(exportHeaderChildren, "export-open-tasks");
+    const auto exportBackButton =
+        std::ranges::find(exportHeaderChildren, "export-back-preview");
+    const auto taskClearButton =
+        std::ranges::find(taskHeaderChildren, "tasks-clear-finished");
+    const auto taskNewButton =
+        std::ranges::find(taskHeaderChildren, "tasks-new-export");
+    const auto taskBackButton =
+        std::ranges::find(taskHeaderChildren, "tasks-back-preview");
+    if (!postprocess_test::Require(
+            exportTasksButton != exportHeaderChildren.end() &&
+                exportBackButton == std::next(exportTasksButton),
+            "导出配置页的返回按钮没有紧跟在导出任务按钮后") ||
+        !postprocess_test::Require(
+            taskClearButton != taskHeaderChildren.end() &&
+                taskNewButton == std::next(taskClearButton) &&
+                taskNewButton != taskHeaderChildren.end() &&
+                taskBackButton == std::next(taskNewButton),
+            "导出任务页的返回按钮没有紧跟在新建导出按钮后"))
+    {
+        return false;
+    }
+
     std::string lastInputId;
     std::string lastInputValue;
     std::string lastMouseDownId;
@@ -353,9 +381,9 @@ bool runTest()
     }
     navigationSucceeded = false;
     lastClickId.clear();
-    sendMouse(runtime, skui::EventType::MouseMove, 50.F, 28.F);
-    sendMouse(runtime, skui::EventType::MouseDown, 50.F, 28.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 50.F, 28.F);
+    sendMouse(runtime, skui::EventType::MouseMove, 1390.F, 28.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 1390.F, 28.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 1390.F, 28.F);
     if (!postprocess_test::Require(lastClickId == "export-back-preview" &&
                                        activePage == "preview" && navigationSucceeded,
                                    "导出配置页的返回按钮无法恢复预览页，Click：" +
@@ -386,9 +414,9 @@ bool runTest()
     }
     navigationSucceeded = false;
     lastClickId.clear();
-    sendMouse(runtime, skui::EventType::MouseMove, 50.F, 28.F);
-    sendMouse(runtime, skui::EventType::MouseDown, 50.F, 28.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 50.F, 28.F);
+    sendMouse(runtime, skui::EventType::MouseMove, 1390.F, 28.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 1390.F, 28.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 1390.F, 28.F);
     if (!postprocess_test::Require(lastClickId == "tasks-back-preview" &&
                                        activePage == "preview" && navigationSucceeded,
                                    "导出任务页的返回按钮无法恢复预览页，Click：" +
@@ -412,13 +440,64 @@ bool runTest()
                 runtime.setValueById("export-gis-output", "cache/高德地图/gis数据/输出") &&
                 runtime.replaceHtmlById(
                     "export-gis-groups",
-                    "<button class=\"gis-group-item merged\" type=\"button\" "
-                    "aria-pressed=\"true\">道路、水 · 合并"
-                    "<span class=\"gis-group-count\">2</span></button>"
-                    "<button class=\"gis-group-item\" type=\"button\" "
-                    "aria-pressed=\"true\">绿地"
-                    "<span class=\"gis-group-count\">1</span></button>"),
+                    "<div class=\"gis-group-grid\">"
+                    "<div id=\"export-gis-group-row-1\" class=\"gis-group-item\">"
+                    "<input id=\"export-gis-group-1\" type=\"checkbox\" value=\"1\" checked>"
+                    "<label class=\"gis-group-label\" for=\"export-gis-group-1\">"
+                    "道路</label><span class=\"gis-group-count\">1</span></div>"
+                    "<div id=\"export-gis-group-row-2\" class=\"gis-group-item\">"
+                    "<input id=\"export-gis-group-2\" type=\"checkbox\" value=\"2\" checked>"
+                    "<label class=\"gis-group-label\" for=\"export-gis-group-2\">水</label>"
+                    "<span class=\"gis-group-count\">1</span></div>"
+                    "<div class=\"gis-group-item\"><input type=\"checkbox\">"
+                    "<label class=\"gis-group-label\">绿地</label>"
+                    "<span class=\"gis-group-count\">1</span></div>"
+                    "<div class=\"gis-group-item\"><input type=\"checkbox\">"
+                    "<label class=\"gis-group-label\">高速</label>"
+                    "<span class=\"gis-group-count\">1</span></div>"
+                    "<div class=\"gis-group-item\"><input type=\"checkbox\">"
+                    "<label class=\"gis-group-label\">地铁</label>"
+                    "<span class=\"gis-group-count\">1</span></div>"
+                    "<div class=\"gis-group-item\"><input type=\"checkbox\">"
+                    "<label class=\"gis-group-label\">建筑</label>"
+                    "<span class=\"gis-group-count\">1</span></div>"
+                    "<div class=\"gis-group-item\"><input type=\"checkbox\">"
+                    "<label class=\"gis-group-label\">点</label>"
+                    "<span class=\"gis-group-count\">1</span></div>"
+                    "<div class=\"gis-group-item\"><input type=\"checkbox\">"
+                    "<label class=\"gis-group-label\">边界</label>"
+                    "<span class=\"gis-group-count\">1</span></div>"
+                    "<div class=\"gis-group-item\"><input type=\"checkbox\">"
+                    "<label class=\"gis-group-label\">其他</label>"
+                    "<span class=\"gis-group-count\">1</span></div></div>"),
             "无法显示或填充导出配置页面"))
+    {
+        return false;
+    }
+    const std::vector<std::string> gisGroupChildren =
+        runtime.childElementIdsById("export-gis-group-row-1");
+    if (!postprocess_test::Require(
+            std::ranges::find(gisGroupChildren, "export-gis-group-1") !=
+                gisGroupChildren.end(),
+            "GIS 输出组没有使用真实的多选框"))
+    {
+        return false;
+    }
+    lastChangeId.clear();
+    sendMouse(runtime, skui::EventType::MouseDown, 724.F, 128.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 724.F, 128.F);
+    if (!postprocess_test::Require(
+            lastChangeId == "export-gis-group-1" && lastChangeValue == "1" &&
+                !lastChangeChecked,
+            "GIS 输出组多选框无法取消选中"))
+    {
+        return false;
+    }
+    sendMouse(runtime, skui::EventType::MouseDown, 724.F, 128.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 724.F, 128.F);
+    if (!postprocess_test::Require(
+            lastChangeId == "export-gis-group-1" && lastChangeChecked,
+            "GIS 输出组多选框无法恢复选中"))
     {
         return false;
     }

@@ -179,8 +179,9 @@ std::optional<uint64_t> exportGisGroupId(std::string_view id)
         return std::nullopt;
     }
 
+    const size_t separator = id.find_last_of('-');
+    const std::string_view value = id.substr(separator + 1);
     uint64_t groupId = 0;
-    const std::string_view value = id.substr(kPrefix.size());
     const auto result = std::from_chars(value.data(), value.data() + value.size(), groupId);
     if (result.ec != std::errc{} || result.ptr != value.data() + value.size())
     {
@@ -812,6 +813,13 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                     exportBuildingHeightColors_ = event.checked;
                     return;
                 }
+                if (const std::optional<uint64_t> groupId = exportGisGroupId(event.id))
+                {
+                    setExportGisGroupSelected(*groupId, event.checked);
+                    UpdateExportUi(runtime);
+                    requestRedraw();
+                    return;
+                }
             }
 
             if (event.type == skui::ElementEventType::MouseDown &&
@@ -1066,14 +1074,6 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 requestRedraw();
                 return;
             }
-            if (const std::optional<uint64_t> groupId = exportGisGroupId(event.id))
-            {
-                ToggleExportGisGroup(*groupId);
-                UpdateExportUi(runtime);
-                requestRedraw();
-                return;
-            }
-
             if (const std::optional<GisOverlayCategory> target =
                     gisColorTargetCategoryFromId(event.id))
             {
@@ -2176,17 +2176,26 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
         }
         const bool merged = group.categories.size() > 1;
         groupsHtml += fmt::format(
-            "<button id=\"export-gis-group-{}\" class=\"gis-group-item{}\" "
-            "type=\"button\" data-action=\"toggle-export-gis-group\" "
-            "aria-pressed=\"{}\" "
-            "title=\"{}\">{}{}<span class=\"gis-group-count\">{}</span></button>",
-            group.id, merged ? " merged" : "", group.selected ? "true" : "false",
-            merged ? "右键拆分此组合" : "选择后右键可合并", escapeHtml(labels),
-            merged ? " · 合并" : "", group.categories.size());
+            "<div id=\"export-gis-group-row-{}\" class=\"gis-group-item{}\" "
+            "title=\"{}\">"
+            "<input id=\"export-gis-group-{}\" type=\"checkbox\" value=\"{}\"{}>"
+            "<label id=\"export-gis-group-label-{}\" class=\"gis-group-label\" "
+            "for=\"export-gis-group-{}\">{}{}</label>"
+            "<span id=\"export-gis-group-count-{}\" class=\"gis-group-count\">"
+            "{}</span></div>",
+            group.id, merged ? " merged" : "",
+            merged ? "右键拆分此组合" : "选择后右键可合并", group.id, group.id,
+            group.selected ? " checked" : "", group.id, group.id,
+            escapeHtml(labels), merged ? " · 合并" : "", group.id,
+            group.categories.size());
     }
     if (groupsHtml.empty())
     {
         groupsHtml = "<div class=\"task-empty\">预览页没有选中的 GIS 分类</div>";
+    }
+    else
+    {
+        groupsHtml = "<div class=\"gis-group-grid\">" + groupsHtml + "</div>";
     }
     if (groupsHtml != lastExportGroupsHtml_)
     {
@@ -2264,7 +2273,8 @@ void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
         {"task-count-failed", std::to_string(failedCount)}});
 }
 
-void DomDownToolPreview::PreviewController::ToggleExportGisGroup(uint64_t groupId)
+void DomDownToolPreview::PreviewController::setExportGisGroupSelected(
+    uint64_t groupId, bool selected)
 {
     const auto group = std::find_if(
         exportGisGroups_.begin(), exportGisGroups_.end(),
@@ -2273,7 +2283,7 @@ void DomDownToolPreview::PreviewController::ToggleExportGisGroup(uint64_t groupI
     {
         return;
     }
-    group->selected = !group->selected;
+    group->selected = selected;
 }
 
 void DomDownToolPreview::PreviewController::HandleExportGisGroupContextAction(uint64_t groupId)
