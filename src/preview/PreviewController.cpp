@@ -18,6 +18,7 @@
 #include "skui_runtime.h"
 #include "skui_runtime_helpers.h"
 
+#include "preview/PreviewInputRouting.h"
 #include "preview/SearchTrace.h"
 
 namespace
@@ -1433,7 +1434,7 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         }
         if (isSearchInteractionPoint(runtime, point.x, point.y))
         {
-            return true;
+            return shouldConsumeSearchPopupPointerMessage(message, true);
         }
         if (message == WM_LBUTTONDOWN)
         {

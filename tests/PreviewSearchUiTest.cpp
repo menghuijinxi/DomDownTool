@@ -9,6 +9,7 @@
 
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/core/mat.hpp"
+#include "preview/PreviewInputRouting.h"
 #include "skui_runtime.h"
 
 namespace
@@ -196,6 +197,18 @@ bool runTest()
         return false;
     }
 
+    if (!postprocess_test::Require(
+            !DomDownToolPreview::shouldConsumeSearchPopupPointerMessage(
+                WM_MOUSEWHEEL, true),
+            "搜索结果框内的滚轮消息不应被地图控制器消费") ||
+        !postprocess_test::Require(
+            DomDownToolPreview::shouldConsumeSearchPopupPointerMessage(
+                WM_LBUTTONDOWN, true),
+            "搜索结果框内的点击消息应由地图控制器隔离"))
+    {
+        return false;
+    }
+
     if (!postprocess_test::Require(runtime.setVisibleById("place-search-results", true),
                                    "无法显示搜索结果面板") ||
         !postprocess_test::Require(
@@ -217,11 +230,45 @@ bool runTest()
                 "data-action=\"select-place-result\">"
                 "<span class=\"search-result-name\">天安门</span>"
                 "<span class=\"search-result-address\">北京市东城区</span></button>"
+                "<button class=\"search-result\" type=\"button\">候选地点 3</button>"
+                "<button class=\"search-result\" type=\"button\">候选地点 4</button>"
+                "<button class=\"search-result\" type=\"button\">候选地点 5</button>"
+                "<button class=\"search-result\" type=\"button\">候选地点 6</button>"
+                "<button class=\"search-result\" type=\"button\">候选地点 7</button>"
+                "<button class=\"search-result\" type=\"button\">候选地点 8</button>"
+                "<button class=\"search-result\" type=\"button\">候选地点 9</button>"
                 "</div>"),
             "无法注入搜索候选结果"))
     {
         return false;
     }
+
+    if (!postprocess_test::Require(
+            runtime.renderToBgraPixels(pixels.data(), kWidth, kHeight,
+                                       static_cast<size_t>(kWidth) * sizeof(uint32_t), 1.F),
+            "无法布局可滚动搜索结果") ||
+        !postprocess_test::Require(
+            runtime.scrollStateById("place-search-results-content").has_value() &&
+                runtime.scrollStateById("place-search-results-content")->maxScrollY > 0.F,
+            "搜索结果数量超出弹框后没有形成可滚动区域"))
+    {
+        return false;
+    }
+    skui::Event wheelEvent;
+    wheelEvent.type = skui::EventType::MouseWheel;
+    wheelEvent.x = 400.F;
+    wheelEvent.y = 300.F;
+    wheelEvent.wheelDelta = -120.F;
+    runtime.handleEvent(wheelEvent);
+    const std::optional<skui::ScrollState> searchScrollState =
+        runtime.scrollStateById("place-search-results-content");
+    if (!postprocess_test::Require(
+            searchScrollState.has_value() && searchScrollState->scrollY > 0.F,
+            "搜索结果框没有响应鼠标滚轮"))
+    {
+        return false;
+    }
+    runtime.setScrollOffsetById("place-search-results-content", 0.F, 0.F);
 
     sendMouse(runtime, skui::EventType::MouseDown, 260.F, 26.F);
     sendMouse(runtime, skui::EventType::MouseUp, 260.F, 26.F);
