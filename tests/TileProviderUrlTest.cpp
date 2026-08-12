@@ -1,3 +1,4 @@
+#include <cmath>
 #include <iostream>
 #include <string>
 
@@ -15,6 +16,37 @@ namespace
             std::cerr << message << '\n';
         }
         return condition;
+    }
+
+    bool CoordinatesAreNear(
+        const DownTool::LonLat& actual,
+        const DownTool::LonLat& expected,
+        double tolerance)
+    {
+        return std::abs(actual.lon - expected.lon) <= tolerance &&
+            std::abs(actual.lat - expected.lat) <= tolerance;
+    }
+
+    bool TestGcj02CoordinateCalibration()
+    {
+        // 独立校准值用于防止正反转换共享同一公式错误后仍然自洽。
+        const DownTool::LonLat shandongWgs84{116.927549, 36.712797};
+        const DownTool::LonLat shandongGcj02{116.93314131639661, 36.712916351380116};
+        const DownTool::LonLat expectedApproximateWgs84{
+            116.92753692675672, 36.71278976033607};
+
+        return Require(
+                   CoordinatesAreNear(
+                       DownTool::GCJ02GoogleDownBase::WGS84ToGCJ02(shandongWgs84),
+                       shandongGcj02,
+                       1e-10),
+                   "WGS84 to GCJ02 calibration failed") &&
+            Require(
+                CoordinatesAreNear(
+                    DownTool::GCJ02GoogleDownBase::GCJ02ToWGS84(shandongGcj02),
+                    expectedApproximateWgs84,
+                    1e-10),
+                "GCJ02 to WGS84 calibration failed");
     }
 
     bool RunTest()
@@ -113,10 +145,11 @@ namespace
         }
 
         return Require(
-            google.GetCachePath() != bing.GetCachePath() &&
-                google.GetCachePath() != arcgis.GetCachePath() &&
-                bing.GetCachePath() != arcgis.GetCachePath(),
-            "Provider cache roots must not overlap");
+                   google.GetCachePath() != bing.GetCachePath() &&
+                       google.GetCachePath() != arcgis.GetCachePath() &&
+                       bing.GetCachePath() != arcgis.GetCachePath(),
+                   "Provider cache roots must not overlap") &&
+            TestGcj02CoordinateCalibration();
     }
 } // namespace
 
