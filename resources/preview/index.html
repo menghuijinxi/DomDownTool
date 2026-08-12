@@ -635,11 +635,24 @@
             font-size: 11px;
         }
 
-        #cursor-coordinate,
         #center-coordinate {
-            min-width: 150px;
+            width: 164px;
+            height: 28px;
+            padding: 0;
+            border: 1px solid transparent;
+            border-radius: 3px;
+            outline: none;
+            background: transparent;
             color: #d7ddda;
+            font: inherit;
             font-variant-numeric: tabular-nums;
+        }
+
+        #center-coordinate:hover,
+        #center-coordinate:focus {
+            padding: 0 7px;
+            border-color: #4d5551;
+            background: #151918;
         }
 
         #cache-path {
@@ -1329,9 +1342,9 @@
             </div>
         </section>
 
-        <footer class="statusbar">
-            <span id="cursor-coordinate">116.397389, 39.908722</span>
-            <span class="coordinate-chip" id="center-coordinate">116.397389, 39.908722</span>
+        <footer id="preview-statusbar" class="statusbar">
+            <input id="center-coordinate" type="text" value="116.397389, 39.908722"
+                   aria-label="地图中心经纬度">
             <div class="view-span-controls">
                 <button id="view-span-decrease" type="button" data-action="view-span-decrease" title="减少可见瓦块">-</button>
                 <span id="view-span-value">视野 1.0x</span>

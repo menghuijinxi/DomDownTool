@@ -218,6 +218,25 @@ std::optional<double> parseFiniteDouble(std::string_view value)
     }
 }
 
+std::optional<DownTool::LonLat> parseCenterCoordinate(std::string_view value)
+{
+    const size_t separator = value.find(',');
+    if (separator == std::string_view::npos ||
+        value.find(',', separator + 1) != std::string_view::npos)
+    {
+        return std::nullopt;
+    }
+
+    const std::optional<double> longitude = parseFiniteDouble(value.substr(0, separator));
+    const std::optional<double> latitude = parseFiniteDouble(value.substr(separator + 1));
+    if (!longitude.has_value() || *longitude < -180. || *longitude > 180. ||
+        !latitude.has_value() || *latitude < -85. || *latitude > 85.)
+    {
+        return std::nullopt;
+    }
+    return DownTool::LonLat{*longitude, *latitude};
+}
+
 std::optional<uint32_t> parseUint32(std::string_view value)
 {
     uint32_t result = 0;
@@ -709,6 +728,10 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
 
             if (event.type == skui::ElementEventType::Input)
             {
+                if (event.id == "center-coordinate")
+                {
+                    return;
+                }
                 if (event.id == "export-lon")
                 {
                     exportLongitudeValue_ = event.value;
@@ -1163,6 +1186,21 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
     runtime.setElementKeyDownCallback(
         [this, &runtime](const skui::ElementEvent& event)
         {
+            if (event.id == "center-coordinate")
+            {
+                if (event.key == VK_RETURN)
+                {
+                    submitCenterCoordinate(runtime, event.value);
+                    return true;
+                }
+                if (event.key == VK_ESCAPE)
+                {
+                    runtime.setValueById("center-coordinate", lastCenterCoordinate_);
+                    requestRedraw();
+                    return true;
+                }
+                return false;
+            }
             if (event.key == VK_ESCAPE &&
                 (gisOverlayPopupOpen_ || gisColorPopupOpen_ ||
                  gisColorEyedropperActive_))
@@ -1256,11 +1294,10 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
     window_.store(message == WM_DESTROY ? nullptr : window, std::memory_order_relaxed);
     if (message == WM_DESTROY)
     {
-        pendingMapUiPoint_.reset();
         immediateMapRedrawPosted_ = false;
         mapUiRefreshPosted_ = false;
         mapDragRedrawThrottle_.reset();
-        mapHoverRefreshThrottle_.reset();
+        mapCenterUiRefreshThrottle_.reset();
     }
     if (message == kPreviewImmediateMapRedrawMessage)
     {
@@ -1310,14 +1347,7 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
     if (message == kPreviewMapUiRefreshMessage)
     {
         mapUiRefreshPosted_ = false;
-        if (!pendingMapUiPoint_.has_value())
-        {
-            return false;
-        }
-
-        const POINT point = *pendingMapUiPoint_;
-        pendingMapUiPoint_.reset();
-        updateMapInteractionUi(runtime, point);
+        updateMapInteractionUi(runtime);
         return false;
     }
     if (message == WM_TIMER && wParam == kPreviewEyedropperTimerId)
@@ -1493,8 +1523,8 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         }
         mapDragRedrawThrottle_.reset();
         scheduleImmediateMapRedraw(window);
-        mapHoverRefreshThrottle_.reset();
-        scheduleMapUiRefresh(window, clientPoint(lParam));
+        mapCenterUiRefreshThrottle_.reset();
+        scheduleMapUiRefresh(window);
         return true;
     }
 
@@ -1510,7 +1540,6 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
 
         const double wheelSteps = static_cast<double>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
         renderer_.zoomAt(point.x, point.y, wheelSteps * 0.25);
-        updateCursor(runtime, point.x, point.y);
         updateUi(runtime);
         return true;
     }
@@ -1541,7 +1570,7 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         }
         dragging_ = true;
         mapDragRedrawThrottle_.reset();
-        mapHoverRefreshThrottle_.reset();
+        mapCenterUiRefreshThrottle_.reset();
         lastDragPoint_ = point;
         SetCapture(window);
         return true;
@@ -1559,19 +1588,12 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
             {
                 scheduleImmediateMapRedraw(window);
             }
-            if (mapHoverRefreshThrottle_.shouldRefresh(
+            if (mapCenterUiRefreshThrottle_.shouldRefresh(
                     MapHoverRefreshThrottle::Clock::now()))
             {
-                scheduleMapUiRefresh(window, point);
+                scheduleMapUiRefresh(window);
             }
             return true;
-        }
-
-        if (isMapPoint(window, point.x, point.y) &&
-            mapHoverRefreshThrottle_.shouldRefresh(
-                MapHoverRefreshThrottle::Clock::now()))
-        {
-            scheduleMapUiRefresh(window, point);
         }
     }
 
@@ -1966,13 +1988,18 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
          {"coordinate-system", source.coordinateSystem},
          {"zoom-value", fmt::format("Z {:.2f}", renderer_.zoom())},
          {"view-span-value", fmt::format("视野 {:.1f}x", renderer_.GetViewSpan())},
-         {"center-coordinate", fmt::format("{:.6f}, {:.6f}", center.lon, center.lat)},
          {"cache-path", pathToUtf8(source.cacheRoot)},
          {"tile-stats",
          fmt::format("可见 {}  已载入 {}  读取 {}  下载 {}/{}  失败 {}  缓存 {:.1f} MB",
                       stats.visibleTiles, stats.readyTiles, stats.cache.pendingTiles,
                       stats.downloads.activeTiles, stats.downloads.queuedTiles,
                       stats.downloads.failedTiles, memoryMegabytes)}});
+    const std::string centerText = fmt::format("{:.6f}, {:.6f}", center.lon, center.lat);
+    if (centerText != lastCenterCoordinate_)
+    {
+        runtime.setValueById("center-coordinate", centerText);
+        lastCenterCoordinate_ = centerText;
+    }
     const GisOverlayCategories gisCategories = renderer_.GetGisOverlayCategories();
     if (!lastUiGisCategories_.has_value() || *lastUiGisCategories_ != gisCategories)
     {
@@ -2461,25 +2488,18 @@ void DomDownToolPreview::PreviewController::SubmitExport(skui::Runtime& runtime)
     schedulePageChange(Page::Tasks, runtime);
 }
 
-bool DomDownToolPreview::PreviewController::updateCursor(skui::Runtime& runtime, double screenX,
-                                                         double screenY)
+void DomDownToolPreview::PreviewController::submitCenterCoordinate(
+    skui::Runtime& runtime, std::string_view value)
 {
-    const std::optional<DownTool::LonLat> coordinate = renderer_.lonLatAt(screenX, screenY);
-    if (!coordinate.has_value())
+    const std::optional<DownTool::LonLat> coordinate = parseCenterCoordinate(value);
+    if (coordinate.has_value())
     {
-        return false;
+        renderer_.setView(*coordinate, renderer_.zoom());
+        renderer_.setLocationMarker(std::nullopt);
     }
-
-    const std::string coordinateText =
-        fmt::format("{:.6f}, {:.6f}", coordinate->lon, coordinate->lat);
-    if (coordinateText == lastCursorCoordinate_)
-    {
-        return false;
-    }
-
-    runtime.setTextById("cursor-coordinate", coordinateText);
-    lastCursorCoordinate_ = coordinateText;
-    return true;
+    lastCenterCoordinate_.clear();
+    updateUi(runtime);
+    requestRedraw();
 }
 
 void DomDownToolPreview::PreviewController::scheduleImmediateMapRedraw(HWND window)
@@ -2497,9 +2517,8 @@ void DomDownToolPreview::PreviewController::scheduleImmediateMapRedraw(HWND wind
     }
 }
 
-void DomDownToolPreview::PreviewController::scheduleMapUiRefresh(HWND window, const POINT& point)
+void DomDownToolPreview::PreviewController::scheduleMapUiRefresh(HWND window)
 {
-    pendingMapUiPoint_ = point;
     if (mapUiRefreshPosted_)
     {
         return;
@@ -2513,17 +2532,16 @@ void DomDownToolPreview::PreviewController::scheduleMapUiRefresh(HWND window, co
 }
 
 void DomDownToolPreview::PreviewController::updateMapInteractionUi(
-    skui::Runtime& runtime, const POINT& point)
+    skui::Runtime& runtime)
 {
     const skui::RuntimeUpdateBatch updateBatch(runtime);
-    const bool cursorChanged = updateCursor(runtime, point.x, point.y);
     const std::string centerText =
         fmt::format("{:.6f}, {:.6f}", renderer_.center().lon, renderer_.center().lat);
     const std::string zoomText = fmt::format("Z {:.2f}", renderer_.zoom());
     bool statusChanged = false;
     if (centerText != lastCenterCoordinate_)
     {
-        runtime.setTextById("center-coordinate", centerText);
+        runtime.setValueById("center-coordinate", centerText);
         lastCenterCoordinate_ = centerText;
         statusChanged = true;
     }
@@ -2534,7 +2552,7 @@ void DomDownToolPreview::PreviewController::updateMapInteractionUi(
         statusChanged = true;
     }
 
-    if (cursorChanged || statusChanged)
+    if (statusChanged)
     {
         requestRedraw();
     }

@@ -53,6 +53,20 @@ bool runTest()
         return false;
     }
 
+    const std::vector<std::string> statusbarChildren =
+        runtime.childElementIdsById("preview-statusbar");
+    if (!postprocess_test::Require(
+            std::ranges::find(statusbarChildren, "cursor-coordinate") ==
+                    statusbarChildren.end(),
+            "状态栏仍包含无用的鼠标位置经纬度") ||
+        !postprocess_test::Require(
+            std::ranges::find(statusbarChildren, "center-coordinate") !=
+                    statusbarChildren.end(),
+            "状态栏缺少可编辑的中心经纬度"))
+    {
+        return false;
+    }
+
     const std::vector<std::string> exportHeaderChildren =
         runtime.childElementIdsById("export-page-header");
     const std::vector<std::string> taskHeaderChildren =
@@ -146,6 +160,42 @@ bool runTest()
             }
         });
 
+    std::string centerCoordinateKeyValue;
+    runtime.setElementKeyDownCallback(
+        [&](const skui::ElementEvent& event)
+        {
+            if (event.id == "center-coordinate" && event.key == VK_RETURN)
+            {
+                centerCoordinateKeyValue = event.value;
+                return true;
+            }
+            return false;
+        });
+
+    std::vector<uint32_t> pixels(static_cast<size_t>(kWidth) * kHeight);
+    if (!postprocess_test::Require(
+            runtime.renderToBgraPixels(pixels.data(), kWidth, kHeight,
+                                       static_cast<size_t>(kWidth) * sizeof(uint32_t), 1.F),
+            "无法布局可编辑的中心经纬度") ||
+        !postprocess_test::Require(
+            runtime.setValueById("center-coordinate", "121.473701, 31.230416"),
+            "无法写入中心经纬度编辑框"))
+    {
+        return false;
+    }
+    sendMouse(runtime, skui::EventType::MouseDown, 80.F, 886.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 80.F, 886.F);
+    skui::Event enterEvent;
+    enterEvent.type = skui::EventType::KeyDown;
+    enterEvent.key = VK_RETURN;
+    runtime.handleEvent(enterEvent);
+    if (!postprocess_test::Require(
+            centerCoordinateKeyValue == "121.473701, 31.230416",
+            "中心经纬度输入框没有在回车时提交编辑值"))
+    {
+        return false;
+    }
+
     if (!postprocess_test::Require(runtime.setVisibleById("place-search-results", true),
                                    "无法显示搜索结果面板") ||
         !postprocess_test::Require(
@@ -202,16 +252,16 @@ bool runTest()
         return false;
     }
 
-    sendMouse(runtime, skui::EventType::MouseDown, 357.F, 887.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 357.F, 887.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 357.F - 150.F, 887.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 357.F - 150.F, 887.F);
     if (!postprocess_test::Require(lastClickId == "view-span-decrease",
                                    "视野缩小按钮无法点击，实际命中：" + lastClickId))
     {
         return false;
     }
 
-    sendMouse(runtime, skui::EventType::MouseDown, 451.F, 887.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 451.F, 887.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 451.F - 150.F, 887.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 451.F - 150.F, 887.F);
     if (!postprocess_test::Require(lastClickId == "view-span-increase",
                                    "视野扩大按钮无法点击，实际命中：" + lastClickId))
     {
@@ -315,7 +365,7 @@ bool runTest()
         return false;
     }
 
-    std::vector<uint32_t> pixels(static_cast<size_t>(kWidth) * kHeight);
+    runtime.setValueById("center-coordinate", "116.397389, 39.908722");
     if (!postprocess_test::Require(
             runtime.renderToBgraPixels(pixels.data(), kWidth, kHeight,
                                        static_cast<size_t>(kWidth) * sizeof(uint32_t), 1.F),

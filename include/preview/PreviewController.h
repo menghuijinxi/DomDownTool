@@ -125,13 +125,13 @@ class PreviewController
 
     bool sampleGisColorAtScreenCursor(skui::Runtime& runtime);
 
-    bool updateCursor(skui::Runtime& runtime, double screenX, double screenY);
+    void submitCenterCoordinate(skui::Runtime& runtime, std::string_view value);
 
     void scheduleImmediateMapRedraw(HWND window);
 
-    void scheduleMapUiRefresh(HWND window, const POINT& point);
+    void scheduleMapUiRefresh(HWND window);
 
-    void updateMapInteractionUi(skui::Runtime& runtime, const POINT& point);
+    void updateMapInteractionUi(skui::Runtime& runtime);
 
     void scheduleUiRefresh();
 
@@ -190,16 +190,14 @@ class PreviewController
     std::optional<GisOverlayCategories> lastUiGisCategories_;
     std::array<std::string, 9> lastUiGisColorValues_{};
     std::string lastUiGisPickerState_;
-    std::string lastCursorCoordinate_;
     std::string lastCenterCoordinate_;
     std::string lastZoomValue_;
     bool dragging_ = false;
     POINT lastDragPoint_{};
-    std::optional<POINT> pendingMapUiPoint_;
     bool immediateMapRedrawPosted_ = false;
     bool mapUiRefreshPosted_ = false;
     MapHoverRefreshThrottle mapDragRedrawThrottle_{std::chrono::milliseconds(4)};
-    MapHoverRefreshThrottle mapHoverRefreshThrottle_{std::chrono::milliseconds(50)};
+    MapHoverRefreshThrottle mapCenterUiRefreshThrottle_{std::chrono::milliseconds(50)};
     std::atomic_bool exportTaskRefreshPosted_ = false;
     // 必须先于任务状态回调所访问的成员析构。
     ExportTaskManager exportTaskManager_;
