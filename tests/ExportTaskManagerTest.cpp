@@ -13,6 +13,7 @@
 #include "cpl_json.h"
 
 #include "preview/ExportTaskManager.h"
+#include "preview/ExportImageComposer.h"
 
 namespace
 {
@@ -53,6 +54,38 @@ bool runTest()
     std::filesystem::remove_all(testRoot, fileError);
     std::filesystem::create_directories(testRoot, fileError);
     if (!postprocess_test::Require(!fileError, "无法准备导出任务测试目录"))
+    {
+        return false;
+    }
+
+    const std::filesystem::path baseImagePath = testRoot / "images/base.png";
+    const std::filesystem::path overlayImagePath = testRoot / "images/overlay.png";
+    const std::filesystem::path composedImagePath = testRoot / "images/composed.png";
+    std::filesystem::create_directories(baseImagePath.parent_path(), fileError);
+    cv::Mat baseImage(2, 2, CV_8UC4, cv::Scalar(10, 20, 30, 255));
+    cv::Mat overlayImage(2, 2, CV_8UC4, cv::Scalar(110, 120, 130, 128));
+    baseImage.at<cv::Vec4b>(0, 1) = cv::Vec4b(0, 0, 0, 0);
+    std::string composeError;
+    if (!postprocess_test::Require(
+            cv::imwrite(postprocess_test::PathToUtf8String(baseImagePath), baseImage) &&
+                cv::imwrite(postprocess_test::PathToUtf8String(overlayImagePath), overlayImage) &&
+                DomDownToolPreview::ExportImageComposer::CompositeImage(
+                    baseImagePath, overlayImagePath, composedImagePath, composeError),
+            "无法生成 GIS alpha 合成测试图：" + composeError))
+    {
+        return false;
+    }
+    const cv::Mat composedImage = cv::imread(
+        postprocess_test::PathToUtf8String(composedImagePath), cv::IMREAD_UNCHANGED);
+    const cv::Vec4b composedPixel = composedImage.at<cv::Vec4b>(0, 0);
+    const cv::Vec4b transparentBasePixel = composedImage.at<cv::Vec4b>(0, 1);
+    if (!postprocess_test::Require(
+            composedImage.channels() == 4 && composedPixel[0] == 60 &&
+                composedPixel[1] == 70 && composedPixel[2] == 80 &&
+                composedPixel[3] == 255 && transparentBasePixel[0] == 110 &&
+                transparentBasePixel[1] == 120 && transparentBasePixel[2] == 130 &&
+                transparentBasePixel[3] == 128,
+            "GIS alpha 合成结果不符合标准 source-over 公式"))
     {
         return false;
     }
@@ -125,8 +158,10 @@ bool runTest()
         }
 
         DomDownToolPreview::ExportConfiguration invalidConfiguration;
-        invalidConfiguration.mapSourceName = "测试地图";
         invalidConfiguration.radiusMeters = 1000.;
+        invalidConfiguration.outputRoot = testRoot / "invalid-output";
+        invalidConfiguration.satelliteSources.push_back({
+            "gaode.satellite", "高德卫星", testRoot / "satellite-cache"});
         const std::string invalidTaskId = manager.Enqueue(invalidConfiguration);
         if (!postprocess_test::Require(waitForFinished(manager, invalidTaskId),
                                        "无效导出任务没有结束"))
@@ -145,6 +180,23 @@ bool runTest()
         {
             return false;
         }
+        const std::filesystem::path conversionRecord =
+            invalidConfiguration.outputRoot / std::filesystem::u8path("导出任务") /
+            std::filesystem::u8path(invalidTaskId) /
+            std::filesystem::u8path("转换记录-" + invalidTaskId + ".txt");
+        if (!postprocess_test::Require(
+                postprocess_test::ContainsText(conversionRecord, "状态: 失败") &&
+                    postprocess_test::ContainsText(
+                        conversionRecord, "结果: 没有选择任何导出内容。") &&
+                    postprocess_test::ContainsText(conversionRecord, "半径 (米): 1000") &&
+                    postprocess_test::ContainsText(conversionRecord, "XYZ 目录:") &&
+                    postprocess_test::ContainsText(conversionRecord, "/XYZ") &&
+                    postprocess_test::ContainsText(conversionRecord, "FBX 目录:") &&
+                    postprocess_test::ContainsText(conversionRecord, "/FBX"),
+                "输出目录没有保存可复用的任务转换记录"))
+        {
+            return false;
+        }
     }
 
     const std::filesystem::path concurrentRecordsPath =
@@ -154,7 +206,6 @@ bool runTest()
             [&changeCount] { changeCount.fetch_add(1, std::memory_order_relaxed); },
             concurrentRecordsPath);
         DomDownToolPreview::ExportConfiguration invalidConfiguration;
-        invalidConfiguration.mapSourceName = "并发持久化测试";
         invalidConfiguration.radiusMeters = 1000.;
 
         std::mutex taskIdsMutex;

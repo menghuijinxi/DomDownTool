@@ -3524,8 +3524,7 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 			textureSize)) + 1;
 
 	const std::filesystem::path outputRoot = GetFbxRootPath();
-	const std::filesystem::path textureRoot =
-		outputRoot / "textures" / "fbx" / std::to_string(FbxTextureSize);
+	const std::filesystem::path textureRoot = outputRoot;
 	const FbxCoordinateContext coordinateContext =
 		BuildFbxCoordinateContext(CenterLonLat);
 
@@ -3779,7 +3778,7 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 	bool meshSuccess = true;
 	if (FbxShape == FbxPlanetShape::Plane || FbxShape == FbxPlanetShape::Both)
 	{
-		const std::filesystem::path planePath = outputRoot / "mesh" / "plane" / "tiles.fbx";
+		const std::filesystem::path planePath = outputRoot / "plane.fbx";
 		const auto phaseStartTime = std::chrono::steady_clock::now();
 		meshSuccess = ExportAssimpFbx(buildMeshDatas(FbxPlanetShape::Plane), planePath) &&
 			meshSuccess;
@@ -3789,7 +3788,7 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 	}
 	if (FbxShape == FbxPlanetShape::Sphere || FbxShape == FbxPlanetShape::Both)
 	{
-		const std::filesystem::path spherePath = outputRoot / "mesh" / "sphere" / "tiles.fbx";
+		const std::filesystem::path spherePath = outputRoot / "sphere.fbx";
 		const auto phaseStartTime = std::chrono::steady_clock::now();
 		meshSuccess = ExportAssimpFbx(buildMeshDatas(FbxPlanetShape::Sphere), spherePath) &&
 			meshSuccess;

@@ -598,8 +598,7 @@ bool runTest()
                 runtime.setValueById("export-lon", "116.397389") &&
                 runtime.setValueById("export-lat", "39.908722") &&
                 runtime.setValueById("export-zoom", "15") &&
-                runtime.setValueById("export-satellite-output", "cache/高德地图/Google_墨卡托") &&
-                runtime.setValueById("export-gis-output", "cache/高德地图/gis数据/输出") &&
+                runtime.setValueById("export-output", "") &&
                 runtime.setAttributeById("export-gis-group-1", "checked", "") &&
                 runtime.setAttributeById("export-gis-group-2", "checked", "") &&
                 runtime.removeAttributeById("export-gis-group-3", "checked"),
@@ -653,9 +652,8 @@ bool runTest()
                     "export-task-list",
                     "<article class=\"task-row\"><div><div class=\"task-title\">"
                     "z15 2000 米 高德卫星 + 高德 GIS</div>"
-                    "<div class=\"task-detail\">卫星大图、GIS 大图 · 2026-08-10 10:00:00"
-                    "</div><div class=\"task-output\">cache/高德地图；"
-                    "cache/高德地图/gis数据/输出</div></div><div>"
+                    "<div class=\"task-detail\">合并大图 · GIS 合并 · 2026-08-10 10:00:00"
+                    "</div><div class=\"task-output\">各下载器默认目录</div></div><div>"
                     "<div class=\"task-stage\"><span>渲染 GIS PNG · 水+绿地</span>"
                     "<span>48% · 24/50</span></div><div class=\"progress-track\">"
                     "<div class=\"progress-value\" style=\"width:48%\"></div></div>"

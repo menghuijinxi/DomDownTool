@@ -60,21 +60,16 @@ namespace
     };
 
     bool RequireFbxOutput(
-        const std::filesystem::path& outputRoot,
-        uint32_t textureSize)
+        const std::filesystem::path& outputRoot)
     {
-        const std::filesystem::path textureRoot =
-            outputRoot / "textures" / "fbx" / std::to_string(textureSize);
-        const std::filesystem::path planeFbxPath =
-            outputRoot / "mesh" / "plane" / "tiles.fbx";
-        const std::filesystem::path sphereFbxPath =
-            outputRoot / "mesh" / "sphere" / "tiles.fbx";
-        return postprocess_test::RequireFileExists(textureRoot / "manifest.json") &&
+        const std::filesystem::path planeFbxPath = outputRoot / "plane.fbx";
+        const std::filesystem::path sphereFbxPath = outputRoot / "sphere.fbx";
+        return postprocess_test::RequireFileExists(outputRoot / "manifest.json") &&
             postprocess_test::Require(
-                postprocess_test::ContainsText(textureRoot / "manifest.json", "textures"),
+                postprocess_test::ContainsText(outputRoot / "manifest.json", "textures"),
                 "FBX manifest does not list textures") &&
             postprocess_test::Require(
-                postprocess_test::HasAnyPng(textureRoot),
+                postprocess_test::HasAnyPng(outputRoot),
                 "FBX texture directory has no png output") &&
             postprocess_test::RequireNonEmptyFile(planeFbxPath) &&
             postprocess_test::RequireNonEmptyFile(sphereFbxPath) &&
@@ -100,7 +95,7 @@ namespace
         TestRealFbxDownloadTool<MapTool> tool;
         tool.SetCachePath(postprocess_test::PathToUtf8String(testRoot / "cache"));
         tool.SetPostProcessOutputPath(
-            postprocess_test::PathToUtf8String(testRoot / "output"));
+            postprocess_test::PathToUtf8String(testRoot / "output" / "XYZ"));
         tool.SetCenterLonLat(centerLonLat);
         tool.SetRadius(1.);
         tool.SetZoom(zoom);
@@ -108,6 +103,8 @@ namespace
         tool.SetPostProcessEnabled(false);
         tool.SetPostProcessMergedImageEnabled(false);
         tool.SetPostProcessFbxEnabled(true);
+        tool.SetFbxOutputPath(
+            postprocess_test::PathToUtf8String(testRoot / "output" / "FBX"));
         tool.SetFbxTextureSize(textureSize);
         tool.SetFbxShape(DownTool::FbxPlanetShape::Both);
         tool.SetFbxMeshSubdivision(2);
@@ -122,7 +119,7 @@ namespace
                 tool.GetDowningCount() ==
                     static_cast<int32_t>(tool.GetTotalDownCountForTest()),
                 caseName + " did not finish all target tiles") &&
-            RequireFbxOutput(outputRoot, textureSize);
+            RequireFbxOutput(outputRoot / "FBX");
     }
 
     bool RunTest()

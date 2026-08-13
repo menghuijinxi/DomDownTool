@@ -206,6 +206,7 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapPlaceSearch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapWebViewSearch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/Dx12GisRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportImageComposer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportTaskManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisOverlayRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisMeshBuilder.cpp
@@ -223,6 +224,8 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     SkiaUI::SkuiWin32Dx12
     webview::core
     comctl32
+    ole32
+    shell32
     d3d12
     d3dcompiler)
   target_compile_definitions(DomDownToolPreview PRIVATE
@@ -374,6 +377,7 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
 
   add_executable(ExportTaskManagerTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/ExportTaskManagerTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportImageComposer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportTaskManager.cpp)
   target_link_libraries(ExportTaskManagerTest PRIVATE DomDownToolCore)
   target_compile_definitions(ExportTaskManagerTest PRIVATE

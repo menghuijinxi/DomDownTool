@@ -565,7 +565,7 @@ int main(int argumentCount, char* arguments[])
 
     DownTool::AmapVectorPngDownloader downloader;
     const std::filesystem::path tileOutputRoot = options.writePyramid ?
-        options.outputRoot / std::filesystem::u8path("瓦片") :
+        options.outputRoot / "XYZ" :
         options.download.render.pngTileCachePath / std::filesystem::u8path("大图采样");
     std::filesystem::path mergedImagePath =
         options.outputRoot / std::filesystem::u8path("合并大图");

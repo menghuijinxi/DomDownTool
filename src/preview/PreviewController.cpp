@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <exception>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -17,6 +18,9 @@
 #include "include/core/SkRect.h"
 #include "skui_runtime.h"
 #include "skui_runtime_helpers.h"
+
+#include <shobjidl.h>
+#include <wrl/client.h>
 
 #include "preview/PreviewInputRouting.h"
 #include "preview/SearchTrace.h"
@@ -110,6 +114,80 @@ std::string pathToUtf8(const std::filesystem::path& path)
 {
     const std::u8string value = path.generic_u8string();
     return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+}
+
+struct CoTaskMemDeleter
+{
+    void operator()(wchar_t* value) const
+    {
+        CoTaskMemFree(value);
+    }
+};
+
+class ScopedComInitialization
+{
+  public:
+    ScopedComInitialization()
+        : result_(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED |
+                                 COINIT_DISABLE_OLE1DDE))
+    {
+    }
+
+    ~ScopedComInitialization()
+    {
+        if (SUCCEEDED(result_))
+        {
+            CoUninitialize();
+        }
+    }
+
+    [[nodiscard]] bool available() const
+    {
+        return SUCCEEDED(result_) || result_ == RPC_E_CHANGED_MODE;
+    }
+
+  private:
+    HRESULT result_ = E_FAIL;
+};
+
+std::optional<std::filesystem::path> selectOutputDirectory(HWND owner)
+{
+    const ScopedComInitialization comInitialization;
+    if (!comInitialization.available())
+    {
+        return std::nullopt;
+    }
+
+    Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
+    if (FAILED(CoCreateInstance(
+            CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(dialog.GetAddressOf()))))
+    {
+        return std::nullopt;
+    }
+
+    FILEOPENDIALOGOPTIONS options = 0;
+    if (FAILED(dialog->GetOptions(&options)) ||
+        FAILED(dialog->SetOptions(
+            options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST)) ||
+        FAILED(dialog->Show(owner)))
+    {
+        return std::nullopt;
+    }
+
+    Microsoft::WRL::ComPtr<IShellItem> selectedItem;
+    if (FAILED(dialog->GetResult(selectedItem.GetAddressOf())))
+    {
+        return std::nullopt;
+    }
+
+    wchar_t* rawPath = nullptr;
+    if (FAILED(selectedItem->GetDisplayName(SIGDN_FILESYSPATH, &rawPath)))
+    {
+        return std::nullopt;
+    }
+    const std::unique_ptr<wchar_t, CoTaskMemDeleter> selectedPath(rawPath);
+    return std::filesystem::path(selectedPath.get());
 }
 
 bool equalStats(const DomDownToolPreview::MapRenderStats& left,
@@ -735,14 +813,9 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                     exportZoomValue_ = event.value;
                     return;
                 }
-                if (event.id == "export-satellite-output")
+                if (event.id == "export-output")
                 {
-                    exportSatelliteOutputValue_ = event.value;
-                    return;
-                }
-                if (event.id == "export-gis-output")
-                {
-                    exportGisOutputValue_ = event.value;
+                    exportOutputValue_ = event.value;
                     return;
                 }
                 if (event.id == "export-merged-resolution")
@@ -754,34 +827,31 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
 
             if (event.type == skui::ElementEventType::Change)
             {
-                if (event.id == "export-provider-select")
+                const auto providerControl = std::find_if(
+                    kExportProviderControls.begin(), kExportProviderControls.end(),
+                    [&event](const auto& item) { return item.second == event.id; });
+                if (providerControl != kExportProviderControls.end())
                 {
-                    exportMapSourceId_ = event.value;
-                    const std::vector<MapSourceSummary> sources = renderer_.sources();
-                    const auto source = std::find_if(
-                        sources.begin(), sources.end(),
-                        [this](const MapSourceSummary& item)
-                        { return item.id == exportMapSourceId_; });
-                    if (source != sources.end())
+                    const std::string sourceId(providerControl->first);
+                    if (event.checked)
                     {
-                        exportSatelliteOutputValue_ = source->cacheRoot.empty() ?
-                            std::string{} : pathToUtf8(
-                                source->cacheRoot /
-                                std::filesystem::u8path("Google_墨卡托"));
-                        runtime.setValueById(
-                            "export-satellite-output", exportSatelliteOutputValue_);
+                        exportMapSourceIds_.insert(sourceId);
                     }
+                    else
+                    {
+                        exportMapSourceIds_.erase(sourceId);
+                    }
+                    if (exportMapSourceIds_.empty())
+                    {
+                        exportGisOverlayOnSatellite_ = false;
+                    }
+                    UpdateExportUi(runtime);
+                    requestRedraw();
                     return;
                 }
                 if (event.id == "export-merged-format")
                 {
                     exportMergedFormat_ = event.value;
-                    return;
-                }
-                if (event.id == "export-fbx-source")
-                {
-                    exportFbxSource_ = event.value == "gis" ?
-                        ExportFbxSource::Gis : ExportFbxSource::Satellite;
                     return;
                 }
                 if (event.id == "export-fbx-size")
@@ -791,22 +861,14 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 }
                 if (event.id == "export-satellite-tiles")
                 {
-                    exportSatelliteTiles_ = event.checked;
+                    exportTiles_ = event.checked;
+                    UpdateExportUi(runtime);
                     return;
                 }
                 if (event.id == "export-satellite-merged")
                 {
-                    exportSatelliteMergedImage_ = event.checked;
-                    return;
-                }
-                if (event.id == "export-gis-tiles")
-                {
-                    exportGisTiles_ = event.checked;
-                    return;
-                }
-                if (event.id == "export-gis-merged")
-                {
-                    exportGisMergedImage_ = event.checked;
+                    exportMergedImage_ = event.checked;
+                    UpdateExportUi(runtime);
                     return;
                 }
                 if (event.id == "export-gis-combine-overlay")
@@ -827,6 +889,14 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 if (event.id == "export-fbx")
                 {
                     exportFbx_ = event.checked;
+                    UpdateExportUi(runtime);
+                    requestRedraw();
+                    return;
+                }
+                if (event.id == "export-geojson")
+                {
+                    exportGeoJson_ = event.checked;
+                    UpdateExportUi(runtime);
                     return;
                 }
                 if (event.id == "export-building-height-colors")
@@ -1066,6 +1136,18 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             if (event.id == "export-submit")
             {
                 SubmitExport(runtime);
+                return;
+            }
+            if (event.id == "export-browse-output")
+            {
+                const std::optional<std::filesystem::path> selectedPath =
+                    selectOutputDirectory(window_.load(std::memory_order_relaxed));
+                if (selectedPath.has_value())
+                {
+                    exportOutputValue_ = pathToUtf8(*selectedPath);
+                    runtime.setValueById("export-output", exportOutputValue_);
+                    requestRedraw();
+                }
                 return;
             }
             if (event.id == "tasks-clear-finished")
@@ -2135,17 +2217,17 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(skui::Runtime&
     exportLatitudeValue_ = fmt::format("{:.6f}", center.lat);
     exportRadiusValue_ = fmt::format("{:.0f}", renderer_.GetExportRadiusMeters());
     exportZoomValue_ = fmt::format("{:.0f}", std::round(renderer_.zoom()));
-    exportMapSourceId_ = source.id;
-    exportSatelliteOutputValue_ = source.cacheRoot.empty() ?
-        std::string{} : pathToUtf8(
-            source.cacheRoot / std::filesystem::u8path("Google_墨卡托"));
+    exportMapSourceIds_.clear();
+    if (source.id != "none")
+    {
+        exportMapSourceIds_.insert(source.id);
+    }
+    exportOutputValue_.clear();
     exportValidationMessage_.clear();
-    exportSatelliteTiles_ = false;
-    exportSatelliteMergedImage_ = false;
-    exportGisTiles_ = false;
-    exportGisMergedImage_ = false;
+    exportTiles_ = false;
+    exportMergedImage_ = false;
     exportFbx_ = false;
-    exportFbxSource_ = ExportFbxSource::Satellite;
+    exportGeoJson_ = false;
     exportBuildingHeightColors_ = false;
     exportGisOverlayOnSatellite_ = false;
     exportGisLayersMerged_ = false;
@@ -2162,26 +2244,24 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(skui::Runtime&
     runtime.setValueById("export-lat", exportLatitudeValue_);
     runtime.setValueById("export-config-radius", exportRadiusValue_);
     runtime.setValueById("export-zoom", exportZoomValue_);
-    runtime.setValueById("export-satellite-output", exportSatelliteOutputValue_);
-    runtime.setValueById("export-gis-output", exportGisOutputValue_);
+    runtime.setValueById("export-output", exportOutputValue_);
     runtime.setValueById("export-merged-format", exportMergedFormat_);
     runtime.setValueById("export-merged-resolution", exportMergedResolutionValue_);
     runtime.setValueById("export-fbx-size", exportFbxSizeValue_);
-    runtime.setValueById("export-fbx-source", "satellite");
     for (const auto& [sourceId, controlId] : kExportProviderControls)
     {
-        setCheckboxChecked(runtime, controlId, source.id == sourceId);
+        setCheckboxChecked(runtime, controlId, exportMapSourceIds_.contains(
+            std::string(sourceId)));
     }
-    setCheckboxChecked(runtime, "export-satellite-tiles", exportSatelliteTiles_);
-    setCheckboxChecked(runtime, "export-satellite-merged", exportSatelliteMergedImage_);
-    setCheckboxChecked(runtime, "export-gis-tiles", exportGisTiles_);
-    setCheckboxChecked(runtime, "export-gis-merged", exportGisMergedImage_);
+    setCheckboxChecked(runtime, "export-satellite-tiles", exportTiles_);
+    setCheckboxChecked(runtime, "export-satellite-merged", exportMergedImage_);
     setCheckboxChecked(runtime, "export-gis-combine-overlay",
                        exportGisOverlayOnSatellite_);
     setCheckboxChecked(runtime, "export-gis-combine-merged", exportGisLayersMerged_);
     setCheckboxChecked(runtime, "export-gis-combine-separate",
                        exportGisLayersSeparate_);
     setCheckboxChecked(runtime, "export-fbx", exportFbx_);
+    setCheckboxChecked(runtime, "export-geojson", exportGeoJson_);
     setCheckboxChecked(runtime, "export-building-height-colors", exportBuildingHeightColors_);
     UpdateExportUi(runtime);
 }
@@ -2202,6 +2282,37 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
         setCheckboxChecked(runtime, fmt::format("export-gis-group-{}", group.id),
                            group.selected);
     }
+
+    const bool hasGisData = std::ranges::any_of(
+        exportGisGroups_, [](const ExportGisUiGroup& group) { return group.selected; });
+    const auto setDisabled = [&runtime](std::string_view id, bool disabled)
+    {
+        if (disabled)
+        {
+            runtime.setAttributeById(id, "disabled", "");
+        }
+        else
+        {
+            runtime.removeAttributeById(id, "disabled");
+        }
+    };
+    setDisabled("export-geojson", !hasGisData);
+    setDisabled("export-gis-combine-merged", !hasGisData);
+    setDisabled("export-gis-combine-separate", !hasGisData);
+    setDisabled("export-gis-combine-overlay",
+                !hasGisData || exportMapSourceIds_.empty());
+    setDisabled("export-fbx-size", !exportFbx_);
+    setDisabled("export-merged-format", !exportMergedImage_);
+    setDisabled("export-merged-resolution", !exportMergedImage_);
+    setDisabled("export-building-height-colors", !hasGisData);
+    setCheckboxChecked(runtime, "export-geojson", exportGeoJson_);
+    setCheckboxChecked(runtime, "export-gis-combine-overlay",
+                       exportGisOverlayOnSatellite_);
+    setCheckboxChecked(runtime, "export-gis-combine-merged", exportGisLayersMerged_);
+    setCheckboxChecked(runtime, "export-gis-combine-separate",
+                       exportGisLayersSeparate_);
+    setCheckboxChecked(runtime, "export-building-height-colors",
+                       exportBuildingHeightColors_);
 }
 
 void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
@@ -2284,6 +2395,16 @@ void DomDownToolPreview::PreviewController::setExportGisGroupSelected(
         return;
     }
     group->selected = selected;
+    const bool hasSelectedGroup = std::ranges::any_of(
+        exportGisGroups_, [](const ExportGisUiGroup& item) { return item.selected; });
+    if (!hasSelectedGroup)
+    {
+        exportGeoJson_ = false;
+        exportGisOverlayOnSatellite_ = false;
+        exportGisLayersMerged_ = false;
+        exportGisLayersSeparate_ = false;
+        exportBuildingHeightColors_ = false;
+    }
 }
 
 std::optional<DomDownToolPreview::ExportConfiguration>
@@ -2313,78 +2434,95 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
 
     ExportConfiguration configuration;
     const std::vector<MapSourceSummary> sources = renderer_.sources();
-    const auto source = std::find_if(
-        sources.begin(), sources.end(),
-        [this](const MapSourceSummary& item) { return item.id == exportMapSourceId_; });
-    if (source == sources.end())
-    {
-        error = "卫星图来源无效。";
-        return std::nullopt;
-    }
     configuration.centerWgs84 = {*lon, *lat};
     configuration.radiusMeters = *radius;
     configuration.zoom = *zoom;
-    configuration.mapSourceId = exportMapSourceId_;
-    configuration.mapSourceName = source->name;
-    configuration.satelliteCachePath = source->cacheRoot;
-    configuration.satelliteOutputPath = std::filesystem::u8path(exportSatelliteOutputValue_);
-    configuration.gisOutputPath = std::filesystem::u8path(exportGisOutputValue_);
-    configuration.exportSatelliteTiles = exportSatelliteTiles_;
-    configuration.exportSatelliteMergedImage = exportSatelliteMergedImage_;
-    configuration.exportGisTiles = exportGisTiles_;
-    configuration.exportGisMergedImage = exportGisMergedImage_;
+    configuration.outputRoot = std::filesystem::u8path(exportOutputValue_);
+    for (const std::string& sourceId : exportMapSourceIds_)
+    {
+        const auto source = std::find_if(
+            sources.begin(), sources.end(),
+            [&sourceId](const MapSourceSummary& item) { return item.id == sourceId; });
+        if (source == sources.end() || source->id == "none")
+        {
+            error = "卫星图来源无效。";
+            return std::nullopt;
+        }
+        configuration.satelliteSources.push_back(
+            SatelliteExportSource{source->id, source->name, source->cacheRoot});
+    }
+    configuration.gisCategories.clear();
+    for (const ExportGisUiGroup& group : exportGisGroups_)
+    {
+        if (group.selected)
+        {
+            configuration.gisCategories.insert(group.categories.begin(), group.categories.end());
+        }
+    }
+    if (exportGisOverlayOnSatellite_)
+    {
+        configuration.gisModes.insert(GisExportMode::OverlayOnSatellite);
+    }
+    if (exportGisLayersMerged_)
+    {
+        configuration.gisModes.insert(GisExportMode::MergeSelectedLayers);
+    }
+    if (exportGisLayersSeparate_)
+    {
+        configuration.gisModes.insert(GisExportMode::SeparateLayers);
+    }
+    configuration.exportTiles = exportTiles_;
+    configuration.exportMergedImage = exportMergedImage_;
     configuration.exportFbx = exportFbx_;
-    configuration.fbxSource = exportFbxSource_;
+    configuration.exportGeoJson = exportGeoJson_;
     configuration.colorBuildingsByHeight = exportBuildingHeightColors_;
     configuration.mergedImageResolution = *mergedResolution;
     configuration.mergedImageFormat = exportMergedFormat_ == "jpg" ? "jpg" : "png";
     configuration.fbxTextureSize = *fbxSize;
-    for (const ExportGisUiGroup& group : exportGisGroups_)
-    {
-        if (!group.selected)
-        {
-            continue;
-        }
-        configuration.gisGroups.push_back(
-            GisExportGroup{ {}, group.categories });
-    }
     for (const DownTool::AmapVectorRenderCategory category : kExportCategories)
     {
         const DownTool::AmapVectorColor color = renderer_.GetGisOverlayColor(
             previewCategory(category));
         configuration.gisColors[category] = color;
     }
-    if (!configuration.exportSatelliteTiles && !configuration.exportSatelliteMergedImage &&
-        !configuration.exportGisTiles && !configuration.exportGisMergedImage &&
-        !configuration.exportFbx)
+    if (!configuration.exportTiles && !configuration.exportMergedImage &&
+        !configuration.exportFbx && !configuration.exportGeoJson)
     {
         error = "至少选择一种输出内容。";
         return std::nullopt;
     }
-    const bool satelliteRequested = configuration.exportSatelliteTiles ||
-        configuration.exportSatelliteMergedImage ||
-        (configuration.exportFbx && configuration.fbxSource == ExportFbxSource::Satellite);
-    if (satelliteRequested && source->id == "none")
+    const bool visualOutputRequested = configuration.exportTiles ||
+        configuration.exportMergedImage || configuration.exportFbx;
+    if (!configuration.gisModes.empty() && !visualOutputRequested)
+    {
+        error = "GIS 组合方式需要选择 XYZ、合并大图或 FBX。";
+        return std::nullopt;
+    }
+    if (!configuration.gisCategories.empty() && visualOutputRequested &&
+        configuration.gisModes.empty() && !configuration.exportGeoJson)
+    {
+        error = "所选 GIS 数据需要至少一种 GIS 组合方式。";
+        return std::nullopt;
+    }
+    const bool satelliteRequested = !configuration.satelliteSources.empty() &&
+        visualOutputRequested;
+    const bool gisVisualRequested = !configuration.gisCategories.empty() &&
+        !configuration.gisModes.empty() && visualOutputRequested;
+    if (configuration.gisModes.contains(GisExportMode::OverlayOnSatellite) &&
+        configuration.satelliteSources.empty())
     {
         error = "卫星图导出需要选择地图来源。";
         return std::nullopt;
     }
-    if (satelliteRequested && configuration.satelliteOutputPath.empty())
+    if (!satelliteRequested && !gisVisualRequested && !configuration.exportGeoJson)
     {
-        error = "卫星输出目录不能为空。";
+        error = "所选导出类型没有对应的卫星图或 GIS 组合方式。";
         return std::nullopt;
     }
-    const bool gisRequested = configuration.exportGisTiles ||
-        configuration.exportGisMergedImage ||
-        (configuration.exportFbx && configuration.fbxSource == ExportFbxSource::Gis);
-    if (gisRequested && configuration.gisGroups.empty())
+    if ((configuration.exportGeoJson || !configuration.gisModes.empty()) &&
+        configuration.gisCategories.empty())
     {
-        error = "GIS 导出至少需要选择一个 GIS 输出组。";
-        return std::nullopt;
-    }
-    if (gisRequested && configuration.gisOutputPath.empty())
-    {
-        error = "GIS 输出目录不能为空。";
+        error = "GIS 输出至少需要选择一个 GIS 数据图层。";
         return std::nullopt;
     }
     return configuration;
@@ -2402,7 +2540,8 @@ void DomDownToolPreview::PreviewController::SubmitExport(skui::Runtime& runtime)
         requestRedraw();
         return;
     }
-    exportTaskManager_.Enqueue(*configuration);
+    const std::string taskId = exportTaskManager_.Enqueue(*configuration);
+    (void)taskId;
     exportValidationMessage_.clear();
     schedulePageChange(Page::Tasks, runtime);
 }

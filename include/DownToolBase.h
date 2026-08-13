@@ -136,7 +136,8 @@ namespace DownTool
 		//FBX 贴图目标边长，必须是 2 的次幂，最大 16384
 		uint32_t FbxTextureSize = 4096;
 
-		//FBX 后处理输出根路径，空字符串时默认输出到 GetPostProcessRootPath()
+		//FBX 模型、贴图和清单的同级输出根路径，空字符串时默认输出到
+		//GetPostProcessRootPath()
 		std::string FbxOutputPath = "";
 
 		//FBX 网格形态

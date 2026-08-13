@@ -625,7 +625,7 @@ namespace
         const std::filesystem::path outputRoot = options.outputPath.value_or(
             std::filesystem::u8path(downloader.GetCachePath()) /
             std::filesystem::u8path("Google_墨卡托"));
-        downloader.SetPostProcessOutputPath(PathToUtf8String(outputRoot));
+        downloader.SetPostProcessOutputPath(PathToUtf8String(outputRoot / "XYZ"));
         downloader.SetPostProcessEnabled(
             options.outputMode == OutputMode::Pyramid ||
             options.outputMode == OutputMode::Both);
@@ -640,7 +640,7 @@ namespace
         downloader.SetPostProcessMergedImageOutputPath(
             PathToUtf8String(mergedImagePath));
 
-        downloader.SetFbxOutputPath(PathToUtf8String(outputRoot));
+        downloader.SetFbxOutputPath(PathToUtf8String(outputRoot / "FBX"));
         downloader.SetFbxTextureSize(options.fbxTextureSize);
         downloader.SetFbxShape(options.fbxShape);
         downloader.SetFbxMeshSubdivision(options.fbxSubdivision);

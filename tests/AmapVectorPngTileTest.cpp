@@ -454,24 +454,29 @@ namespace
         renderOptions.featureCodeColors.clear();
 
         const std::filesystem::path postProcessRoot = outputRoot / "postprocess";
-        downloader.SetPostProcessOutputPath(postProcessRoot.string());
+        const std::filesystem::path xyzRoot = postProcessRoot / "XYZ";
+        const std::filesystem::path fbxRoot = postProcessRoot / "FBX";
+        downloader.SetPostProcessOutputPath(xyzRoot.string());
         downloader.SetPostProcessEnabled(true);
         downloader.SetPostProcessMergedImageEnabled(true);
         downloader.SetPostProcessMergedImageResolution(256);
+        downloader.SetPostProcessMergedImageOutputPath(
+            (postProcessRoot / "merged.png").string());
         downloader.SetPostProcessFbxEnabled(true);
+        downloader.SetFbxOutputPath(fbxRoot.string());
         downloader.SetFbxTextureSize(256);
         downloader.SetFbxShape(DownTool::FbxPlanetShape::Plane);
         downloader.SetFbxMeshSubdivision(2);
         renderResult = downloader.Render(decodedData, vectorOptions, renderOptions);
         if (!Require(renderResult.success, "PNG 后处理渲染失败：" + renderResult.error) ||
             !Require(std::filesystem::exists(
-                postProcessRoot / std::to_string(tile.Zoom) / std::to_string(tile.X) /
+                xyzRoot / std::to_string(tile.Zoom) / std::to_string(tile.X) /
                 (std::to_string(tile.Y) + ".png")),
                 "后处理金字塔缺少最高层级瓦片") ||
             !Require(std::filesystem::exists(postProcessRoot / "merged.png"),
                 "后处理缺少合并大图") ||
             !Require(std::filesystem::exists(
-                postProcessRoot / "mesh" / "plane" / "tiles.fbx"),
+                fbxRoot / "plane.fbx"),
                 "后处理缺少 FBX"))
         {
             return false;

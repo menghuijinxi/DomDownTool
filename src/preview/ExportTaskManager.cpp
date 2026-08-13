@@ -1,15 +1,19 @@
 #include "preview/ExportTaskManager.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include "ArcGISDown.h"
 #include "BaiduDown.h"
@@ -23,12 +27,15 @@
 #include "cpl_json.h"
 #include "fmt/format.h"
 
+#include "preview/ExportImageComposer.h"
+
 namespace
 {
 using DomDownToolPreview::ExportConfiguration;
 using DomDownToolPreview::ExportTaskRecord;
 using DomDownToolPreview::ExportTaskState;
-using DomDownToolPreview::GisExportGroup;
+using DomDownToolPreview::GisExportMode;
+using DomDownToolPreview::SatelliteExportSource;
 
 std::string PathToUtf8(const std::filesystem::path& path)
 {
@@ -82,15 +89,11 @@ std::string CategoryName(DownTool::AmapVectorRenderCategory category)
     return "GIS";
 }
 
-std::string MakeGroupName(const GisExportGroup& group)
+std::string MakeCategoryName(
+    const std::set<DownTool::AmapVectorRenderCategory>& categories)
 {
-    if (!group.name.empty())
-    {
-        return group.name;
-    }
-
     std::string name;
-    for (const DownTool::AmapVectorRenderCategory category : group.categories)
+    for (const DownTool::AmapVectorRenderCategory category : categories)
     {
         if (!name.empty())
         {
@@ -184,53 +187,130 @@ double DownToolPhaseProgress(const DownTool::DownToolProgress& progress)
     return 0.45 + phaseRatio * 0.27;
 }
 
-std::string BuildTaskTitle(const ExportConfiguration& configuration)
+std::string GisModeName(GisExportMode mode)
 {
-    std::string contents;
-    if (configuration.exportSatelliteTiles || configuration.exportSatelliteMergedImage ||
-        (configuration.exportFbx &&
-         configuration.fbxSource == DomDownToolPreview::ExportFbxSource::Satellite))
+    switch (mode)
     {
-        contents = configuration.mapSourceName;
+    case GisExportMode::OverlayOnSatellite:
+        return "叠加卫星图";
+    case GisExportMode::MergeSelectedLayers:
+        return "GIS 合并";
+    case GisExportMode::SeparateLayers:
+        return "GIS 单层";
     }
-    if (configuration.exportGisTiles || configuration.exportGisMergedImage ||
-        (configuration.exportFbx &&
-         configuration.fbxSource == DomDownToolPreview::ExportFbxSource::Gis))
-    {
-        if (!contents.empty())
-        {
-            contents += " + ";
-        }
-        contents += "高德 GIS";
-    }
-    return fmt::format("z{} {:.0f} 米 {}", configuration.zoom,
-                       configuration.radiusMeters, contents);
+    return "GIS";
 }
 
-std::string BuildTaskDetail(const ExportConfiguration& configuration)
+std::filesystem::path DefaultSatelliteOutputRoot(const SatelliteExportSource& source)
+{
+    return source.cachePath / std::filesystem::u8path("Google_墨卡托");
+}
+
+std::filesystem::path DefaultGisOutputRoot()
+{
+    return std::filesystem::u8path("cache/高德地图/gis数据/输出");
+}
+
+std::filesystem::path TaskOutputRoot(const ExportConfiguration& configuration,
+                                     const std::string& taskId,
+                                     const std::filesystem::path& defaultRoot)
+{
+    if (configuration.outputRoot.empty())
+    {
+        return defaultRoot / std::filesystem::u8path("导出任务") /
+            std::filesystem::u8path(taskId);
+    }
+    return configuration.outputRoot / std::filesystem::u8path("导出任务") /
+        std::filesystem::u8path(taskId);
+}
+
+std::filesystem::path SatelliteOutputRoot(const ExportConfiguration& configuration,
+                                          const std::string& taskId,
+                                          const SatelliteExportSource& source)
+{
+    const std::filesystem::path root = TaskOutputRoot(
+        configuration, taskId, DefaultSatelliteOutputRoot(source));
+    return root / std::filesystem::u8path("卫星图") /
+        std::filesystem::u8path(SanitizeFileName(source.name));
+}
+
+std::filesystem::path GisOutputRoot(const ExportConfiguration& configuration,
+                                    const std::string& taskId,
+                                    std::string_view modeName,
+                                    std::string_view categoryName)
+{
+    const std::filesystem::path root = TaskOutputRoot(
+        configuration, taskId, DefaultGisOutputRoot());
+    return root / std::filesystem::u8path("GIS") /
+        std::filesystem::u8path(modeName) /
+        std::filesystem::u8path(categoryName);
+}
+
+std::filesystem::path OverlayOutputRoot(const ExportConfiguration& configuration,
+                                        const std::string& taskId,
+                                        const SatelliteExportSource& source,
+                                        std::string_view categoryName)
+{
+    if (configuration.outputRoot.empty())
+    {
+        return TaskOutputRoot(
+            configuration, taskId, DefaultSatelliteOutputRoot(source)) /
+            std::filesystem::u8path("叠加卫星图") /
+            std::filesystem::u8path(SanitizeFileName(source.name)) /
+            std::filesystem::u8path(categoryName);
+    }
+    return TaskOutputRoot(configuration, taskId, configuration.outputRoot) /
+        std::filesystem::u8path("叠加卫星图") /
+        std::filesystem::u8path(SanitizeFileName(source.name)) /
+        std::filesystem::u8path(categoryName);
+}
+
+std::string FormatSourceNames(const ExportConfiguration& configuration)
+{
+    std::string names;
+    for (const SatelliteExportSource& source : configuration.satelliteSources)
+    {
+        if (!names.empty())
+        {
+            names += "、";
+        }
+        names += source.name;
+    }
+    return names;
+}
+
+std::string FormatGisModes(const ExportConfiguration& configuration)
+{
+    std::string modes;
+    for (const GisExportMode mode : configuration.gisModes)
+    {
+        if (!modes.empty())
+        {
+            modes += "、";
+        }
+        modes += GisModeName(mode);
+    }
+    return modes;
+}
+
+std::string BuildTaskDetailsText(const ExportConfiguration& configuration)
 {
     std::vector<std::string> outputs;
-    if (configuration.exportSatelliteTiles)
+    if (configuration.exportTiles)
     {
-        outputs.emplace_back("卫星 XYZ");
+        outputs.emplace_back("XYZ 切片");
     }
-    if (configuration.exportGisTiles)
+    if (configuration.exportMergedImage)
     {
-        outputs.emplace_back("GIS XYZ");
-    }
-    if (configuration.exportSatelliteMergedImage)
-    {
-        outputs.emplace_back("卫星大图");
-    }
-    if (configuration.exportGisMergedImage)
-    {
-        outputs.emplace_back("GIS 大图");
+        outputs.emplace_back("合并大图");
     }
     if (configuration.exportFbx)
     {
-        outputs.emplace_back(configuration.fbxSource ==
-                DomDownToolPreview::ExportFbxSource::Satellite ?
-            "卫星 FBX" : "GIS FBX");
+        outputs.emplace_back("FBX 切片与网格");
+    }
+    if (configuration.exportGeoJson)
+    {
+        outputs.emplace_back("GeoJSON");
     }
 
     std::string result;
@@ -245,30 +325,175 @@ std::string BuildTaskDetail(const ExportConfiguration& configuration)
     return result;
 }
 
-std::string BuildTaskOutputPath(const ExportConfiguration& configuration)
+bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
+                         std::string_view taskId,
+                         const ExportConfiguration& configuration,
+                         std::string_view status,
+                         std::string_view result,
+                         std::string& error)
 {
-    const bool satelliteRequested = configuration.exportSatelliteTiles ||
-        configuration.exportSatelliteMergedImage ||
-        (configuration.exportFbx &&
-         configuration.fbxSource == DomDownToolPreview::ExportFbxSource::Satellite);
-    const bool gisRequested = configuration.exportGisTiles ||
-        configuration.exportGisMergedImage ||
-        (configuration.exportFbx &&
-         configuration.fbxSource == DomDownToolPreview::ExportFbxSource::Gis);
-    std::string result;
-    if (satelliteRequested)
+    std::error_code directoryError;
+    std::filesystem::create_directories(outputRoot, directoryError);
+    if (directoryError)
     {
-        result = PathToUtf8(configuration.satelliteOutputPath);
+        error = "无法创建导出记录目录：" + directoryError.message();
+        return false;
     }
-    if (gisRequested)
+
+    std::ofstream output(
+        outputRoot / std::filesystem::u8path(
+            "转换记录-" + std::string(taskId) + ".txt"),
+        std::ios::binary | std::ios::trunc);
+    if (!output.is_open())
     {
-        if (!result.empty())
+        error = "无法创建导出转换记录。";
+        return false;
+    }
+
+    output << "DomDownTool 导出转换记录\n"
+           << "任务 ID: " << taskId << "\n"
+           << "状态: " << status << "\n"
+           << "记录更新时间: " << CurrentTimeText() << "\n"
+           << std::fixed << std::setprecision(6)
+           << "中心坐标 (WGS84): " << configuration.centerWgs84.lon << ", "
+           << configuration.centerWgs84.lat << "\n"
+           << std::setprecision(0)
+           << "半径 (米): " << configuration.radiusMeters << "\n"
+           << "层级: " << configuration.zoom << "\n"
+           << "卫星图来源: " << FormatSourceNames(configuration) << "\n"
+           << "用户指定输出根目录: "
+           << (configuration.outputRoot.empty() ? "未指定，使用各下载器默认目录" :
+               PathToUtf8(configuration.outputRoot)) << "\n";
+    for (const SatelliteExportSource& source : configuration.satelliteSources)
+    {
+        output << "卫星源: " << source.name << " [" << source.id << "]\n"
+               << "  缓存目录: " << PathToUtf8(source.cachePath) << "\n"
+               << "  产物目录: "
+               << PathToUtf8(SatelliteOutputRoot(configuration, std::string(taskId), source))
+               << "\n"
+               << "  XYZ 目录: "
+               << PathToUtf8(SatelliteOutputRoot(
+                      configuration, std::string(taskId), source) / "XYZ")
+               << "\n"
+               << "  FBX 目录: "
+               << PathToUtf8(SatelliteOutputRoot(
+                      configuration, std::string(taskId), source) / "FBX")
+               << "\n";
+    }
+    output
+           << "GIS 产物根目录: "
+           << PathToUtf8(TaskOutputRoot(
+                  configuration, std::string(taskId), DefaultGisOutputRoot()) /
+              std::filesystem::u8path("GIS")) << "\n"
+           << "GIS 分类: " << MakeCategoryName(configuration.gisCategories) << "\n"
+           << "GIS 组合方式: " << FormatGisModes(configuration) << "\n"
+           << "导出类型: " << BuildTaskDetailsText(configuration) << "\n"
+           << "合并大图: " << configuration.mergedImageFormat << "，最大边 "
+           << configuration.mergedImageResolution << "\n"
+           << "GIS 透明大图格式: PNG\n"
+           << "FBX 贴图尺寸: " << configuration.fbxTextureSize << "\n"
+           << "建筑按高度着色: "
+           << (configuration.colorBuildingsByHeight ? "是" : "否") << "\n"
+           << "结果: " << result << "\n";
+    if (!output.good())
+    {
+        error = "写入导出转换记录失败。";
+        return false;
+    }
+    return true;
+}
+
+std::vector<std::filesystem::path> TaskRecordRoots(
+    const ExportConfiguration& configuration, const std::string& taskId)
+{
+    if (!configuration.outputRoot.empty())
+    {
+        return {TaskOutputRoot(configuration, taskId, configuration.outputRoot)};
+    }
+
+    std::vector<std::filesystem::path> roots;
+    for (const SatelliteExportSource& source : configuration.satelliteSources)
+    {
+        roots.push_back(TaskOutputRoot(
+            configuration, taskId, DefaultSatelliteOutputRoot(source)));
+    }
+    if (!configuration.gisCategories.empty())
+    {
+        roots.push_back(TaskOutputRoot(
+            configuration, taskId, DefaultGisOutputRoot()));
+    }
+    std::sort(roots.begin(), roots.end());
+    roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
+    return roots;
+}
+
+bool WriteTaskRecordFiles(const ExportConfiguration& configuration,
+                          const std::string& taskId,
+                          std::string_view status,
+                          std::string_view result,
+                          std::string& error)
+{
+    for (const std::filesystem::path& root : TaskRecordRoots(configuration, taskId))
+    {
+        if (!WriteTaskRecordFile(root, taskId, configuration, status, result, error))
         {
-            result += "；";
+            return false;
         }
-        result += PathToUtf8(configuration.gisOutputPath);
     }
-    return result;
+    return true;
+}
+
+DownTool::AmapVectorDecodedData FilterGisData(
+    const DownTool::AmapVectorDecodedData& decodedData,
+    const std::set<DownTool::AmapVectorRenderCategory>& categories)
+{
+    DownTool::AmapVectorDecodedData filteredData = decodedData;
+    filteredData.features.clear();
+    std::copy_if(
+        decodedData.features.begin(), decodedData.features.end(),
+        std::back_inserter(filteredData.features),
+        [&categories](const DownTool::AmapVectorFeature& feature)
+        {
+            return categories.contains(DownTool::ClassifyAmapVectorFeature(feature));
+        });
+    return filteredData;
+}
+
+std::string BuildTaskTitle(const ExportConfiguration& configuration)
+{
+    std::string contents = FormatSourceNames(configuration);
+    if (!configuration.gisCategories.empty())
+    {
+        if (!contents.empty())
+        {
+            contents += " + ";
+        }
+        contents += "高德 GIS";
+    }
+    return fmt::format("z{} {:.0f} 米 {}", configuration.zoom,
+                       configuration.radiusMeters, contents);
+}
+
+std::string BuildTaskDetail(const ExportConfiguration& configuration)
+{
+    const std::string outputs = BuildTaskDetailsText(configuration);
+    const std::string modes = FormatGisModes(configuration);
+    return modes.empty() ? outputs : outputs + " · " + modes;
+}
+
+std::string BuildTaskOutputPath(const ExportConfiguration& configuration,
+                                const std::string& taskId)
+{
+    std::string paths;
+    for (const std::filesystem::path& root : TaskRecordRoots(configuration, taskId))
+    {
+        if (!paths.empty())
+        {
+            paths += "；";
+        }
+        paths += PathToUtf8(root);
+    }
+    return paths.empty() ? "无输出目录" : paths;
 }
 
 ExportTaskState ParseTaskState(std::string_view value)
@@ -363,13 +588,26 @@ std::string DomDownToolPreview::ExportTaskManager::Enqueue(
     record.id = MakeTaskId();
     record.title = BuildTaskTitle(configuration);
     record.detail = BuildTaskDetail(configuration);
-    record.outputPath = BuildTaskOutputPath(configuration);
+    record.outputPath = BuildTaskOutputPath(configuration, record.id);
     record.createdAt = CurrentTimeText();
     const std::string taskId = record.id;
+    std::string recordError;
+    const bool recordWritten = WriteTaskRecordFiles(
+        configuration, taskId, "排队中", "等待执行", recordError);
+    if (!recordWritten)
+    {
+        record.state = ExportTaskState::Failed;
+        record.stage = "记录失败";
+        record.finishedAt = CurrentTimeText();
+        record.error = recordError;
+    }
     {
         const std::lock_guard lock(mutex_);
         records_.insert(records_.begin(), record);
-        queue_.push_back(QueuedExport{taskId, configuration});
+        if (recordWritten)
+        {
+            queue_.push_back(QueuedExport{taskId, configuration});
+        }
     }
     SaveRecords(true);
     condition_.notify_one();
@@ -380,6 +618,7 @@ std::string DomDownToolPreview::ExportTaskManager::Enqueue(
 bool DomDownToolPreview::ExportTaskManager::Cancel(std::string_view taskId)
 {
     bool changed = false;
+    std::optional<ExportConfiguration> queuedConfiguration;
     {
         const std::lock_guard lock(mutex_);
         const auto record = std::find_if(
@@ -391,6 +630,13 @@ bool DomDownToolPreview::ExportTaskManager::Cancel(std::string_view taskId)
         }
         if (record->state == ExportTaskState::Queued)
         {
+            const auto queued = std::find_if(
+                queue_.begin(), queue_.end(),
+                [taskId](const QueuedExport& item) { return item.taskId == taskId; });
+            if (queued != queue_.end())
+            {
+                queuedConfiguration = queued->configuration;
+            }
             queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
                                        [taskId](const QueuedExport& item)
                                        { return item.taskId == taskId; }),
@@ -413,6 +659,12 @@ bool DomDownToolPreview::ExportTaskManager::Cancel(std::string_view taskId)
     }
     if (changed)
     {
+        if (queuedConfiguration.has_value())
+        {
+            std::string recordError;
+            WriteTaskRecordFiles(
+                *queuedConfiguration, std::string(taskId), "已取消", "任务已取消", recordError);
+        }
         SaveRecords(true);
         NotifyChanged();
     }
@@ -488,18 +740,26 @@ void DomDownToolPreview::ExportTaskManager::WorkerLoop()
             error = "导出任务发生未知异常。";
         }
 
+        ExportTaskState finalState = ExportTaskState::Failed;
         if (IsCancellationRequested())
         {
-            FinishTask(queuedExport.taskId, ExportTaskState::Canceled);
+            finalState = ExportTaskState::Canceled;
         }
         else if (succeeded)
         {
-            FinishTask(queuedExport.taskId, ExportTaskState::Succeeded);
+            finalState = ExportTaskState::Succeeded;
         }
-        else
+        const std::string result = finalState == ExportTaskState::Succeeded ?
+            "导出完成" : finalState == ExportTaskState::Canceled ?
+            "任务已取消" : error;
+        std::string recordError;
+        if (!WriteTaskRecordFiles(queuedExport.configuration, queuedExport.taskId,
+                                  ExportTaskStateName(finalState), result, recordError))
         {
-            FinishTask(queuedExport.taskId, ExportTaskState::Failed, std::move(error));
+            finalState = ExportTaskState::Failed;
+            error = error.empty() ? recordError : error + "；" + recordError;
         }
+        FinishTask(queuedExport.taskId, finalState, std::move(error));
     }
 }
 
@@ -507,53 +767,108 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
     const QueuedExport& queuedExport, std::string& error)
 {
     const ExportConfiguration& configuration = queuedExport.configuration;
-    const bool satelliteRequested = configuration.exportSatelliteTiles ||
-        configuration.exportSatelliteMergedImage ||
-        (configuration.exportFbx && configuration.fbxSource == ExportFbxSource::Satellite);
-    const bool gisRequested = configuration.exportGisTiles ||
-        configuration.exportGisMergedImage ||
-        (configuration.exportFbx && configuration.fbxSource == ExportFbxSource::Gis);
-    const size_t stepCount = (satelliteRequested ? 1u : 0u) +
-        (gisRequested ? configuration.gisGroups.size() : 0u);
+    const bool satelliteRequested = !configuration.satelliteSources.empty() &&
+        (configuration.exportTiles || configuration.exportMergedImage ||
+         configuration.exportFbx);
+    const bool gisVisualRequested = !configuration.gisCategories.empty() &&
+        !configuration.gisModes.empty() &&
+        (configuration.exportTiles || configuration.exportMergedImage ||
+         configuration.exportFbx);
+    if (!configuration.gisModes.empty() &&
+        !configuration.exportTiles && !configuration.exportMergedImage &&
+        !configuration.exportFbx)
+    {
+        error = "GIS 组合方式需要选择 XYZ、合并大图或 FBX。";
+        return false;
+    }
+    if (!configuration.gisCategories.empty() &&
+        (configuration.exportTiles || configuration.exportMergedImage ||
+         configuration.exportFbx) && configuration.gisModes.empty() &&
+        !configuration.exportGeoJson)
+    {
+        error = "所选 GIS 数据需要至少一种 GIS 组合方式。";
+        return false;
+    }
+    const bool gisRequested = gisVisualRequested ||
+        (!configuration.gisCategories.empty() && configuration.exportGeoJson);
+    const size_t separateCount = gisVisualRequested && configuration.gisModes.contains(
+        GisExportMode::SeparateLayers) ? configuration.gisCategories.size() : 0u;
+    const size_t mergedCount = gisVisualRequested && configuration.gisModes.contains(
+        GisExportMode::MergeSelectedLayers) ? 1u : 0u;
+    const size_t overlayCount = gisVisualRequested && configuration.gisModes.contains(
+        GisExportMode::OverlayOnSatellite) ? 1u : 0u;
+    const size_t geoJsonCount = configuration.exportGeoJson ? 1u : 0u;
+    const size_t stepCount = (satelliteRequested ? configuration.satelliteSources.size() : 0u) +
+        (gisRequested ? separateCount + mergedCount + overlayCount + geoJsonCount : 0u);
     if (stepCount == 0)
     {
         error = "没有选择任何导出内容。";
         return false;
     }
 
+    if (configuration.gisModes.contains(GisExportMode::OverlayOnSatellite) &&
+        configuration.satelliteSources.empty())
+    {
+        error = "GIS 叠加输出至少需要选择一个卫星图来源。";
+        return false;
+    }
+
     size_t stepIndex = 0;
     if (satelliteRequested)
     {
-        if (!RunSatelliteExport(queuedExport, stepIndex++, stepCount, error))
+        for (const SatelliteExportSource& source : configuration.satelliteSources)
         {
-            return false;
+            if (!RunSatelliteExport(queuedExport, source, stepIndex++, stepCount, error))
+            {
+                return false;
+            }
         }
     }
     if (gisRequested)
     {
-        if (configuration.gisGroups.empty())
+        if (mergedCount != 0 &&
+            !RunGisExport(queuedExport, configuration.gisCategories,
+                          GisExportMode::MergeSelectedLayers, "合并图层",
+                          stepIndex++, stepCount, error))
         {
-            error = "GIS 导出至少需要一个分类组。";
             return false;
         }
-        for (const GisExportGroup& group : configuration.gisGroups)
+        if (overlayCount != 0 &&
+            !RunGisExport(queuedExport, configuration.gisCategories,
+                          GisExportMode::OverlayOnSatellite, "叠加卫星图",
+                          stepIndex++, stepCount, error))
         {
-            if (!RunGisExportGroup(queuedExport, group, stepIndex++, stepCount, error))
+            return false;
+        }
+        if (separateCount != 0)
+        {
+            for (const DownTool::AmapVectorRenderCategory category :
+                 configuration.gisCategories)
             {
-                return false;
+                if (!RunGisExport(queuedExport, {category}, GisExportMode::SeparateLayers,
+                                  CategoryName(category), stepIndex++, stepCount, error))
+                {
+                    return false;
+                }
             }
+        }
+        if (geoJsonCount != 0 &&
+            !RunGeoJsonExport(queuedExport, stepIndex++, stepCount, error))
+        {
+            return false;
         }
     }
     return true;
 }
 
 bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
-    const QueuedExport& queuedExport, size_t stepIndex, size_t stepCount,
+    const QueuedExport& queuedExport, const SatelliteExportSource& source,
+    size_t stepIndex, size_t stepCount,
     std::string& error)
 {
     const ExportConfiguration& configuration = queuedExport.configuration;
     std::unique_ptr<DownTool::DownToolBase> downloader =
-        CreateDownloader(configuration.mapSourceId);
+        CreateDownloader(source.id);
     if (!downloader)
     {
         error = "当前地图源不能导出卫星图。";
@@ -563,19 +878,29 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
     downloader->SetCenterLonLat(configuration.centerWgs84);
     downloader->SetRadius(configuration.radiusMeters);
     downloader->SetZoom(configuration.zoom);
-    downloader->SetCachePath(PathToUtf8(configuration.satelliteCachePath));
+    downloader->SetCachePath(PathToUtf8(source.cachePath));
     downloader->SetMaxDownQueue(std::max(1u, std::thread::hardware_concurrency()));
-    downloader->SetPostProcessOutputPath(PathToUtf8(configuration.satelliteOutputPath));
-    downloader->SetPostProcessEnabled(configuration.exportSatelliteTiles);
-    downloader->SetPostProcessMergedImageEnabled(configuration.exportSatelliteMergedImage);
-    std::filesystem::path mergedImagePath = configuration.satelliteOutputPath / "merged";
+    const std::filesystem::path outputRoot = SatelliteOutputRoot(
+        configuration, queuedExport.taskId, source);
+    std::error_code outputError;
+    std::filesystem::create_directories(outputRoot, outputError);
+    if (outputError)
+    {
+        error = "无法创建卫星图输出目录：" + outputError.message();
+        return false;
+    }
+    const std::filesystem::path xyzOutputRoot = outputRoot / "XYZ";
+    const std::filesystem::path fbxOutputRoot = outputRoot / "FBX";
+    downloader->SetPostProcessOutputPath(PathToUtf8(xyzOutputRoot));
+    downloader->SetPostProcessEnabled(configuration.exportTiles);
+    downloader->SetPostProcessMergedImageEnabled(configuration.exportMergedImage);
+    std::filesystem::path mergedImagePath = outputRoot / "merged";
     mergedImagePath.replace_extension(configuration.mergedImageFormat);
     downloader->SetPostProcessMergedImageOutputPath(PathToUtf8(mergedImagePath));
     downloader->SetPostProcessMergedImageResolution(configuration.mergedImageResolution);
-    const bool exportFbx = configuration.exportFbx &&
-        configuration.fbxSource == ExportFbxSource::Satellite;
+    const bool exportFbx = configuration.exportFbx;
     downloader->SetPostProcessFbxEnabled(exportFbx);
-    downloader->SetFbxOutputPath(PathToUtf8(configuration.satelliteOutputPath));
+    downloader->SetFbxOutputPath(PathToUtf8(fbxOutputRoot));
     downloader->SetFbxTextureSize(configuration.fbxTextureSize);
     downloader->SetProgressCallback(
         [this, taskId = queuedExport.taskId, stepIndex, stepCount](
@@ -603,20 +928,18 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
         return false;
     }
 
-    if (configuration.exportSatelliteTiles &&
-        !std::filesystem::exists(configuration.satelliteOutputPath / "meta.json"))
+    if (configuration.exportTiles &&
+        !std::filesystem::exists(xyzOutputRoot / "meta.json"))
     {
         error = "卫星 XYZ 瓦片未生成完整元数据。";
         return false;
     }
-    if (configuration.exportSatelliteMergedImage && !std::filesystem::exists(mergedImagePath))
+    if (configuration.exportMergedImage && !std::filesystem::exists(mergedImagePath))
     {
         error = "卫星合并大图未生成。";
         return false;
     }
-    if (exportFbx && !std::filesystem::exists(
-            configuration.satelliteOutputPath / "textures" / "fbx" /
-            std::to_string(configuration.fbxTextureSize) / "manifest.json"))
+    if (exportFbx && !std::filesystem::exists(fbxOutputRoot / "manifest.json"))
     {
         error = "卫星 FBX 贴图清单未生成。";
         return false;
@@ -628,20 +951,24 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
     return true;
 }
 
-bool DomDownToolPreview::ExportTaskManager::RunGisExportGroup(
-    const QueuedExport& queuedExport, const GisExportGroup& group,
+bool DomDownToolPreview::ExportTaskManager::RunGisExport(
+    const QueuedExport& queuedExport,
+    const std::set<DownTool::AmapVectorRenderCategory>& categories,
+    GisExportMode mode, std::string_view name,
     size_t stepIndex, size_t stepCount, std::string& error)
 {
     const ExportConfiguration& configuration = queuedExport.configuration;
-    if (group.categories.empty())
+    if (categories.empty())
     {
         error = "GIS 导出组不能为空。";
         return false;
     }
 
-    const std::string groupName = SanitizeFileName(MakeGroupName(group));
+    const std::string groupName = SanitizeFileName(std::string(name));
     const std::filesystem::path temporaryRoot =
-        std::filesystem::u8path("cache/高德地图/gis数据/临时");
+        std::filesystem::u8path("cache/高德地图/gis数据/临时") /
+        std::filesystem::u8path(queuedExport.taskId) /
+        std::filesystem::u8path(groupName);
     std::error_code cleanupError;
     std::filesystem::remove_all(temporaryRoot, cleanupError);
 
@@ -651,7 +978,7 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExportGroup(
     options.vectorDownload.zoom = configuration.zoom;
     options.vectorDownload.includeBaseLayers = true;
     options.vectorDownload.includeLabels =
-        group.categories.contains(DownTool::AmapVectorRenderCategory::Point);
+        categories.contains(DownTool::AmapVectorRenderCategory::Point);
     options.vectorDownload.maxConcurrency = 0;
     options.vectorDownload.cancellationRequested =
         [this] { return IsCancellationRequested(); };
@@ -666,7 +993,7 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExportGroup(
                                static_cast<double>(stepCount),
                            progress.completedTaskCount, progress.totalTaskCount);
         };
-    options.render.categories = group.categories;
+    options.render.categories = categories;
     options.render.colors = configuration.gisColors;
     options.render.colorBuildingsByHeight = configuration.colorBuildingsByHeight;
     options.render.pngTileCachePath = temporaryRoot;
@@ -685,26 +1012,25 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExportGroup(
                            progress.completedTileCount, progress.totalTileCount);
         };
 
-    const std::filesystem::path tileOutputPath =
-        configuration.gisOutputPath / std::filesystem::u8path("瓦片") /
-        std::filesystem::u8path(groupName);
-    const std::filesystem::path postProcessPath = configuration.exportGisTiles ?
+    const std::filesystem::path finalOutputRoot = GisOutputRoot(
+        configuration, queuedExport.taskId, GisModeName(mode), groupName);
+    const std::filesystem::path outputRoot = mode == GisExportMode::OverlayOnSatellite ?
+        temporaryRoot / std::filesystem::u8path("叠加后处理") : finalOutputRoot;
+    options.vectorDownload.geoJsonOutputPath.clear();
+    const std::filesystem::path tileOutputPath = outputRoot / "XYZ";
+    const std::filesystem::path postProcessPath = configuration.exportTiles ?
         tileOutputPath : temporaryRoot / std::filesystem::u8path("后处理");
-    std::filesystem::path mergedImagePath =
-        configuration.gisOutputPath / std::filesystem::u8path("大图") /
-        std::filesystem::u8path(groupName);
-    mergedImagePath.replace_extension(configuration.mergedImageFormat);
-    const std::filesystem::path fbxOutputPath =
-        configuration.gisOutputPath / "FBX" / std::filesystem::u8path(groupName);
+    std::filesystem::path mergedImagePath = outputRoot / "merged";
+    mergedImagePath.replace_extension("png");
+    const std::filesystem::path fbxOutputPath = outputRoot / "FBX";
 
     DownTool::AmapVectorPngDownloader downloader;
     downloader.SetPostProcessOutputPath(PathToUtf8(postProcessPath));
-    downloader.SetPostProcessEnabled(configuration.exportGisTiles);
-    downloader.SetPostProcessMergedImageEnabled(configuration.exportGisMergedImage);
+    downloader.SetPostProcessEnabled(configuration.exportTiles);
+    downloader.SetPostProcessMergedImageEnabled(configuration.exportMergedImage);
     downloader.SetPostProcessMergedImageOutputPath(PathToUtf8(mergedImagePath));
     downloader.SetPostProcessMergedImageResolution(configuration.mergedImageResolution);
-    const bool exportFbx = configuration.exportFbx &&
-        configuration.fbxSource == ExportFbxSource::Gis;
+    const bool exportFbx = configuration.exportFbx;
     downloader.SetPostProcessFbxEnabled(exportFbx);
     downloader.SetFbxOutputPath(PathToUtf8(fbxOutputPath));
     downloader.SetFbxTextureSize(configuration.fbxTextureSize);
@@ -736,26 +1062,125 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExportGroup(
         error = result.error;
         return false;
     }
-    if (configuration.exportGisTiles &&
+    if (configuration.exportTiles &&
         !std::filesystem::exists(tileOutputPath / "meta.json"))
     {
         error = "GIS XYZ 瓦片未生成完整元数据：" + groupName;
         return false;
     }
-    if (configuration.exportGisMergedImage && !std::filesystem::exists(mergedImagePath))
+    if (configuration.exportMergedImage && !std::filesystem::exists(mergedImagePath))
     {
         error = "GIS 合并大图未生成：" + groupName;
         return false;
     }
-    if (exportFbx && !std::filesystem::exists(
-            fbxOutputPath / "textures" / "fbx" /
-            std::to_string(configuration.fbxTextureSize) / "manifest.json"))
+    if (exportFbx && !std::filesystem::exists(fbxOutputPath / "manifest.json"))
     {
         error = "GIS FBX 贴图清单未生成：" + groupName;
         return false;
     }
 
+    if (mode == GisExportMode::OverlayOnSatellite)
+    {
+        for (const SatelliteExportSource& source : configuration.satelliteSources)
+        {
+            const std::filesystem::path satelliteRoot = SatelliteOutputRoot(
+                configuration, queuedExport.taskId, source);
+            const std::filesystem::path overlayRoot = configuration.exportTiles ?
+                tileOutputPath : temporaryRoot / "后处理";
+            const std::filesystem::path compositeRoot = OverlayOutputRoot(
+                configuration, queuedExport.taskId, source, groupName);
+            if (!ExportImageComposer::CopyDirectory(satelliteRoot, compositeRoot, error))
+            {
+                return false;
+            }
+            if ((configuration.exportTiles || configuration.exportFbx) &&
+                !ExportImageComposer::CompositeTileTree(
+                    compositeRoot / "XYZ", overlayRoot,
+                    compositeRoot / "XYZ", error))
+            {
+                return false;
+            }
+            if (configuration.exportFbx &&
+                !ExportImageComposer::CompositeTileTree(
+                    compositeRoot / "FBX", fbxOutputPath,
+                    compositeRoot / "FBX", error))
+            {
+                return false;
+            }
+            if (configuration.exportMergedImage)
+            {
+                const std::filesystem::path satelliteImage = satelliteRoot /
+                    std::filesystem::u8path(
+                        "merged." + configuration.mergedImageFormat);
+                const std::filesystem::path gisImage = mergedImagePath;
+                const std::filesystem::path compositeImage = compositeRoot / "merged.png";
+                if (!ExportImageComposer::CompositeImage(
+                        satelliteImage, gisImage, compositeImage, error))
+                {
+                    return false;
+                }
+                if (configuration.mergedImageFormat != "png")
+                {
+                    std::error_code removeError;
+                    std::filesystem::remove(
+                        compositeRoot /
+                            std::filesystem::u8path(
+                                "merged." + configuration.mergedImageFormat),
+                        removeError);
+                }
+            }
+        }
+    }
+
     UpdateProgress(queuedExport.taskId, "GIS 导出完成 · " + groupName,
+                   static_cast<double>(stepIndex + 1) / static_cast<double>(stepCount),
+                   1, 1);
+    return true;
+}
+
+bool DomDownToolPreview::ExportTaskManager::RunGeoJsonExport(
+    const QueuedExport& queuedExport, size_t stepIndex, size_t stepCount,
+    std::string& error)
+{
+    const ExportConfiguration& configuration = queuedExport.configuration;
+    DownTool::AmapVectorDownloadOptions options;
+    options.centerWgs84 = configuration.centerWgs84;
+    options.radiusMeters = configuration.radiusMeters;
+    options.zoom = configuration.zoom;
+    options.includeBaseLayers = true;
+    options.includeLabels = configuration.gisCategories.contains(
+        DownTool::AmapVectorRenderCategory::Point);
+    options.maxConcurrency = 0;
+    options.cancellationRequested = [this] { return IsCancellationRequested(); };
+    options.progressCallback =
+        [this, taskId = queuedExport.taskId, stepIndex, stepCount](
+            const DownTool::AmapVectorDownloadProgress& progress)
+        {
+            UpdateProgress(
+                taskId, "下载 GIS GeoJSON",
+                (static_cast<double>(stepIndex) +
+                 ProgressRatio(progress.completedTaskCount, progress.totalTaskCount)) /
+                    static_cast<double>(stepCount),
+                progress.completedTaskCount, progress.totalTaskCount);
+        };
+
+    DownTool::AmapVectorDownloader downloader;
+    const DownTool::AmapVectorDownloadResult result = downloader.Download(options);
+    if (!result.success)
+    {
+        error = result.error;
+        return false;
+    }
+    const std::filesystem::path outputRoot = GisOutputRoot(
+        configuration, queuedExport.taskId, "GeoJSON", "所选图层");
+    const DownTool::AmapVectorDecodedData filteredData = FilterGisData(
+        result.decodedData, configuration.gisCategories);
+    if (!DownTool::AmapVectorGeoJsonWriter::WriteFile(
+            filteredData, outputRoot / "数据.geojson", error))
+    {
+        return false;
+    }
+    UpdateProgress(queuedExport.taskId, "GeoJSON 导出完成",
                    static_cast<double>(stepIndex + 1) / static_cast<double>(stepCount),
                    1, 1);
     return true;

@@ -348,26 +348,23 @@ WGS84 lon/lat/alt -> FGISToolGeoReferencingData -> UE position
 
 ```text
 output/
-  tiles/
+  XYZ/
     0/
     ...
     {maxZoom}/
-  textures/
-    fbx/
-      4096/
-        manifest.json
-        {gridX}_{gridY}.png
-        {gridX}_{gridY}.json
-  mesh/
-    plane/
-      tiles.fbx
-    sphere/
-      tiles.fbx
-  meta.json
-  tilemapresource.xml
+    meta.json
+    tilemapresource.xml
+  FBX/
+    manifest.json
+    {gridX}_{gridY}.png
+    {gridX}_{gridY}.json
+    plane.fbx
+    sphere.fbx
+  merged.png
 ```
 
-如果只生成一种 `PlanetShape`，则 `mesh/` 下只输出对应结果。
+如果只生成一种 `PlanetShape`，则 `FBX/` 下只输出对应的模型文件。模型与贴图同级，
+复制整个 `FBX/` 目录即可保持纹理引用有效。
 
 ## 验证计划
 

@@ -78,7 +78,7 @@ namespace
         TestRealDownloadTool<MapTool> tool;
         tool.SetCachePath(postprocess_test::PathToUtf8String(testRoot / "cache"));
         tool.SetPostProcessOutputPath(
-            postprocess_test::PathToUtf8String(testRoot / "output"));
+            postprocess_test::PathToUtf8String(testRoot / "output" / "XYZ"));
         tool.SetCenterLonLat(centerLonLat);
         tool.SetRadius(1.);
         tool.SetZoom(zoom);
@@ -97,9 +97,10 @@ namespace
                 tool.GetDowningCount() ==
                     static_cast<int32_t>(tool.GetTotalDownCountForTest()),
                 caseName + " did not finish all target tiles") &&
-            postprocess_test::RequireNonEmptyFile(testRoot / "output" / "meta.json") &&
             postprocess_test::RequireNonEmptyFile(
-                testRoot / "output" / "tilemapresource.xml") &&
+                testRoot / "output" / "XYZ" / "meta.json") &&
+            postprocess_test::RequireNonEmptyFile(
+                testRoot / "output" / "XYZ" / "tilemapresource.xml") &&
             postprocess_test::RequireReadableImage(
                 testRoot / "output" / "merged.png");
     }

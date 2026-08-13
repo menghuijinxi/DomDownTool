@@ -1760,15 +1760,15 @@
                             <span class="gis-combine-title">GIS 组合方式</span>
                             <div id="export-gis-combine-options" class="gis-combine-options">
                                 <label id="export-gis-combine-overlay-item" class="check-item">
-                                    <input id="export-gis-combine-overlay" type="checkbox">
+                                    <input id="export-gis-combine-overlay" type="checkbox" disabled>
                                     <span>叠加到所选卫星图</span>
                                 </label>
                                 <label id="export-gis-combine-merged-item" class="check-item">
-                                    <input id="export-gis-combine-merged" type="checkbox">
+                                    <input id="export-gis-combine-merged" type="checkbox" disabled>
                                     <span>所选 GIS 图层合并输出</span>
                                 </label>
                                 <label id="export-gis-combine-separate-item" class="check-item">
-                                    <input id="export-gis-combine-separate" type="checkbox">
+                                    <input id="export-gis-combine-separate" type="checkbox" disabled>
                                     <span>每个 GIS 图层单独输出</span>
                                 </label>
                             </div>
@@ -1794,7 +1794,7 @@
                         <span>FBX 切片与网格</span>
                     </label>
                     <label class="check-item">
-                        <input id="export-geojson" type="checkbox">
+                        <input id="export-geojson" type="checkbox" disabled>
                         <span>GeoJson</span>
                     </label>
                 </div>
@@ -1842,7 +1842,7 @@
                     <label class="range-field">
                         <span>输出目录</span>
                         <div class="output-dir-row">
-                            <input id="export-satellite-output" type="text"
+                            <input id="export-output" type="text"
                                    placeholder="使用各下载器默认输出目录">
                             <button id="export-browse-output" type="button"
                                     data-action="browse-export-output"

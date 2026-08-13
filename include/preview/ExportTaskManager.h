@@ -34,16 +34,18 @@ enum class ExportTaskState
     Canceled
 };
 
-enum class ExportFbxSource
+enum class GisExportMode
 {
-    Satellite,
-    Gis
+    OverlayOnSatellite,
+    MergeSelectedLayers,
+    SeparateLayers
 };
 
-struct GisExportGroup
+struct SatelliteExportSource
 {
+    std::string id;
     std::string name;
-    std::set<DownTool::AmapVectorRenderCategory> categories;
+    std::filesystem::path cachePath;
 };
 
 struct ExportConfiguration
@@ -51,20 +53,15 @@ struct ExportConfiguration
     DownTool::LonLat centerWgs84;
     double radiusMeters = 0.;
     uint32_t zoom = 15;
-    std::string mapSourceId;
-    std::string mapSourceName;
-    std::filesystem::path satelliteCachePath;
-    std::filesystem::path satelliteOutputPath;
-    std::filesystem::path gisOutputPath =
-        std::filesystem::u8path("cache/高德地图/gis数据/输出");
-    std::vector<GisExportGroup> gisGroups;
+    std::vector<SatelliteExportSource> satelliteSources;
+    std::set<DownTool::AmapVectorRenderCategory> gisCategories;
+    std::set<GisExportMode> gisModes;
     std::map<DownTool::AmapVectorRenderCategory, DownTool::AmapVectorColor> gisColors;
-    bool exportSatelliteTiles = false;
-    bool exportSatelliteMergedImage = false;
-    bool exportGisTiles = false;
-    bool exportGisMergedImage = false;
+    std::filesystem::path outputRoot;
+    bool exportTiles = false;
+    bool exportMergedImage = false;
     bool exportFbx = false;
-    ExportFbxSource fbxSource = ExportFbxSource::Satellite;
+    bool exportGeoJson = false;
     bool colorBuildingsByHeight = false;
     uint32_t mergedImageResolution = 16384;
     std::string mergedImageFormat = "png";
@@ -121,12 +118,20 @@ class ExportTaskManager
 
     bool RunExport(const QueuedExport& queuedExport, std::string& error);
 
-    bool RunSatelliteExport(const QueuedExport& queuedExport, size_t stepIndex,
-                            size_t stepCount, std::string& error);
+    bool RunSatelliteExport(const QueuedExport& queuedExport,
+                            const SatelliteExportSource& source,
+                            size_t stepIndex, size_t stepCount,
+                            std::string& error);
 
-    bool RunGisExportGroup(const QueuedExport& queuedExport,
-                           const GisExportGroup& group, size_t stepIndex,
-                           size_t stepCount, std::string& error);
+    bool RunGisExport(const QueuedExport& queuedExport,
+                      const std::set<DownTool::AmapVectorRenderCategory>& categories,
+                      GisExportMode mode, std::string_view name,
+                      size_t stepIndex, size_t stepCount,
+                      std::string& error);
+
+    bool RunGeoJsonExport(const QueuedExport& queuedExport,
+                          size_t stepIndex, size_t stepCount,
+                          std::string& error);
 
     void UpdateProgress(std::string_view taskId, std::string stage,
                         double progress, uint64_t completed, uint64_t total);
