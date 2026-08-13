@@ -365,44 +365,26 @@ DomDownToolPreview::GisOverlayCategory previewCategory(
     return DomDownToolPreview::GisOverlayCategory::Other;
 }
 
-std::string exportCategoryLabel(DownTool::AmapVectorRenderCategory category)
-{
-    switch (category)
-    {
-    case DownTool::AmapVectorRenderCategory::Point:
-        return "点";
-    case DownTool::AmapVectorRenderCategory::Road:
-        return "道路";
-    case DownTool::AmapVectorRenderCategory::Green:
-        return "绿地";
-    case DownTool::AmapVectorRenderCategory::Highway:
-        return "高速";
-    case DownTool::AmapVectorRenderCategory::Subway:
-        return "地铁";
-    case DownTool::AmapVectorRenderCategory::Building:
-        return "建筑";
-    case DownTool::AmapVectorRenderCategory::Water:
-        return "水";
-    case DownTool::AmapVectorRenderCategory::Boundary:
-        return "边界";
-    case DownTool::AmapVectorRenderCategory::Other:
-        return "其他";
-    case DownTool::AmapVectorRenderCategory::All:
-        return "全部";
-    }
-    return "GIS";
-}
-
 constexpr std::array kExportCategories = {
     DownTool::AmapVectorRenderCategory::Road,
-    DownTool::AmapVectorRenderCategory::Water,
-    DownTool::AmapVectorRenderCategory::Green,
-    DownTool::AmapVectorRenderCategory::Highway,
-    DownTool::AmapVectorRenderCategory::Subway,
     DownTool::AmapVectorRenderCategory::Building,
+    DownTool::AmapVectorRenderCategory::Water,
     DownTool::AmapVectorRenderCategory::Point,
+    DownTool::AmapVectorRenderCategory::Green,
     DownTool::AmapVectorRenderCategory::Boundary,
-    DownTool::AmapVectorRenderCategory::Other};
+    DownTool::AmapVectorRenderCategory::Highway,
+    DownTool::AmapVectorRenderCategory::Other,
+    DownTool::AmapVectorRenderCategory::Subway};
+
+constexpr std::array<std::pair<std::string_view, std::string_view>, 7>
+    kExportProviderControls = {
+    std::pair{"gaode.satellite", "export-provider-gaode"},
+    std::pair{"tencent.satellite", "export-provider-tencent"},
+    std::pair{"tianditu.satellite", "export-provider-tianditu"},
+    std::pair{"baidu.satellite", "export-provider-baidu"},
+    std::pair{"google.satellite", "export-provider-google"},
+    std::pair{"bing.satellite", "export-provider-bing"},
+    std::pair{"arcgis.satellite", "export-provider-arcgis"}};
 
 DomDownToolPreview::GisOverlayCategories allGisCategories()
 {
@@ -827,6 +809,21 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                     exportGisMergedImage_ = event.checked;
                     return;
                 }
+                if (event.id == "export-gis-combine-overlay")
+                {
+                    exportGisOverlayOnSatellite_ = event.checked;
+                    return;
+                }
+                if (event.id == "export-gis-combine-merged")
+                {
+                    exportGisLayersMerged_ = event.checked;
+                    return;
+                }
+                if (event.id == "export-gis-combine-separate")
+                {
+                    exportGisLayersSeparate_ = event.checked;
+                    return;
+                }
                 if (event.id == "export-fbx")
                 {
                     exportFbx_ = event.checked;
@@ -840,18 +837,6 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 if (const std::optional<uint64_t> groupId = exportGisGroupId(event.id))
                 {
                     setExportGisGroupSelected(*groupId, event.checked);
-                    UpdateExportUi(runtime);
-                    requestRedraw();
-                    return;
-                }
-            }
-
-            if (event.type == skui::ElementEventType::MouseDown &&
-                event.button == skui::MouseButton::Right)
-            {
-                if (const std::optional<uint64_t> groupId = exportGisGroupId(event.id))
-                {
-                    HandleExportGisGroupContextAction(*groupId);
                     UpdateExportUi(runtime);
                     requestRedraw();
                     return;
@@ -1989,12 +1974,25 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
          {"coordinate-system", source.coordinateSystem},
          {"zoom-value", fmt::format("Z {:.2f}", renderer_.zoom())},
          {"view-span-value", fmt::format("视野 {:.1f}x", renderer_.GetViewSpan())},
-         {"cache-path", pathToUtf8(source.cacheRoot)},
-         {"tile-stats",
-         fmt::format("可见 {}  已载入 {}  读取 {}  下载 {}/{}  失败 {}  缓存 {:.1f} MB",
-                      stats.visibleTiles, stats.readyTiles, stats.cache.pendingTiles,
-                      stats.downloads.activeTiles, stats.downloads.queuedTiles,
-                      stats.downloads.failedTiles, memoryMegabytes)}});
+         {"cache-path", pathToUtf8(source.cacheRoot)}});
+    const std::string tileStatsState =
+        fmt::format("{}:{}:{}:{}:{}:{}:{:.1f}", stats.visibleTiles, stats.readyTiles,
+                    stats.cache.pendingTiles, stats.downloads.activeTiles,
+                    stats.downloads.queuedTiles, stats.downloads.failedTiles,
+                    memoryMegabytes);
+    if (tileStatsState != lastUiTileStats_)
+    {
+        runtime.setTextsById(
+            {{"tile-stat-visible", fmt::format("{}", stats.visibleTiles)},
+             {"tile-stat-ready", fmt::format("{}", stats.readyTiles)},
+             {"tile-stat-pending", fmt::format("{}", stats.cache.pendingTiles)},
+             {"tile-stat-downloads",
+              fmt::format("{}/{}", stats.downloads.activeTiles,
+                          stats.downloads.queuedTiles)},
+             {"tile-stat-failed", fmt::format("{}", stats.downloads.failedTiles)},
+             {"tile-stat-cache", fmt::format("{:.1f} MB", memoryMegabytes)}});
+        lastUiTileStats_ = tileStatsState;
+    }
     const std::string centerText = fmt::format("{:.6f}, {:.6f}", center.lon, center.lat);
     if (centerText != lastCenterCoordinate_)
     {
@@ -2054,6 +2052,8 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
         gisColorHue_, gisColorSaturation_, gisColorBrightness_);
     if (lastUiGisPickerState_ != pickerState)
     {
+        runtime.setStyleById("gis-color-toggle-swatch",
+                             "background-color: " + pickerHex + ";");
         runtime.setStyleById(
             "gis-color-picker-field",
             "background-color: " + hueHex + "; background-image: "
@@ -2141,39 +2141,46 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(skui::Runtime&
             source.cacheRoot / std::filesystem::u8path("Google_墨卡托"));
     exportValidationMessage_.clear();
     exportSatelliteTiles_ = false;
-    exportSatelliteMergedImage_ = source.id != "none";
+    exportSatelliteMergedImage_ = false;
     exportGisTiles_ = false;
+    exportGisMergedImage_ = false;
     exportFbx_ = false;
     exportFbxSource_ = ExportFbxSource::Satellite;
     exportBuildingHeightColors_ = false;
+    exportGisOverlayOnSatellite_ = false;
+    exportGisLayersMerged_ = false;
+    exportGisLayersSeparate_ = false;
 
     exportGisGroups_.clear();
-    const GisOverlayCategories categories = renderer_.GetGisOverlayCategories();
-    exportGisMergedImage_ = !categories.empty();
+    uint64_t groupId = 1;
     for (const DownTool::AmapVectorRenderCategory category : kExportCategories)
     {
-        const GisOverlayCategory previewCategoryValue = previewCategory(category);
-        exportGisGroups_.push_back(
-            ExportGisUiGroup{
-                nextExportGisGroupId_++, {category},
-                categories.contains(previewCategoryValue)});
+        exportGisGroups_.push_back(ExportGisUiGroup{groupId++, {category}, false});
     }
 
     runtime.setValueById("export-lon", exportLongitudeValue_);
     runtime.setValueById("export-lat", exportLatitudeValue_);
     runtime.setValueById("export-config-radius", exportRadiusValue_);
     runtime.setValueById("export-zoom", exportZoomValue_);
-    runtime.setValueById("export-provider-select", exportMapSourceId_);
     runtime.setValueById("export-satellite-output", exportSatelliteOutputValue_);
     runtime.setValueById("export-gis-output", exportGisOutputValue_);
     runtime.setValueById("export-merged-format", exportMergedFormat_);
     runtime.setValueById("export-merged-resolution", exportMergedResolutionValue_);
     runtime.setValueById("export-fbx-size", exportFbxSizeValue_);
     runtime.setValueById("export-fbx-source", "satellite");
+    for (const auto& [sourceId, controlId] : kExportProviderControls)
+    {
+        setCheckboxChecked(runtime, controlId, source.id == sourceId);
+    }
     setCheckboxChecked(runtime, "export-satellite-tiles", exportSatelliteTiles_);
     setCheckboxChecked(runtime, "export-satellite-merged", exportSatelliteMergedImage_);
     setCheckboxChecked(runtime, "export-gis-tiles", exportGisTiles_);
     setCheckboxChecked(runtime, "export-gis-merged", exportGisMergedImage_);
+    setCheckboxChecked(runtime, "export-gis-combine-overlay",
+                       exportGisOverlayOnSatellite_);
+    setCheckboxChecked(runtime, "export-gis-combine-merged", exportGisLayersMerged_);
+    setCheckboxChecked(runtime, "export-gis-combine-separate",
+                       exportGisLayersSeparate_);
     setCheckboxChecked(runtime, "export-fbx", exportFbx_);
     setCheckboxChecked(runtime, "export-building-height-colors", exportBuildingHeightColors_);
     UpdateExportUi(runtime);
@@ -2190,45 +2197,10 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
                     exportZoomValue_, radius.value_or(0.)));
     runtime.setTextById("export-validation-message", exportValidationMessage_);
 
-    std::string groupsHtml;
     for (const ExportGisUiGroup& group : exportGisGroups_)
     {
-        std::string labels;
-        for (const DownTool::AmapVectorRenderCategory category : group.categories)
-        {
-            if (!labels.empty())
-            {
-                labels += "、";
-            }
-            labels += exportCategoryLabel(category);
-        }
-        const bool merged = group.categories.size() > 1;
-        groupsHtml += fmt::format(
-            "<div id=\"export-gis-group-row-{}\" class=\"gis-group-item{}\" "
-            "title=\"{}\">"
-            "<input id=\"export-gis-group-{}\" type=\"checkbox\" value=\"{}\"{}>"
-            "<label id=\"export-gis-group-label-{}\" class=\"gis-group-label\" "
-            "for=\"export-gis-group-{}\">{}{}</label>"
-            "<span id=\"export-gis-group-count-{}\" class=\"gis-group-count\">"
-            "{}</span></div>",
-            group.id, merged ? " merged" : "",
-            merged ? "右键拆分此组合" : "选择后右键可合并", group.id, group.id,
-            group.selected ? " checked" : "", group.id, group.id,
-            escapeHtml(labels), merged ? " · 合并" : "", group.id,
-            group.categories.size());
-    }
-    if (groupsHtml.empty())
-    {
-        groupsHtml = "<div class=\"task-empty\">预览页没有选中的 GIS 分类</div>";
-    }
-    else
-    {
-        groupsHtml = "<div class=\"gis-group-grid\">" + groupsHtml + "</div>";
-    }
-    if (groupsHtml != lastExportGroupsHtml_)
-    {
-        runtime.replaceHtmlById("export-gis-groups", groupsHtml);
-        lastExportGroupsHtml_ = groupsHtml;
+        setCheckboxChecked(runtime, fmt::format("export-gis-group-{}", group.id),
+                           group.selected);
     }
 }
 
@@ -2312,60 +2284,6 @@ void DomDownToolPreview::PreviewController::setExportGisGroupSelected(
         return;
     }
     group->selected = selected;
-}
-
-void DomDownToolPreview::PreviewController::HandleExportGisGroupContextAction(uint64_t groupId)
-{
-    const auto group = std::find_if(
-        exportGisGroups_.begin(), exportGisGroups_.end(),
-        [groupId](const ExportGisUiGroup& item) { return item.id == groupId; });
-    if (group == exportGisGroups_.end())
-    {
-        return;
-    }
-    if (group->categories.size() > 1)
-    {
-        std::vector<ExportGisUiGroup> splitGroups;
-        for (const DownTool::AmapVectorRenderCategory category : group->categories)
-        {
-            splitGroups.push_back(
-                ExportGisUiGroup{nextExportGisGroupId_++, {category}, group->selected});
-        }
-        const size_t offset = static_cast<size_t>(std::distance(exportGisGroups_.begin(), group));
-        exportGisGroups_.erase(group);
-        exportGisGroups_.insert(exportGisGroups_.begin() + static_cast<ptrdiff_t>(offset),
-                                splitGroups.begin(), splitGroups.end());
-        return;
-    }
-
-    std::vector<size_t> selectedIndexes;
-    for (size_t index = 0; index < exportGisGroups_.size(); ++index)
-    {
-        if (exportGisGroups_[index].selected || index ==
-            static_cast<size_t>(std::distance(exportGisGroups_.begin(), group)))
-        {
-            selectedIndexes.push_back(index);
-        }
-    }
-    if (selectedIndexes.size() < 2)
-    {
-        group->selected = true;
-        return;
-    }
-
-    ExportGisUiGroup merged;
-    merged.id = nextExportGisGroupId_++;
-    merged.selected = true;
-    for (const size_t index : selectedIndexes)
-    {
-        merged.categories.insert(exportGisGroups_[index].categories.begin(),
-                                 exportGisGroups_[index].categories.end());
-    }
-    for (auto iterator = selectedIndexes.rbegin(); iterator != selectedIndexes.rend(); ++iterator)
-    {
-        exportGisGroups_.erase(exportGisGroups_.begin() + static_cast<ptrdiff_t>(*iterator));
-    }
-    exportGisGroups_.push_back(std::move(merged));
 }
 
 std::optional<DomDownToolPreview::ExportConfiguration>

@@ -32,11 +32,11 @@
             align-items: center;
             gap: 10px;
             width: 100%;
-            height: 52px;
-            padding: 0 12px;
+            height: 56px;
+            padding: 0 16px;
             overflow: visible;
-            border-bottom: 1px solid #3b403e;
-            background: #222725;
+            border-bottom: 1px solid #1B1D1D;
+            background: #252729;
         }
 
         .brand {
@@ -46,37 +46,49 @@
             width: 170px;
             min-width: 170px;
             color: #f4f6f5;
-            font-size: 15px;
+            font-size: 16px;
             font-weight: 700;
+            white-space: nowrap;
         }
 
         .brand span {
-            color: #9aa49f;
+            color: #98a39e;
             font-size: 11px;
             font-weight: 400;
         }
 
         .field {
             display: flex;
+            flex: 0 0 auto;
             align-items: center;
             gap: 7px;
             color: #aeb7b2;
+            white-space: nowrap;
         }
 
         select {
             width: 184px;
             height: 30px;
-            padding: 0 8px;
-            border: 1px solid #505854;
+            padding: 0 26px 0 8px;
+            border: 1px solid #454B48;
             border-radius: 4px;
             outline: none;
-            background: #181c1b;
+            appearance: none;
+            -webkit-appearance: none;
+            background: #1F2224 url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%239aa3a0' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>") no-repeat right 9px center;
             color: #edf1ef;
             font: inherit;
         }
 
+        .toolbar select {
+            height: 34px;
+            padding: 0 26px 0 10px;
+            border-color: #454B48;
+            background-color: #1F2224;
+        }
+
         select:focus {
-            border-color: #50a38b;
+            border-color: #2EA694;
         }
 
         #provider-select {
@@ -86,7 +98,7 @@
         .gis-field {
             flex: 0 0 171px;
             width: 171px;
-            height: 30px;
+            height: 34px;
         }
 
         #gis-overlay-toggle {
@@ -94,17 +106,22 @@
             align-items: center;
             justify-content: space-between;
             width: 141px;
-            height: 30px;
-            padding: 0 8px;
-            border: 1px solid #505854;
+            height: 34px;
+            padding: 0 10px;
+            border: 1px solid #454B48;
             border-radius: 4px;
-            background: #181c1b;
+            background: #1F2224;
             color: #edf1ef;
             font: 13px "Microsoft YaHei", "Segoe UI", sans-serif;
         }
 
+        #gis-overlay-toggle:hover {
+            border-color: #5a615e;
+            background: #262b2a;
+        }
+
         #gis-overlay-toggle:focus {
-            border-color: #50a38b;
+            border-color: #2EA694;
         }
 
         #gis-overlay-summary {
@@ -115,7 +132,9 @@
         }
 
         #gis-overlay-arrow {
+            display: flex;
             flex: 0 0 auto;
+            align-items: center;
             margin-left: 8px;
             color: #b8c1bd;
         }
@@ -123,15 +142,15 @@
         .gis-overlay-panel {
             position: absolute;
             z-index: 90;
-            top: 48px;
+            top: 60px;
             left: 735px;
             display: flex;
             flex-direction: column;
             width: 184px;
             padding: 6px;
-            border: 1px solid #4a524e;
+            border: 1px solid #3F4542;
             border-radius: 4px;
-            background: #1b201e;
+            background: #232627;
             box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
         }
 
@@ -164,31 +183,35 @@
 
         .search-control {
             position: relative;
+            display: flex;
             flex: 0 0 300px;
+            align-items: center;
+            gap: 8px;
             width: 300px;
-            height: 32px;
+            height: 34px;
         }
 
         .search-input-shell {
             display: flex;
+            flex: 1;
             align-items: center;
-            width: 100%;
-            height: 32px;
+            min-width: 0;
+            height: 34px;
             overflow: hidden;
-            border: 1px solid #505854;
+            border: 1px solid #454B48;
             border-radius: 4px;
-            background: #181c1b;
+            background: #1F2224;
         }
 
         .search-input-shell:focus-within {
-            border-color: #50a38b;
+            border-color: #2EA694;
         }
 
         #place-search-input {
             flex: 1;
             min-width: 0;
-            height: 30px;
-            padding: 0 9px;
+            height: 32px;
+            padding: 0 10px;
             border: 0;
             outline: none;
             background: transparent;
@@ -202,35 +225,38 @@
 
         #place-search-clear {
             width: 28px;
-            height: 30px;
+            height: 32px;
             color: #9ea8a3;
             font-size: 17px;
         }
 
         #place-search-submit {
-            width: 48px;
-            height: 30px;
-            border-left: 1px solid #3f4743;
-            background: #2c5146;
-            color: #e3f4ed;
-            font: 12px "Microsoft YaHei", "Segoe UI", sans-serif;
+            flex: 0 0 56px;
+            width: 56px;
+            height: 34px;
+            border: 1px solid #1c6e6d;
+            border-radius: 4px;
+            background: #1c6e6d;
+            color: #f0fbf7;
+            font: 13px "Microsoft YaHei", "Segoe UI", sans-serif;
         }
 
         #place-search-submit:hover {
-            background: #376559;
+            border-color: #237f77;
+            background: #237f77;
         }
 
         .search-results {
             position: absolute;
             z-index: 80;
-            top: 48px;
+            top: 60px;
             left: 192px;
             width: 360px;
             max-height: 374px;
             overflow-y: auto;
-            border: 1px solid #4a524e;
+            border: 1px solid #3F4542;
             border-radius: 4px;
-            background: #1b201e;
+            background: #232627;
             box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
         }
 
@@ -295,11 +321,11 @@
         .zoom-controls {
             display: flex;
             align-items: center;
-            height: 30px;
-            border: 1px solid #505854;
+            height: 34px;
+            border: 1px solid #3f4442;
             border-radius: 4px;
             overflow: hidden;
-            background: #181c1b;
+            background: #202324;
         }
 
         button {
@@ -316,8 +342,12 @@
             background: #343b38;
         }
 
+        .toolbar button {
+            height: 32px;
+        }
+
         #zoom-value {
-            min-width: 58px;
+            min-width: 62px;
             color: #d9dfdc;
             text-align: center;
             font-variant-numeric: tabular-nums;
@@ -325,27 +355,50 @@
 
         #reload-tiles {
             width: 34px;
-            border: 1px solid #505854;
+            height: 34px;
+            border: 1px solid transparent;
             border-radius: 4px;
-            font-size: 15px;
+            background: transparent;
+            color: #c9cfcc;
+            font-size: 20px;
+            line-height: 1;
+        }
+
+        #reload-tiles:hover {
+            background: #343a38;
         }
 
         #gis-color-toggle {
-            width: 48px;
-            border: 1px solid #505854;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 34px;
+            width: 34px;
+            height: 34px;
+            padding: 0;
+            border: 1px solid #454B48;
             border-radius: 4px;
-            color: #d9dfdc;
-            font: 12px "Microsoft YaHei", "Segoe UI", sans-serif;
+            background: #252729;
         }
 
         #gis-color-toggle:hover {
-            background: #343b38;
+            border-color: #718079;
+            background: #2b3330;
+        }
+
+        #gis-color-toggle-swatch {
+            width: 20px;
+            height: 20px;
+            border: 1px solid rgba(0, 0, 0, 0.35);
+            border-radius: 2px;
+            background: #F0A510;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
         }
 
         .gis-color-panel {
             position: absolute;
             z-index: 90;
-            top: 48px;
+            top: 60px;
             left: 720px;
             display: flex;
             flex-direction: column;
@@ -353,9 +406,9 @@
             width: 320px;
             height: 540px;
             padding: 10px;
-            border: 1px solid #4a524e;
+            border: 1px solid #3F4542;
             border-radius: 4px;
-            background: #1b201e;
+            background: #232627;
             box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
         }
 
@@ -388,7 +441,7 @@
 
         .gis-color-swatch[aria-pressed="true"] {
             border-color: #edf1ef;
-            box-shadow: 0 0 0 1px #50a38b;
+            box-shadow: 0 0 0 1px #2EA694;
         }
 
         .gis-color-value {
@@ -396,16 +449,16 @@
             width: 92px;
             height: 24px;
             padding: 0 6px;
-            border: 1px solid #505854;
+            border: 1px solid #454B48;
             border-radius: 3px;
             outline: none;
-            background: #181c1b;
+            background: #1F2224;
             color: #edf1ef;
             font: 12px "Consolas", monospace;
         }
 
         .gis-color-value:focus {
-            border-color: #50a38b;
+            border-color: #2EA694;
         }
 
         .gis-color-palette {
@@ -509,7 +562,7 @@
         .gis-color-current {
             height: 40px;
             border: 1px solid #818a86;
-            background: #ffda71;
+            background: #F0A510;
         }
 
         .gis-color-channel {
@@ -557,7 +610,7 @@
 
         .gis-color-tool-button:hover,
         .gis-color-eyedropper[aria-pressed="true"] {
-            border-color: #4cae91;
+            border-color: #2EA694;
             background: #285044;
             color: #f1faf7;
         }
@@ -575,16 +628,16 @@
             display: flex;
             flex: 0 0 auto;
             align-items: center;
-            height: 22px;
+            height: 26px;
             overflow: hidden;
-            border: 1px solid #49514d;
+            border: 1px solid #3f4442;
             border-radius: 4px;
-            background: #181c1b;
+            background: #202324;
         }
 
         .view-span-controls button {
-            width: 24px;
-            height: 20px;
+            width: 26px;
+            height: 24px;
             font-size: 13px;
         }
 
@@ -604,18 +657,53 @@
 
         .source-line {
             position: absolute;
-            top: 12px;
-            left: 12px;
+            top: 16px;
+            left: 10px;
             display: flex;
             align-items: center;
-            gap: 9px;
-            height: 30px;
-            padding: 0 9px;
-            border-left: 3px solid #50a38b;
-            background: rgba(28, 33, 31, 0.88);
+            gap: 10px;
+            height: 38px;
+            padding: 0 12px;
+            border-left: 4px solid #22B3A8;
+            background: rgba(22, 24, 24, 0.88);
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        .map-crosshair {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 22px;
+            height: 22px;
+            transform: translate(-50%, -50%);
+        }
+
+        .map-crosshair::before,
+        .map-crosshair::after {
+            content: "";
+            position: absolute;
+            background: #ffd84d;
+            box-shadow: 0 0 2px rgba(0, 0, 0, 0.65);
+        }
+
+        .map-crosshair::before {
+            left: 50%;
+            top: 0;
+            width: 2px;
+            height: 100%;
+            transform: translateX(-50%);
+        }
+
+        .map-crosshair::after {
+            left: 0;
+            top: 50%;
+            width: 100%;
+            height: 2px;
+            transform: translateY(-50%);
         }
 
         #active-provider {
+            color: #f2f5f4;
             font-weight: 650;
         }
 
@@ -627,18 +715,18 @@
         .statusbar {
             display: flex;
             align-items: center;
-            gap: 18px;
+            gap: 12px;
             width: 100%;
-            height: 28px;
-            padding: 0 10px;
-            border-top: 1px solid #3b403e;
-            background: #202523;
-            color: #aeb7b2;
-            font-size: 11px;
+            height: 40px;
+            padding: 0 12px;
+            border-top: 1px solid #1B1D1D;
+            background: #252729;
+            color: #9aa3a0;
+            font-size: 12px;
         }
 
         #center-coordinate {
-            width: 164px;
+            width: 168px;
             height: 28px;
             padding: 0;
             border: 1px solid transparent;
@@ -653,13 +741,15 @@
         #center-coordinate:hover,
         #center-coordinate:focus {
             padding: 0 7px;
-            border-color: #4d5551;
-            background: #151918;
+            border-color: #454b48;
+            background: #1a1d1c;
         }
 
         #cache-path {
             min-width: 0;
+            padding-left: 12px;
             overflow: hidden;
+            border-left: 1px solid #3a3e3b;
             color: #8f9994;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -670,7 +760,31 @@
         }
 
         #tile-stats {
+            display: flex;
+            align-items: center;
+            height: 100%;
             white-space: nowrap;
+        }
+
+        #tile-stats .stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            height: 100%;
+            padding: 0 14px;
+            border-left: 1px solid #3a3e3c;
+            color: #9aa3a0;
+        }
+
+        #tile-stats .stat:first-child {
+            padding-left: 0;
+            border-left: 0;
+        }
+
+        #tile-stats .stat b {
+            color: #e8ecea;
+            font-weight: 400;
+            font-variant-numeric: tabular-nums;
         }
 
         button {
@@ -686,13 +800,13 @@
         }
 
         .radius-control input {
-            width: 72px;
-            height: 30px;
+            width: 56px;
+            height: 34px;
             padding: 0 7px;
-            border: 1px solid #505854;
+            border: 1px solid #454B48;
             border-radius: 4px;
             outline: none;
-            background: #181c1b;
+            background: #1F2224;
             color: #edf1ef;
             font: inherit;
             text-align: right;
@@ -701,7 +815,7 @@
         .radius-control input:focus,
         .form-field input:focus,
         .form-field select:focus {
-            border-color: #50a38b;
+            border-color: #2EA694;
         }
 
         .primary-command,
@@ -709,7 +823,7 @@
         .danger-command {
             height: 30px;
             padding: 0 12px;
-            border: 1px solid #4e5a55;
+            border: 1px solid #4A504D;
             border-radius: 4px;
             background: #252c29;
             color: #edf1ef;
@@ -718,12 +832,12 @@
         }
 
         .primary-command {
-            border-color: #4cae91;
-            background: #285a4b;
+            border-color: #2EA694;
+            background: #1C6E6D;
         }
 
         .primary-command:hover {
-            background: #32705d;
+            background: #237F77;
         }
 
         .secondary-command:hover {
@@ -745,6 +859,32 @@
             min-width: 64px;
         }
 
+        #open-export-page,
+        #open-task-page {
+            flex-basis: 58px;
+            width: 58px;
+            min-width: 58px;
+            height: 34px;
+            padding: 0 10px;
+            border-color: #4a504d;
+            background: transparent;
+            overflow: hidden;
+            text-overflow: clip;
+            white-space: nowrap;
+        }
+
+        #open-export-page {
+            border-color: #1e8c7f;
+            background: transparent;
+            color: #3fb5a6;
+        }
+
+        #open-export-page:hover {
+            border-color: #25a894;
+            background: rgba(30, 140, 127, 0.12);
+            color: #55caba;
+        }
+
         .workspace-page {
             position: relative;
             display: flex;
@@ -752,7 +892,7 @@
             width: 100%;
             height: 100%;
             overflow: hidden;
-            background: #191d1c;
+            background: #1E2121;
         }
 
         .page-header {
@@ -762,8 +902,8 @@
             flex: 0 0 56px;
             height: 56px;
             padding: 0 18px;
-            border-bottom: 1px solid #3b403e;
-            background: #222725;
+            border-bottom: 1px solid #3A3E3C;
+            background: #252729;
         }
 
         .page-header h1 {
@@ -811,163 +951,280 @@
             overflow-y: auto;
         }
 
-        .export-layout {
+        #export-page-header {
+            height: 72px;
+            padding: 0 50px;
+        }
+
+        #export-page-header h1 {
+            font-size: 19px;
+        }
+
+        .export-form {
+            padding: 6px 50px 30px;
+        }
+
+        .form-section {
             display: grid;
-            grid-template-columns: minmax(420px, 0.95fr) minmax(480px, 1.05fr);
-            gap: 0;
-            min-height: 100%;
+            grid-template-columns: 150px 1fr;
+            gap: 0 24px;
+            padding: 20px 0 22px;
+            border-bottom: 1px solid #2b2f2e;
         }
 
-        .export-column {
-            min-width: 0;
-            padding: 20px 24px 28px;
-        }
-
-        .export-column + .export-column {
-            border-left: 1px solid #343a37;
-        }
-
-        .settings-section {
-            margin-bottom: 24px;
-        }
-
-        .settings-section h2 {
-            margin: 0 0 12px;
+        .form-section > h2 {
+            margin: 2px 0 0;
             color: #e8edeb;
             font-size: 14px;
             font-weight: 650;
             letter-spacing: 0;
         }
 
-        .form-grid {
+        .range-grid {
             display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 12px;
+            grid-template-columns: repeat(2, minmax(0, 460px));
+            column-gap: 90px;
+            row-gap: 16px;
         }
 
-        .form-field {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
+        .range-field {
+            display: grid;
+            grid-template-columns: 92px 1fr;
+            align-items: center;
+            gap: 14px;
             min-width: 0;
-            color: #aab4af;
-            font-size: 12px;
+            color: #c9cfcc;
+            font-size: 13px;
+            white-space: nowrap;
         }
 
-        .form-field.full {
-            grid-column: 1 / -1;
-        }
-
-        .form-field input,
-        .form-field select {
+        .range-field input {
             width: 100%;
-            height: 34px;
-            padding: 0 9px;
-            border: 1px solid #4d5551;
+            height: 38px;
+            padding: 0 10px;
+            border: 1px solid #454b48;
             border-radius: 4px;
             outline: none;
-            background: #151918;
+            background: #1f2224;
             color: #edf1ef;
             font: 13px "Microsoft YaHei", "Segoe UI", sans-serif;
         }
 
-        .output-options {
+        .range-field input:focus {
+            border-color: #2ea694;
+        }
+
+        .content-groups {
+            display: grid;
+            grid-template-columns: 6fr 7fr;
+            gap: 80px;
+            min-width: 0;
+        }
+
+        .content-group > h3 {
+            margin: 0 0 12px;
+            color: #c9cfcc;
+            font-size: 13px;
+            font-weight: 400;
+        }
+
+        .check-grid {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            border-top: 1px solid #343a37;
+            row-gap: 13px;
+            column-gap: 24px;
         }
 
-        .output-option {
+        .check-item {
             display: flex;
             align-items: center;
-            gap: 9px;
-            min-height: 42px;
-            padding: 0 8px;
-            border-bottom: 1px solid #343a37;
-            color: #dce3df;
-        }
-
-        .output-option:nth-child(odd) {
-            border-right: 1px solid #343a37;
-        }
-
-        .output-option input {
-            width: 16px;
-            height: 16px;
-        }
-
-        .gis-group-list {
-            min-height: 42px;
-            display: grid;
-            border-top: 1px solid #343a37;
-        }
-
-        .gis-group-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-
-        .gis-group-item {
-            display: flex;
-            align-items: center;
-            gap: 9px;
+            gap: 10px;
             min-width: 0;
-            min-height: 42px;
-            padding: 0 8px;
-            border-bottom: 1px solid #343a37;
+            min-height: 22px;
             color: #dce3df;
-        }
-
-        .gis-group-item:nth-child(odd) {
-            border-right: 1px solid #343a37;
-        }
-
-        .gis-group-item input {
-            flex: 0 0 16px;
-            width: 16px;
-            height: 16px;
-        }
-
-        .gis-group-item.merged {
-            background: #2d2a20;
-        }
-
-        .gis-group-label {
-            min-width: 0;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            font-size: 13px;
             white-space: nowrap;
         }
 
-        .gis-group-count {
-            margin-left: auto;
-            color: #9eaaa4;
-            font-size: 11px;
+        .check-item input {
+            position: relative;
+            flex: 0 0 16px;
+            width: 16px;
+            height: 16px;
+            margin: 0;
+            appearance: none;
+            -webkit-appearance: none;
+            border: 1px solid #6b716e;
+            border-radius: 3px;
+            outline: none;
+            background: transparent;
+            cursor: pointer;
+        }
+
+        .check-item input:checked {
+            border-color: #1e9e8a;
+            background: #1e9e8a;
+        }
+
+        .check-item input:checked::after {
+            content: "";
+            position: absolute;
+            left: 4px;
+            top: 1px;
+            width: 5px;
+            height: 9px;
+            border: solid #ffffff;
+            border-width: 0 2px 2px 0;
+            transform: rotate(45deg);
+        }
+
+        .gis-combine-row {
+            display: block;
+            margin-top: 18px;
+            padding-top: 14px;
+            border-top: 1px solid #343937;
+            color: #c9cfcc;
+            font-size: 13px;
+        }
+
+        .gis-combine-title {
+            display: block;
+            margin-bottom: 12px;
+        }
+
+        .gis-combine-options {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            column-gap: 20px;
+            min-width: 0;
+        }
+
+        .gis-combine-hint {
+            display: block;
+            margin-top: 10px;
+            color: #929d98;
+            font-size: 12px;
+        }
+
+        .type-row {
+            display: flex;
+            align-items: center;
+            gap: 64px;
+            min-height: 24px;
+        }
+
+        .param-row {
+            display: flex;
+            align-items: center;
+            gap: 50px;
+            min-width: 0;
+        }
+
+        .param-field {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #c9cfcc;
+            font-size: 13px;
+            white-space: nowrap;
+        }
+
+        .param-field select {
+            width: 200px;
+            height: 38px;
+        }
+
+        .param-field select:disabled {
+            border-color: #3a3f3d;
+            color: #6f7874;
+        }
+
+        .param-check {
+            gap: 12px;
+        }
+
+        .param-check input {
+            order: 2;
+        }
+
+        .output-location {
+            min-width: 0;
+        }
+
+        .output-dir-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .output-dir-row input {
+            flex: 1;
+            min-width: 0;
+        }
+
+        #export-browse-output {
+            display: flex;
+            flex: 0 0 170px;
+            align-items: center;
+            justify-content: center;
+            width: 170px;
+            height: 38px;
+            border: 1px solid #454b48;
+            border-radius: 4px;
+            background: #1f2224;
+            color: #c9cfcc;
+        }
+
+        #export-browse-output:hover {
+            border-color: #5a615e;
+            background: #262b2a;
+        }
+
+        #export-browse-output svg {
+            width: 18px;
+            height: 18px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 1.6;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            pointer-events: none;
+        }
+
+        .output-hint {
+            margin: 10px 0 0 106px;
+            color: #7f8984;
+            font-size: 12px;
         }
 
         .export-footer {
             display: flex;
             align-items: center;
-            gap: 10px;
-            padding-top: 16px;
-            border-top: 1px solid #343a37;
+            justify-content: flex-end;
+            gap: 12px;
+            padding: 20px 0 0;
         }
 
         .validation-message {
-            width: 420px;
-            min-width: 420px;
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
             color: #ffaaa2;
             font-size: 12px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         #export-cancel {
-            width: 64px;
-            min-width: 64px;
+            width: 110px;
+            min-width: 110px;
+            height: 38px;
         }
 
         #export-submit {
-            width: 128px;
-            min-width: 128px;
+            width: 156px;
+            min-width: 156px;
+            height: 38px;
         }
 
         .task-summary-band {
@@ -976,8 +1233,8 @@
             gap: 24px;
             height: 48px;
             padding: 0 24px;
-            border-bottom: 1px solid #343a37;
-            background: #1d2220;
+            border-bottom: 1px solid #333837;
+            background: #222625;
             color: #a8b2ad;
         }
 
@@ -997,8 +1254,8 @@
             align-items: center;
             min-height: 96px;
             padding: 14px 24px;
-            border-bottom: 1px solid #343a37;
-            background: #191d1c;
+            border-bottom: 1px solid #333837;
+            background: #1E2121;
         }
 
         .task-row:hover {
@@ -1058,7 +1315,7 @@
         }
 
         .task-state.running {
-            border-color: #4cae91;
+            border-color: #2EA694;
             color: #88d9be;
         }
 
@@ -1089,13 +1346,28 @@
                 display: none;
             }
 
-            .export-layout {
+            .form-section {
                 grid-template-columns: 1fr;
             }
 
-            .export-column + .export-column {
-                border-top: 1px solid #343a37;
-                border-left: 0;
+            .form-section > h2 {
+                margin-bottom: 12px;
+            }
+
+            .content-groups {
+                grid-template-columns: 1fr;
+                gap: 24px;
+            }
+
+            .range-grid {
+                grid-template-columns: 1fr;
+                column-gap: 0;
+            }
+
+            .param-row,
+            .type-row {
+                flex-wrap: wrap;
+                gap: 16px 32px;
             }
 
             .task-row {
@@ -1116,8 +1388,8 @@
                 <div class="search-input-shell">
                     <input id="place-search-input" type="text" placeholder="搜索地点或地址" autocomplete="off">
                     <button id="place-search-clear" type="button" data-action="clear-place-search" title="清除搜索">&times;</button>
-                    <button id="place-search-submit" type="button" data-action="submit-place-search">搜索</button>
                 </div>
+                <button id="place-search-submit" type="button" data-action="submit-place-search">搜索</button>
             </div>
             <label class="field">
                 <span>地图</span>
@@ -1139,10 +1411,18 @@
                 <button id="gis-overlay-toggle" type="button" data-action="toggle-gis-overlay"
                         aria-haspopup="true" aria-expanded="false">
                     <span id="gis-overlay-summary">无</span>
-                    <span id="gis-overlay-arrow">v</span>
+                    <span id="gis-overlay-arrow">
+                        <svg viewBox="0 0 10 6" width="10" height="6" aria-hidden="true">
+                            <path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.4"
+                                  stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </span>
                 </button>
             </div>
-            <button id="gis-color-toggle" type="button" data-action="toggle-gis-colors">颜色</button>
+            <button id="gis-color-toggle" type="button" data-action="toggle-gis-colors"
+                    aria-label="GIS 颜色" title="GIS 颜色">
+                <span id="gis-color-toggle-swatch"></span>
+            </button>
             <div class="zoom-controls">
                 <button id="zoom-out" type="button" data-action="zoom-out" title="缩小">-</button>
                 <span id="zoom-value">Z 15.00</span>
@@ -1158,7 +1438,8 @@
                     data-action="open-export-config">导出</button>
             <button id="open-task-page" class="secondary-command" type="button"
                     data-action="open-export-tasks">任务</button>
-            <button id="reload-tiles" type="button" data-action="reload-tiles" title="重新读取缓存">&#x21bb;</button>
+            <button id="reload-tiles" type="button" data-action="reload-tiles" title="重新读取缓存"
+                    aria-label="重新读取缓存">&#x21bb;</button>
             <div class="toolbar-spacer"></div>
         </header>
 
@@ -1214,8 +1495,8 @@
                 <span class="gis-color-label">道路</span>
                 <button id="gis-color-target-road" class="gis-color-swatch" type="button"
                         title="选择道路颜色" aria-label="选择道路颜色"
-                        style="background-color: #FFDA71"></button>
-                <input id="gis-color-road" class="gis-color-value" type="text" value="#FFDA71"
+                        style="background-color: #F0A510"></button>
+                <input id="gis-color-road" class="gis-color-value" type="text" value="#F0A510"
                        maxlength="7" aria-label="道路颜色">
             </div>
             <div class="gis-color-row">
@@ -1342,6 +1623,7 @@
                 <span id="active-provider">高德卫星</span>
                 <span id="coordinate-system">GCJ02 / XYZ</span>
             </div>
+            <div class="map-crosshair" aria-hidden="true"></div>
         </section>
 
         <footer id="preview-statusbar" class="statusbar">
@@ -1354,155 +1636,233 @@
             </div>
             <span id="cache-path">cache/高德地图</span>
             <div class="status-spacer"></div>
-            <span id="tile-stats">可见 0  已载入 0  读取 0  下载 0/0  失败 0  缓存 0.0 MB</span>
+            <div id="tile-stats">
+                <span id="tile-stat-visible-item" class="stat">可见 <b id="tile-stat-visible">88</b></span>
+                <span id="tile-stat-ready-item" class="stat">已载入 <b id="tile-stat-ready">88</b></span>
+                <span id="tile-stat-pending-item" class="stat">读取 <b id="tile-stat-pending">0</b></span>
+                <span id="tile-stat-downloads-item" class="stat">下载 <b id="tile-stat-downloads">0/0</b></span>
+                <span id="tile-stat-failed-item" class="stat">失败 <b id="tile-stat-failed">0</b></span>
+                <span id="tile-stat-cache-item" class="stat">缓存 <b id="tile-stat-cache">44.0 MB</b></span>
+            </div>
         </footer>
     </main>
 
     <section id="export-page" class="workspace-page" style="display: none">
         <header id="export-page-header" class="page-header">
             <h1>导出配置</h1>
-            <span id="export-config-summary" class="page-header-summary"></span>
+            <span id="export-config-summary" class="page-header-summary">中心 116.92721, 36.70522 · z14 · 半径 0 米</span>
             <div class="page-header-spacer"></div>
             <button id="export-open-tasks" class="secondary-command" type="button"
                     data-action="open-export-tasks">导出任务</button>
             <button id="export-back-preview" class="secondary-command" type="button"
                     data-action="back-to-preview">返回</button>
         </header>
-        <div class="page-content">
-            <div class="export-layout">
-                <div class="export-column">
-                    <section class="settings-section">
-                        <h2>导出范围</h2>
-                        <div class="form-grid">
-                            <label class="form-field">
-                                <span>中心经度</span>
-                                <input id="export-lon" type="number" step="0.000001">
-                            </label>
-                            <label class="form-field">
-                                <span>中心纬度</span>
-                                <input id="export-lat" type="number" step="0.000001">
-                            </label>
-                            <label class="form-field">
-                                <span>半径（米）</span>
-                                <input id="export-config-radius" type="number" min="0" step="100">
-                            </label>
-                            <label class="form-field">
-                                <span>层级</span>
-                                <input id="export-zoom" type="number" min="1" max="21" step="1">
-                            </label>
-                            <label class="form-field full">
-                                <span>卫星图来源</span>
-                                <select id="export-provider-select">
-                                    <option value="gaode.satellite">高德卫星</option>
-                                    <option value="gaode.electronic">高德电子地图</option>
-                                    <option value="gaode.roads">高德透明路网</option>
-                                    <option value="tencent.satellite">腾讯卫星</option>
-                                    <option value="tianditu.satellite">天地图影像</option>
-                                    <option value="baidu.satellite">百度卫星</option>
-                                    <option value="google.satellite">Google 卫星</option>
-                                    <option value="bing.satellite">Bing 卫星</option>
-                                    <option value="arcgis.satellite">ArcGIS 影像</option>
-                                    <option value="none">无</option>
-                                </select>
-                            </label>
-                        </div>
-                    </section>
-
-                    <section class="settings-section">
-                        <h2>输出内容</h2>
-                        <div class="output-options">
-                            <label class="output-option">
-                                <input id="export-satellite-tiles" type="checkbox">
-                                <span>卫星 XYZ 切片</span>
-                            </label>
-                            <label class="output-option">
-                                <input id="export-gis-tiles" type="checkbox">
-                                <span>GIS XYZ 切片</span>
-                            </label>
-                            <label class="output-option">
-                                <input id="export-satellite-merged" type="checkbox">
-                                <span>卫星合并大图</span>
-                            </label>
-                            <label class="output-option">
-                                <input id="export-gis-merged" type="checkbox">
-                                <span>GIS 合并大图</span>
-                            </label>
-                            <label class="output-option">
-                                <input id="export-fbx" type="checkbox">
-                                <span>FBX 切片与网格</span>
-                            </label>
-                            <label class="form-field" style="padding: 6px 8px">
-                                <span>FBX 数据来源</span>
-                                <select id="export-fbx-source">
-                                    <option value="satellite">卫星图</option>
-                                    <option value="gis">GIS</option>
-                                </select>
-                            </label>
-                        </div>
-                    </section>
-
-                    <section class="settings-section">
-                        <h2>输出参数</h2>
-                        <div class="form-grid">
-                            <label class="form-field">
-                                <span>大图格式</span>
-                                <select id="export-merged-format">
-                                    <option value="png">PNG</option>
-                                    <option value="jpg">JPG</option>
-                                </select>
-                            </label>
-                            <label class="form-field">
-                                <span>大图最大边</span>
-                                <input id="export-merged-resolution" type="number" min="256"
-                                       step="256" value="16384">
-                            </label>
-                            <label class="form-field">
-                                <span>FBX 贴图尺寸</span>
-                                <select id="export-fbx-size">
-                                    <option value="1024">1024</option>
-                                    <option value="2048">2048</option>
-                                    <option value="4096" selected>4096</option>
-                                    <option value="8192">8192</option>
-                                    <option value="16384">16384</option>
-                                </select>
-                            </label>
-                            <label class="output-option" style="border: 0; padding: 16px 0 0">
-                                <input id="export-building-height-colors" type="checkbox">
-                                <span>建筑按高度着色</span>
-                            </label>
-                        </div>
-                    </section>
+        <div class="page-content export-form">
+            <section class="form-section">
+                <h2>导出范围</h2>
+                <div class="range-grid">
+                    <label class="range-field">
+                        <span>中心经度</span>
+                        <input id="export-lon" type="number" step="0.000001" value="116.927207">
+                    </label>
+                    <label class="range-field">
+                        <span>中心纬度</span>
+                        <input id="export-lat" type="number" step="0.000001" value="36.705224">
+                    </label>
+                    <label class="range-field">
+                        <span>半径（米）</span>
+                        <input id="export-config-radius" type="number" min="0" step="100" value="0">
+                    </label>
+                    <label class="range-field">
+                        <span>层级</span>
+                        <input id="export-zoom" type="number" min="1" max="21" step="1" value="14">
+                    </label>
                 </div>
+            </section>
 
-                <div class="export-column">
-                    <section class="settings-section">
-                        <h2>GIS 输出组</h2>
-                        <div id="export-gis-groups" class="gis-group-list"></div>
-                    </section>
-
-                    <section class="settings-section">
-                        <h2>输出位置</h2>
-                        <div class="form-grid">
-                            <label class="form-field full">
-                                <span>卫星输出目录</span>
-                                <input id="export-satellite-output" type="text">
+            <section class="form-section">
+                <h2>导出内容</h2>
+                <div class="content-groups">
+                    <div class="content-group">
+                        <h3>卫星图</h3>
+                        <div class="check-grid">
+                            <label class="check-item">
+                                <input id="export-provider-gaode" type="checkbox">
+                                <span>高德卫星</span>
                             </label>
-                            <label class="form-field full">
-                                <span>GIS 输出目录</span>
-                                <input id="export-gis-output" type="text"
-                                       value="cache/高德地图/gis数据/输出">
+                            <label class="check-item">
+                                <input id="export-provider-tencent" type="checkbox">
+                                <span>腾讯卫星</span>
+                            </label>
+                            <label class="check-item">
+                                <input id="export-provider-tianditu" type="checkbox">
+                                <span>天地图影像</span>
+                            </label>
+                            <label class="check-item">
+                                <input id="export-provider-baidu" type="checkbox">
+                                <span>百度卫星</span>
+                            </label>
+                            <label class="check-item">
+                                <input id="export-provider-google" type="checkbox">
+                                <span>Google 卫星</span>
+                            </label>
+                            <label class="check-item">
+                                <input id="export-provider-bing" type="checkbox">
+                                <span>Bing 卫星</span>
+                            </label>
+                            <label class="check-item">
+                                <input id="export-provider-arcgis" type="checkbox">
+                                <span>ArcGIS 影像</span>
                             </label>
                         </div>
-                    </section>
-
-                    <div class="export-footer">
-                        <span id="export-validation-message" class="validation-message"></span>
-                        <button id="export-cancel" class="secondary-command" type="button"
-                                data-action="cancel-export-config">取消</button>
-                        <button id="export-submit" class="primary-command" type="button"
-                                data-action="submit-export">加入导出队列</button>
+                    </div>
+                    <div class="content-group">
+                        <h3>GIS 数据</h3>
+                        <div id="export-gis-groups" class="check-grid">
+                            <label id="export-gis-static-road" class="check-item">
+                                <input id="export-gis-group-1" type="checkbox" value="1">
+                                <span>道路</span>
+                            </label>
+                            <label id="export-gis-static-building" class="check-item">
+                                <input id="export-gis-group-2" type="checkbox" value="2">
+                                <span>建筑</span>
+                            </label>
+                            <label id="export-gis-static-water" class="check-item">
+                                <input id="export-gis-group-3" type="checkbox" value="3">
+                                <span>水</span>
+                            </label>
+                            <label id="export-gis-static-point" class="check-item">
+                                <input id="export-gis-group-4" type="checkbox" value="4">
+                                <span>点</span>
+                            </label>
+                            <label id="export-gis-static-green" class="check-item">
+                                <input id="export-gis-group-5" type="checkbox" value="5">
+                                <span>绿地</span>
+                            </label>
+                            <label id="export-gis-static-boundary" class="check-item">
+                                <input id="export-gis-group-6" type="checkbox" value="6">
+                                <span>边界</span>
+                            </label>
+                            <label id="export-gis-static-highway" class="check-item">
+                                <input id="export-gis-group-7" type="checkbox" value="7">
+                                <span>高速</span>
+                            </label>
+                            <label id="export-gis-static-other" class="check-item">
+                                <input id="export-gis-group-8" type="checkbox" value="8">
+                                <span>其他</span>
+                            </label>
+                            <label id="export-gis-static-subway" class="check-item">
+                                <input id="export-gis-group-9" type="checkbox" value="9">
+                                <span>地铁</span>
+                            </label>
+                        </div>
+                        <div class="gis-combine-row">
+                            <span class="gis-combine-title">GIS 组合方式</span>
+                            <div id="export-gis-combine-options" class="gis-combine-options">
+                                <label id="export-gis-combine-overlay-item" class="check-item">
+                                    <input id="export-gis-combine-overlay" type="checkbox">
+                                    <span>叠加到所选卫星图</span>
+                                </label>
+                                <label id="export-gis-combine-merged-item" class="check-item">
+                                    <input id="export-gis-combine-merged" type="checkbox">
+                                    <span>所选 GIS 图层合并输出</span>
+                                </label>
+                                <label id="export-gis-combine-separate-item" class="check-item">
+                                    <input id="export-gis-combine-separate" type="checkbox">
+                                    <span>每个 GIS 图层单独输出</span>
+                                </label>
+                            </div>
+                            <span class="gis-combine-hint">可多选，勾选几种即生成几套输出</span>
+                        </div>
                     </div>
                 </div>
+            </section>
+
+            <section class="form-section">
+                <h2>导出类型</h2>
+                <div class="type-row">
+                    <label class="check-item">
+                        <input id="export-satellite-tiles" type="checkbox">
+                        <span>XYZ 切片</span>
+                    </label>
+                    <label class="check-item">
+                        <input id="export-satellite-merged" type="checkbox">
+                        <span>合并大图</span>
+                    </label>
+                    <label class="check-item">
+                        <input id="export-fbx" type="checkbox">
+                        <span>FBX 切片与网格</span>
+                    </label>
+                    <label class="check-item">
+                        <input id="export-geojson" type="checkbox">
+                        <span>GeoJson</span>
+                    </label>
+                </div>
+            </section>
+
+            <section class="form-section">
+                <h2>输出参数</h2>
+                <div class="param-row">
+                    <label class="param-field">
+                        <span>大图格式</span>
+                        <select id="export-merged-format">
+                            <option value="png" selected>PNG</option>
+                            <option value="jpg">JPG</option>
+                        </select>
+                    </label>
+                    <label class="param-field">
+                        <span>大图最大边</span>
+                        <select id="export-merged-resolution">
+                            <option value="4096">4096</option>
+                            <option value="8192">8192</option>
+                            <option value="16384" selected>16384</option>
+                            <option value="32768">32768</option>
+                        </select>
+                    </label>
+                    <label class="param-field">
+                        <span>FBX 贴图尺寸</span>
+                        <select id="export-fbx-size" disabled>
+                            <option value="1024">1024</option>
+                            <option value="2048">2048</option>
+                            <option value="4096" selected>4096</option>
+                            <option value="8192">8192</option>
+                            <option value="16384">16384</option>
+                        </select>
+                    </label>
+                    <label class="check-item param-check">
+                        <span>建筑按高度着色</span>
+                        <input id="export-building-height-colors" type="checkbox">
+                    </label>
+                </div>
+            </section>
+
+            <section class="form-section">
+                <h2>输出位置</h2>
+                <div class="output-location">
+                    <label class="range-field">
+                        <span>输出目录</span>
+                        <div class="output-dir-row">
+                            <input id="export-satellite-output" type="text"
+                                   placeholder="使用各下载器默认输出目录">
+                            <button id="export-browse-output" type="button"
+                                    data-action="browse-export-output"
+                                    title="选择输出目录" aria-label="选择输出目录">
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </label>
+                    <p class="output-hint">仅改变导出文件位置，不改变缓存目录</p>
+                </div>
+            </section>
+
+            <div class="export-footer">
+                <span id="export-validation-message" class="validation-message"></span>
+                <button id="export-cancel" class="secondary-command" type="button"
+                        data-action="cancel-export-config">取消</button>
+                <button id="export-submit" class="primary-command" type="button"
+                        data-action="submit-export">加入导出队列</button>
             </div>
         </div>
     </section>

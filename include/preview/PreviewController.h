@@ -110,8 +110,6 @@ class PreviewController
 
     void setExportGisGroupSelected(uint64_t groupId, bool selected);
 
-    void HandleExportGisGroupContextAction(uint64_t groupId);
-
     void SubmitExport(skui::Runtime& runtime);
 
     [[nodiscard]] std::optional<ExportConfiguration> BuildExportConfiguration(
@@ -148,7 +146,6 @@ class PreviewController
     AmapPlaceSearch placeSearch_;
     Page page_ = Page::Preview;
     std::vector<ExportGisUiGroup> exportGisGroups_;
-    uint64_t nextExportGisGroupId_ = 1;
     std::string previewRadiusValue_ = "0";
     std::string exportLongitudeValue_;
     std::string exportLatitudeValue_;
@@ -164,11 +161,13 @@ class PreviewController
     bool exportSatelliteMergedImage_ = false;
     bool exportGisTiles_ = false;
     bool exportGisMergedImage_ = false;
+    bool exportGisOverlayOnSatellite_ = false;
+    bool exportGisLayersMerged_ = false;
+    bool exportGisLayersSeparate_ = false;
     bool exportFbx_ = false;
     ExportFbxSource exportFbxSource_ = ExportFbxSource::Satellite;
     bool exportBuildingHeightColors_ = false;
     std::string exportValidationMessage_;
-    std::string lastExportGroupsHtml_;
     std::string lastTaskListHtml_;
     std::optional<MapRenderStats> scheduledStats_;
     std::string searchQuery_;
@@ -190,6 +189,7 @@ class PreviewController
     std::optional<GisOverlayCategories> lastUiGisCategories_;
     std::array<std::string, 9> lastUiGisColorValues_{};
     std::string lastUiGisPickerState_;
+    std::string lastUiTileStats_;
     std::string lastCenterCoordinate_;
     std::string lastZoomValue_;
     bool dragging_ = false;

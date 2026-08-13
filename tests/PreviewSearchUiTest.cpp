@@ -1,10 +1,12 @@
 #include "PostProcessTestSupport.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "opencv2/imgcodecs.hpp"
@@ -41,6 +43,30 @@ bool runTest()
     {
         return false;
     }
+    const std::array<std::string_view, 24> exportCheckboxIds = {
+        "export-provider-gaode", "export-provider-tencent",
+        "export-provider-tianditu", "export-provider-baidu",
+        "export-provider-google", "export-provider-bing", "export-provider-arcgis",
+        "export-gis-group-1", "export-gis-group-2", "export-gis-group-3",
+        "export-gis-group-4", "export-gis-group-5", "export-gis-group-6",
+        "export-gis-group-7", "export-gis-group-8", "export-gis-group-9",
+        "export-gis-combine-overlay", "export-gis-combine-merged",
+        "export-gis-combine-separate", "export-satellite-tiles",
+        "export-satellite-merged", "export-fbx", "export-geojson",
+        "export-building-height-colors"};
+    for (const std::string_view checkboxId : exportCheckboxIds)
+    {
+        const std::string checkedMarkup =
+            "id=\"" + std::string(checkboxId) + "\" type=\"checkbox\" checked";
+        if (!postprocess_test::Require(
+                !postprocess_test::ContainsText(documentPath, checkedMarkup),
+                "export checkbox has an unexpected static checked state: " +
+                    std::string(checkboxId)))
+        {
+            return false;
+        }
+    }
+
     if (!postprocess_test::Require(
             runtime.setVisibleById("preview-page", true) &&
                 runtime.setVisibleById("export-page", false) &&
@@ -50,6 +76,25 @@ bool runTest()
             runtime.setValueById("export-radius", "2000") &&
                 runtime.setValueById("export-config-radius", "2000"),
             "预览页或导出配置页缺少半径输入"))
+    {
+        return false;
+    }
+
+    const std::vector<std::string> expectedTileStatChildren = {
+        "tile-stat-visible-item", "tile-stat-ready-item", "tile-stat-pending-item",
+        "tile-stat-downloads-item", "tile-stat-failed-item", "tile-stat-cache-item"};
+    if (!postprocess_test::Require(
+            runtime.childElementIdsById("tile-stats") == expectedTileStatChildren,
+            "状态栏统计分栏结构缺失") ||
+        !postprocess_test::Require(
+            runtime.setTextsById(
+                {{"tile-stat-visible", "96"}, {"tile-stat-ready", "93"},
+                 {"tile-stat-pending", "3"}, {"tile-stat-downloads", "1/2"},
+                 {"tile-stat-failed", "0"}, {"tile-stat-cache", "52.0 MB"}}),
+            "无法更新状态栏统计数值") ||
+        !postprocess_test::Require(
+            runtime.childElementIdsById("tile-stats") == expectedTileStatChildren,
+            "动态更新统计数值后破坏了状态栏分栏结构"))
     {
         return false;
     }
@@ -92,6 +137,26 @@ bool runTest()
                 taskNewButton != taskHeaderChildren.end() &&
                 taskBackButton == std::next(taskNewButton),
             "导出任务页的返回按钮没有紧跟在新建导出按钮后"))
+    {
+        return false;
+    }
+
+    const std::vector<std::string> expectedInitialGisItems = {
+        "export-gis-static-road", "export-gis-static-building",
+        "export-gis-static-water", "export-gis-static-point",
+        "export-gis-static-green", "export-gis-static-boundary",
+        "export-gis-static-highway", "export-gis-static-other",
+        "export-gis-static-subway"};
+    const std::vector<std::string> expectedGisCombinationItems = {
+        "export-gis-combine-overlay-item", "export-gis-combine-merged-item",
+        "export-gis-combine-separate-item"};
+    if (!postprocess_test::Require(
+            runtime.childElementIdsById("export-gis-groups") == expectedInitialGisItems,
+            "GIS 数据初始结构没有使用单层两列网格") ||
+        !postprocess_test::Require(
+            runtime.childElementIdsById("export-gis-combine-options") ==
+                expectedGisCombinationItems,
+            "GIS 组合方式初始结构不是三个独立复选项"))
     {
         return false;
     }
@@ -498,9 +563,9 @@ bool runTest()
     lastMouseDownId.clear();
     lastMouseUpId.clear();
     lastClickId.clear();
-    sendMouse(runtime, skui::EventType::MouseMove, 1327.F, 26.F);
-    sendMouse(runtime, skui::EventType::MouseDown, 1327.F, 26.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 1327.F, 26.F);
+    sendMouse(runtime, skui::EventType::MouseMove, 1295.F, 26.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 1295.F, 26.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 1295.F, 26.F);
     if (!postprocess_test::Require(lastClickId == "open-task-page" &&
                                        activePage == "task" && navigationSucceeded,
                                    "任务按钮的可见文字区域无法打开任务页，MouseDown：" +
@@ -535,66 +600,32 @@ bool runTest()
                 runtime.setValueById("export-zoom", "15") &&
                 runtime.setValueById("export-satellite-output", "cache/高德地图/Google_墨卡托") &&
                 runtime.setValueById("export-gis-output", "cache/高德地图/gis数据/输出") &&
-                runtime.replaceHtmlById(
-                    "export-gis-groups",
-                    "<div class=\"gis-group-grid\">"
-                    "<div id=\"export-gis-group-row-1\" class=\"gis-group-item\">"
-                    "<input id=\"export-gis-group-1\" type=\"checkbox\" value=\"1\" checked>"
-                    "<label class=\"gis-group-label\" for=\"export-gis-group-1\">"
-                    "道路</label><span class=\"gis-group-count\">1</span></div>"
-                    "<div id=\"export-gis-group-row-2\" class=\"gis-group-item\">"
-                    "<input id=\"export-gis-group-2\" type=\"checkbox\" value=\"2\" checked>"
-                    "<label class=\"gis-group-label\" for=\"export-gis-group-2\">水</label>"
-                    "<span class=\"gis-group-count\">1</span></div>"
-                    "<div class=\"gis-group-item\"><input type=\"checkbox\">"
-                    "<label class=\"gis-group-label\">绿地</label>"
-                    "<span class=\"gis-group-count\">1</span></div>"
-                    "<div class=\"gis-group-item\"><input type=\"checkbox\">"
-                    "<label class=\"gis-group-label\">高速</label>"
-                    "<span class=\"gis-group-count\">1</span></div>"
-                    "<div class=\"gis-group-item\"><input type=\"checkbox\">"
-                    "<label class=\"gis-group-label\">地铁</label>"
-                    "<span class=\"gis-group-count\">1</span></div>"
-                    "<div class=\"gis-group-item\"><input type=\"checkbox\">"
-                    "<label class=\"gis-group-label\">建筑</label>"
-                    "<span class=\"gis-group-count\">1</span></div>"
-                    "<div class=\"gis-group-item\"><input type=\"checkbox\">"
-                    "<label class=\"gis-group-label\">点</label>"
-                    "<span class=\"gis-group-count\">1</span></div>"
-                    "<div class=\"gis-group-item\"><input type=\"checkbox\">"
-                    "<label class=\"gis-group-label\">边界</label>"
-                    "<span class=\"gis-group-count\">1</span></div>"
-                    "<div class=\"gis-group-item\"><input type=\"checkbox\">"
-                    "<label class=\"gis-group-label\">其他</label>"
-                    "<span class=\"gis-group-count\">1</span></div></div>"),
+                runtime.setAttributeById("export-gis-group-1", "checked", "") &&
+                runtime.setAttributeById("export-gis-group-2", "checked", "") &&
+                runtime.removeAttributeById("export-gis-group-3", "checked"),
             "无法显示或填充导出配置页面"))
     {
         return false;
     }
     const std::vector<std::string> gisGroupChildren =
-        runtime.childElementIdsById("export-gis-group-row-1");
+        runtime.childElementIdsById("export-gis-static-road");
     if (!postprocess_test::Require(
+            runtime.childElementIdsById("export-gis-groups") == expectedInitialGisItems,
+            "更新 GIS 勾选状态后破坏了静态两列网格") ||
+        !postprocess_test::Require(
             std::ranges::find(gisGroupChildren, "export-gis-group-1") !=
                 gisGroupChildren.end(),
-            "GIS 输出组没有使用真实的多选框"))
+            "GIS 数据项没有使用真实的多选框"))
     {
         return false;
     }
-    lastChangeId.clear();
-    sendMouse(runtime, skui::EventType::MouseDown, 724.F, 128.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 724.F, 128.F);
     if (!postprocess_test::Require(
-            lastChangeId == "export-gis-group-1" && lastChangeValue == "1" &&
-                !lastChangeChecked,
-            "GIS 输出组多选框无法取消选中"))
-    {
-        return false;
-    }
-    sendMouse(runtime, skui::EventType::MouseDown, 724.F, 128.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 724.F, 128.F);
-    if (!postprocess_test::Require(
-            lastChangeId == "export-gis-group-1" && lastChangeChecked,
-            "GIS 输出组多选框无法恢复选中"))
+            runtime.childElementIdsById("export-gis-combine-options") ==
+                expectedGisCombinationItems &&
+                runtime.setAttributeById("export-gis-combine-overlay", "checked", "") &&
+                runtime.setAttributeById("export-gis-combine-merged", "checked", "") &&
+                runtime.setAttributeById("export-gis-combine-separate", "checked", ""),
+            "GIS 组合方式没有提供三个可同时勾选的复选框"))
     {
         return false;
     }
