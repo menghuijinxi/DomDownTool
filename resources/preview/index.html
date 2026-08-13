@@ -1247,6 +1247,10 @@
             width: 100%;
         }
 
+        .task-list-items {
+            width: 100%;
+        }
+
         .task-row {
             display: grid;
             grid-template-columns: minmax(240px, 1.3fr) minmax(220px, 1fr) 150px 90px;
@@ -1888,7 +1892,9 @@
         </div>
         <div class="page-content">
             <div id="export-task-list" class="task-list">
-                <div class="task-empty">暂无导出任务</div>
+                <div id="export-task-list-items">
+                    <div class="task-empty">暂无导出任务</div>
+                </div>
             </div>
         </div>
     </section>

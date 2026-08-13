@@ -649,7 +649,8 @@ bool runTest()
             runtime.setVisibleById("export-page", false) &&
                 runtime.setVisibleById("task-page", true) &&
                 runtime.replaceHtmlById(
-                    "export-task-list",
+                    "export-task-list-items",
+                    "<div id=\"export-task-list-items\" class=\"task-list-items\">"
                     "<article class=\"task-row\"><div><div class=\"task-title\">"
                     "z15 2000 米 高德卫星 + 高德 GIS</div>"
                     "<div class=\"task-detail\">合并大图 · GIS 合并 · 2026-08-10 10:00:00"
@@ -659,7 +660,16 @@ bool runTest()
                     "<div class=\"progress-value\" style=\"width:48%\"></div></div>"
                     "</div><div><span class=\"task-state running\">导出中</span>"
                     "</div><div class=\"task-row-actions\"><button class=\"danger-command\">"
-                    "取消</button></div></article>"),
+                    "取消</button></div></article>"
+                    "<article class=\"task-row\"><div><div class=\"task-title\">"
+                    "z14 5000 米 高德卫星</div><div class=\"task-detail\">"
+                    "XYZ 瓦片 · 2026-08-10 09:00:00</div><div class=\"task-output\">"
+                    "D:/exports/task-2</div></div><div><div class=\"task-stage\">"
+                    "<span>导出完成</span><span>100% · 56/56</span></div>"
+                    "<div class=\"progress-track\"><div class=\"progress-value\" "
+                    "style=\"width:100%\"></div></div></div><div>"
+                    "<span class=\"task-state succeeded\">已完成</span></div>"
+                    "<div class=\"task-row-actions\"></div></article></div>"),
             "无法显示或填充导出任务页面"))
     {
         return false;

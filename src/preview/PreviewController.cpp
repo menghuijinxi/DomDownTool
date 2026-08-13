@@ -2368,14 +2368,23 @@ void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
             progressText, record.progress * 100., stateValue,
             ExportTaskStateName(record.state), escapeHtml(record.finishedAt), action);
     }
-    if (listHtml.empty())
+    if (records.empty())
     {
         listHtml = "<div class=\"task-empty\">暂无导出任务</div>";
     }
-    if (listHtml != lastTaskListHtml_)
+    const std::string taskListHtml =
+        fmt::format("<div id=\"export-task-list-items\" class=\"task-list-items\">{}</div>",
+                    listHtml);
+    if (taskListHtml != lastTaskListHtml_)
     {
-        runtime.replaceHtmlById("export-task-list", listHtml);
-        lastTaskListHtml_ = listHtml;
+        if (runtime.replaceHtmlById("export-task-list-items", taskListHtml))
+        {
+            lastTaskListHtml_ = taskListHtml;
+        }
+        else
+        {
+            lastTaskListHtml_.clear();
+        }
     }
     runtime.setTextsById({
         {"task-count-queued", std::to_string(queuedCount)},
