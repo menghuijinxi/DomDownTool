@@ -6,6 +6,6 @@ DownTool::GoogleDown::GoogleDown()
     SetUrlTemplate(
         "https://mt{s}.google.com/vt/lyrs=s&hl=zh-CN&gl=cn&scale=1&"
         "x={x}&y={y}&z={z}");
-    SetProxy("http://127.0.0.1:10090");
+    //SetProxy("http://127.0.0.1:7897");
     SetCachePath("cache/Google地图");
 }
