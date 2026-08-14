@@ -1280,7 +1280,13 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             if (const std::optional<std::string> taskId =
                     taskIdFromCancelButton(event.id))
             {
-                exportTaskManager_.Cancel(*taskId);
+                if (!exportTaskManager_.Cancel(*taskId))
+                {
+                    MessageBoxW(
+                        window_.load(std::memory_order_relaxed),
+                        L"任务已经结束或不存在，无法取消。", L"DomDownTool",
+                        MB_OK | MB_ICONINFORMATION);
+                }
                 UpdateTaskUi(runtime);
                 requestRedraw();
                 return;
@@ -2556,11 +2562,15 @@ void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
         const bool finished = record.state == ExportTaskState::Succeeded ||
             record.state == ExportTaskState::Failed ||
             record.state == ExportTaskState::Canceled;
+        const bool canceling = record.state == ExportTaskState::Running &&
+            record.stage == "正在取消";
         const std::string action = record.state == ExportTaskState::Queued ||
                 record.state == ExportTaskState::Running ?
             fmt::format("<button id=\"task-cancel-{}\" class=\"danger-command\" "
-                        "type=\"button\" data-action=\"cancel-export-task\">"
-                        "取消</button>", escapeHtml(record.id)) : "";
+                        "type=\"button\" data-action=\"cancel-export-task\"{}>"
+                        "{}</button>",
+                        escapeHtml(record.id), canceling ? " disabled" : "",
+                        canceling ? "正在取消" : "取消") : "";
         const std::string openOutput = fmt::format(
             "<button id=\"task-open-{}\" class=\"task-open-output\" type=\"button\" "
             "data-action=\"open-export-task-output\" title=\"打开导出路径\" "

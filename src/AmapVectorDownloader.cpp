@@ -530,6 +530,11 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadTiles
     tasks.reserve(result.selectedTiles.size() * tileTypes.size());
     for (const AmapVectorTile& tile : result.selectedTiles)
     {
+        if (options.cancellationRequested && options.cancellationRequested())
+        {
+            result.error = "高德 GIS 矢量任务已取消。";
+            return result;
+        }
         for (const uint32_t type : tileTypes)
         {
             tasks.push_back({ tile, type });
@@ -672,6 +677,11 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadTiles
     AmapVectorDecodedData decodedData;
     for (const AmapVectorDownloadTaskResult& taskResult : taskResults)
     {
+        if (options.cancellationRequested && options.cancellationRequested())
+        {
+            result.error = "高德 GIS 矢量任务已取消。";
+            return result;
+        }
         if (!taskResult.success)
         {
             result.error = taskResult.error.empty() ? "高德 GIS 矢量任务失败。" :
@@ -713,7 +723,8 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadGeoJs
         return result;
     }
     if (!AmapVectorGeoJsonWriter::WriteFile(
-        result.decodedData, options.geoJsonOutputPath, result.error))
+        result.decodedData, options.geoJsonOutputPath, result.error,
+        options.cancellationRequested))
     {
         result.success = false;
     }

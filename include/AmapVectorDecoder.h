@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -72,6 +73,7 @@ namespace DownTool
         static bool WriteFile(
             const AmapVectorDecodedData& decodedData,
             const std::filesystem::path& outputPath,
-            std::string& error);
+            std::string& error,
+            const std::function<bool()>& cancellationRequested = {});
     };
 }

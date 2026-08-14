@@ -356,6 +356,19 @@ namespace
             return false;
         }
 
+        const std::filesystem::path canceledOutputPath =
+            outputRoot / "canceled.geojson";
+        error.clear();
+        if (!Require(
+                !DownTool::AmapVectorGeoJsonWriter::WriteFile(
+                    decodedData, canceledOutputPath, error, [] { return true; }) &&
+                    !std::filesystem::exists(canceledOutputPath) &&
+                    error == "GeoJSON 导出已取消。",
+                "GeoJSON 写出没有响应取消请求"))
+        {
+            return false;
+        }
+
         std::ifstream inputFile(outputPath, std::ios::binary);
         const std::string geoJson(
             (std::istreambuf_iterator<char>(inputFile)),

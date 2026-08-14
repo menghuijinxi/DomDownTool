@@ -613,18 +613,25 @@ namespace
     }
 
     Json BuildCoordinateArray(
-        const std::vector<DownTool::AmapVectorCoordinate>& coordinates)
+        const std::vector<DownTool::AmapVectorCoordinate>& coordinates,
+        const std::function<bool()>& cancellationRequested)
     {
         Json coordinateArray = Json::array();
         for (const DownTool::AmapVectorCoordinate& coordinate : coordinates)
         {
+            if (cancellationRequested && cancellationRequested())
+            {
+                break;
+            }
             coordinateArray.push_back(
                 Json::array({coordinate.longitude, coordinate.latitude}));
         }
         return coordinateArray;
     }
 
-    Json BuildFeatureJson(const DownTool::AmapVectorFeature& feature)
+    Json BuildFeatureJson(
+        const DownTool::AmapVectorFeature& feature,
+        const std::function<bool()>& cancellationRequested)
     {
         Json properties = {
             {"layer", feature.layerName},
@@ -640,6 +647,10 @@ namespace
         Json names = Json::array();
         for (const DownTool::AmapVectorName& name : feature.names)
         {
+            if (cancellationRequested && cancellationRequested())
+            {
+                break;
+            }
             names.push_back({{"text", name.text}, {"language", name.language}});
         }
         properties["names"] = std::move(names);
@@ -677,14 +688,19 @@ namespace
         {
             geometry = {
                 {"type", "LineString"},
-                {"coordinates", BuildCoordinateArray(feature.geometryParts.front())}};
+                {"coordinates", BuildCoordinateArray(
+                    feature.geometryParts.front(), cancellationRequested)}};
         }
         else
         {
             Json rings = Json::array();
             for (const std::vector<DownTool::AmapVectorCoordinate>& ring : feature.geometryParts)
             {
-                rings.push_back(BuildCoordinateArray(ring));
+                if (cancellationRequested && cancellationRequested())
+                {
+                    break;
+                }
+                rings.push_back(BuildCoordinateArray(ring, cancellationRequested));
             }
             geometry = {{"type", "Polygon"}, {"coordinates", std::move(rings)}};
         }
@@ -765,7 +781,8 @@ bool DownTool::AmapVectorDecoder::DecodeEnvelope(
 bool DownTool::AmapVectorGeoJsonWriter::WriteFile(
     const AmapVectorDecodedData& decodedData,
     const std::filesystem::path& outputPath,
-    std::string& error)
+    std::string& error,
+    const std::function<bool()>& cancellationRequested)
 {
     if (outputPath.empty())
     {
@@ -776,7 +793,18 @@ bool DownTool::AmapVectorGeoJsonWriter::WriteFile(
     Json features = Json::array();
     for (const AmapVectorFeature& feature : decodedData.features)
     {
-        features.push_back(BuildFeatureJson(feature));
+        if (cancellationRequested && cancellationRequested())
+        {
+            error = "GeoJSON 导出已取消。";
+            return false;
+        }
+        features.push_back(BuildFeatureJson(feature, cancellationRequested));
+    }
+
+    if (cancellationRequested && cancellationRequested())
+    {
+        error = "GeoJSON 导出已取消。";
+        return false;
     }
 
     const Json root = {
@@ -799,13 +827,20 @@ bool DownTool::AmapVectorGeoJsonWriter::WriteFile(
         }
     }
 
+    const std::string outputJson = root.dump();
+    if (cancellationRequested && cancellationRequested())
+    {
+        error = "GeoJSON 导出已取消。";
+        return false;
+    }
+
     std::ofstream outputFile(outputPath, std::ios::binary | std::ios::trunc);
     if (!outputFile.is_open())
     {
         error = "无法打开 GeoJSON 输出文件。";
         return false;
     }
-    outputFile << root.dump() << '\n';
+    outputFile << outputJson << '\n';
     if (!outputFile.good())
     {
         error = "写入 GeoJSON 输出文件失败。";

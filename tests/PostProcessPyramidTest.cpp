@@ -1,9 +1,92 @@
 #include "PostProcessTestSupport.h"
 
+#include <atomic>
+#include <chrono>
+#include <memory>
+#include <thread>
+
 namespace
 {
+    struct BlockingPostProcessControl
+    {
+        std::atomic_uint32_t callCount = 0;
+        std::atomic_bool started = false;
+    };
+
+    class BlockingPostProcessDown final : public postprocess_test::TestPostProcessDown
+    {
+      public:
+        explicit BlockingPostProcessDown(
+            std::shared_ptr<BlockingPostProcessControl> control)
+            : control_(std::move(control))
+        {
+        }
+
+      protected:
+        bool WritePostProcessMaxZoomTile(
+            const DownTool::Tile&,
+            const std::filesystem::path&) const override
+        {
+            control_->callCount.fetch_add(1, std::memory_order_relaxed);
+            control_->started.store(true, std::memory_order_release);
+            while (!bStop.load(std::memory_order_relaxed))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            return false;
+        }
+
+      private:
+        std::shared_ptr<BlockingPostProcessControl> control_;
+    };
+
+    bool RunCancellationTest()
+    {
+        const std::filesystem::path testRoot =
+            postprocess_test::MakeTestRoot("pyramid-cancellation");
+        if (!postprocess_test::ResetDirectory(testRoot))
+        {
+            return false;
+        }
+
+        const auto control = std::make_shared<BlockingPostProcessControl>();
+        BlockingPostProcessDown tool(control);
+        tool.Configure(
+            testRoot / "cache",
+            testRoot / "output",
+            4,
+            32,
+            DownTool::Tile(0, 0, 4),
+            DownTool::Tile(9, 9, 4),
+            DownTool::LonLat(0., 0.));
+        tool.SetMaxDownQueue(1);
+        tool.SetPostProcessEnabled(true);
+        tool.SetPostProcessMergedImageEnabled(false);
+        tool.SetPostProcessFbxEnabled(false);
+
+        std::thread worker([&tool] { tool.RunPostProcessForTest(); });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!control->started.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        tool.StopDown();
+        worker.join();
+
+        return postprocess_test::Require(
+            control->started.load(std::memory_order_acquire) &&
+                control->callCount.load(std::memory_order_relaxed) == 1,
+            "post-process workers continued claiming tiles after cancellation");
+    }
+
     bool RunTest()
     {
+        if (!RunCancellationTest())
+        {
+            return false;
+        }
+
         const std::filesystem::path testRoot =
             postprocess_test::MakeTestRoot("pyramid");
         if (!postprocess_test::ResetDirectory(testRoot))

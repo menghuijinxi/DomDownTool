@@ -11,6 +11,18 @@
 
 namespace
 {
+bool StopIfCanceled(
+    const DomDownToolPreview::ExportCancellationCallback& cancellationRequested,
+    std::string& error)
+{
+    if (!cancellationRequested || !cancellationRequested())
+    {
+        return false;
+    }
+    error = "导出任务已取消。";
+    return true;
+}
+
 enum class ImageEncodingPolicy
 {
     FileExtension,
@@ -147,12 +159,16 @@ bool WriteImage(const std::filesystem::path& path, const cv::Mat& image,
 
 bool DomDownToolPreview::ExportImageComposer::CopyDirectory(
     const std::filesystem::path& source, const std::filesystem::path& destination,
-    std::string& error)
+    std::string& error, const ExportCancellationCallback& cancellationRequested)
 {
     std::error_code iteratorError;
     for (std::filesystem::recursive_directory_iterator iterator(source, iteratorError), end;
          iterator != end && !iteratorError; iterator.increment(iteratorError))
     {
+        if (StopIfCanceled(cancellationRequested, error))
+        {
+            return false;
+        }
         if (!iterator->is_regular_file())
         {
             continue;
@@ -184,7 +200,7 @@ bool DomDownToolPreview::ExportImageComposer::CopyDirectory(
         error = "遍历卫星图输出失败：" + iteratorError.message();
         return false;
     }
-    return true;
+    return !StopIfCanceled(cancellationRequested, error);
 }
 
 namespace
@@ -195,8 +211,13 @@ bool CompositeImageWithEncoding(
     const std::filesystem::path& overlayPath,
     const std::filesystem::path& outputPath,
     ImageEncodingPolicy encodingPolicy,
-    std::string& error)
+    std::string& error,
+    const DomDownToolPreview::ExportCancellationCallback& cancellationRequested)
 {
+    if (StopIfCanceled(cancellationRequested, error))
+    {
+        return false;
+    }
     cv::Mat base = ReadBgraImage(basePath);
     cv::Mat overlay = ReadBgraImage(overlayPath);
     if (base.empty())
@@ -217,6 +238,10 @@ bool CompositeImageWithEncoding(
     cv::Mat output(base.size(), CV_8UC4);
     for (int row = 0; row < base.rows; ++row)
     {
+        if (StopIfCanceled(cancellationRequested, error))
+        {
+            return false;
+        }
         const cv::Vec4b* basePixels = base.ptr<cv::Vec4b>(row);
         const cv::Vec4b* overlayPixels = overlay.ptr<cv::Vec4b>(row);
         cv::Vec4b* outputPixels = output.ptr<cv::Vec4b>(row);
@@ -245,7 +270,8 @@ bool CompositeImageWithEncoding(
                 (outputAlphaScale + 127u) / 255u);
         }
     }
-    return WriteImage(outputPath, output, encodingPolicy, error);
+    return !StopIfCanceled(cancellationRequested, error) &&
+        WriteImage(outputPath, output, encodingPolicy, error);
 }
 
 bool CompositeTileTreeWithEncoding(
@@ -253,13 +279,18 @@ bool CompositeTileTreeWithEncoding(
     const std::filesystem::path& overlayRoot,
     const std::filesystem::path& outputRoot,
     ImageEncodingPolicy encodingPolicy,
-    std::string& error)
+    std::string& error,
+    const DomDownToolPreview::ExportCancellationCallback& cancellationRequested)
 {
     std::error_code iteratorError;
     size_t compositeCount = 0;
     for (std::filesystem::recursive_directory_iterator iterator(overlayRoot, iteratorError), end;
          iterator != end && !iteratorError; iterator.increment(iteratorError))
     {
+        if (StopIfCanceled(cancellationRequested, error))
+        {
+            return false;
+        }
         if (!iterator->is_regular_file() || iterator->path().extension() != ".png")
         {
             continue;
@@ -277,7 +308,8 @@ bool CompositeTileTreeWithEncoding(
                 iterator->path(),
                 outputRoot / relativePath,
                 encodingPolicy,
-                error))
+                error,
+                cancellationRequested))
         {
             return false;
         }
@@ -296,42 +328,48 @@ bool CompositeTileTreeWithEncoding(
         error = "GIS 叠加没有找到匹配的卫星图瓦片。";
         return false;
     }
-    return true;
+    return !StopIfCanceled(cancellationRequested, error);
 }
 } // namespace
 
 bool DomDownToolPreview::ExportImageComposer::CompositeImage(
     const std::filesystem::path& basePath, const std::filesystem::path& overlayPath,
-    const std::filesystem::path& outputPath, std::string& error)
+    const std::filesystem::path& outputPath, std::string& error,
+    const ExportCancellationCallback& cancellationRequested)
 {
     return CompositeImageWithEncoding(
         basePath,
         overlayPath,
         outputPath,
         ImageEncodingPolicy::FileExtension,
-        error);
+        error,
+        cancellationRequested);
 }
 
 bool DomDownToolPreview::ExportImageComposer::CompositeTileTree(
     const std::filesystem::path& baseRoot, const std::filesystem::path& overlayRoot,
-    const std::filesystem::path& outputRoot, std::string& error)
+    const std::filesystem::path& outputRoot, std::string& error,
+    const ExportCancellationCallback& cancellationRequested)
 {
     return CompositeTileTreeWithEncoding(
         baseRoot,
         overlayRoot,
         outputRoot,
         ImageEncodingPolicy::FileExtension,
-        error);
+        error,
+        cancellationRequested);
 }
 
 bool DomDownToolPreview::ExportImageComposer::CompositeXyzTileTree(
     const std::filesystem::path& baseRoot, const std::filesystem::path& overlayRoot,
-    const std::filesystem::path& outputRoot, std::string& error)
+    const std::filesystem::path& outputRoot, std::string& error,
+    const ExportCancellationCallback& cancellationRequested)
 {
     return CompositeTileTreeWithEncoding(
         baseRoot,
         overlayRoot,
         outputRoot,
         ImageEncodingPolicy::XyzTile,
-        error);
+        error,
+        cancellationRequested);
 }

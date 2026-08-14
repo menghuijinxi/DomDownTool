@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -12,6 +13,7 @@
 
 #include "nlohmann/json.hpp"
 
+#include "DownToolBase.h"
 #include "preview/ExportTaskManager.h"
 #include "preview/ExportImageComposer.h"
 
@@ -52,6 +54,88 @@ bool waitForFinished(DomDownToolPreview::ExportTaskManager& manager,
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     return false;
+}
+
+template<typename Predicate>
+bool waitForCondition(Predicate predicate)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (predicate())
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return false;
+}
+
+struct BlockingDownloaderControl
+{
+    std::atomic_bool started = false;
+    std::atomic_bool stopObserved = false;
+    std::atomic_bool allowFinish = false;
+};
+
+class BlockingDownloader final : public DownTool::DownToolBase
+{
+  public:
+    explicit BlockingDownloader(std::shared_ptr<BlockingDownloaderControl> control)
+        : control_(std::move(control))
+    {
+    }
+
+    void StartDown() override
+    {
+        control_->started.store(true, std::memory_order_release);
+        while (!bStop.load(std::memory_order_relaxed) &&
+               !control_->allowFinish.load(std::memory_order_acquire))
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        if (bStop.load(std::memory_order_relaxed))
+        {
+            ReportProgress("取消请求后的进度", 1, 10);
+            control_->stopObserved.store(true, std::memory_order_release);
+        }
+        while (!control_->allowFinish.load(std::memory_order_acquire))
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
+  private:
+    std::shared_ptr<BlockingDownloaderControl> control_;
+};
+
+class CountingDownloader final : public DownTool::DownToolBase
+{
+  public:
+    explicit CountingDownloader(std::shared_ptr<std::atomic_uint32_t> startCount)
+        : startCount_(std::move(startCount))
+    {
+    }
+
+    void StartDown() override
+    {
+        startCount_->fetch_add(1, std::memory_order_relaxed);
+    }
+
+  private:
+    std::shared_ptr<std::atomic_uint32_t> startCount_;
+};
+
+DomDownToolPreview::ExportConfiguration makeCancelableConfiguration(
+    const std::filesystem::path& outputRoot)
+{
+    DomDownToolPreview::ExportConfiguration configuration;
+    configuration.radiusMeters = 1000.;
+    configuration.outputRoot = outputRoot;
+    configuration.exportTiles = true;
+    configuration.satelliteSources.push_back(
+        {"test.satellite", "测试卫星", outputRoot / "cache"});
+    return configuration;
 }
 
 bool runTest()
@@ -139,6 +223,23 @@ bool runTest()
                 transparentBasePixel[1] == 120 && transparentBasePixel[2] == 130 &&
                 transparentBasePixel[3] == 128,
             "GIS alpha 合成结果不符合标准 source-over 公式"))
+    {
+        return false;
+    }
+
+    const std::filesystem::path canceledComposedImagePath =
+        imageRoot / std::filesystem::u8path("取消合成.png");
+    composeError.clear();
+    if (!postprocess_test::Require(
+            !DomDownToolPreview::ExportImageComposer::CompositeImage(
+                baseImagePath,
+                overlayImagePath,
+                canceledComposedImagePath,
+                composeError,
+                [] { return true; }) &&
+                !std::filesystem::exists(canceledComposedImagePath) &&
+                composeError == "导出任务已取消。",
+            "GIS 图像合成没有响应取消请求"))
     {
         return false;
     }
@@ -388,6 +489,98 @@ bool runTest()
         }
     }
 
+    {
+        const auto control = std::make_shared<BlockingDownloaderControl>();
+        DomDownToolPreview::ExportTaskManager manager(
+            {}, testRoot / "cancel-records.json",
+            [control](std::string_view)
+            {
+                return std::make_unique<BlockingDownloader>(control);
+            });
+        const DomDownToolPreview::ExportConfiguration configuration =
+            makeCancelableConfiguration(testRoot / "cancel-output");
+        const std::string activeTaskId = manager.Enqueue(configuration);
+        const bool activeStarted = waitForCondition(
+            [&control] { return control->started.load(std::memory_order_acquire); });
+
+        const std::string queuedTaskId = manager.Enqueue(configuration);
+        const bool queuedCanceled = manager.Cancel(queuedTaskId);
+        const std::vector<DomDownToolPreview::ExportTaskRecord> queuedRecords =
+            manager.GetRecords();
+        const DomDownToolPreview::ExportTaskRecord* queuedRecord =
+            findRecord(queuedRecords, queuedTaskId);
+        const bool queuedStateIsCanceled = queuedRecord &&
+            queuedRecord->state == DomDownToolPreview::ExportTaskState::Canceled;
+
+        const bool activeCanceled = manager.Cancel(activeTaskId);
+        const bool stopObserved = waitForCondition(
+            [&control] { return control->stopObserved.load(std::memory_order_acquire); });
+        const std::vector<DomDownToolPreview::ExportTaskRecord> cancelingRecords =
+            manager.GetRecords();
+        const DomDownToolPreview::ExportTaskRecord* cancelingRecord =
+            findRecord(cancelingRecords, activeTaskId);
+        const bool cancelingStateIsVisible = cancelingRecord &&
+            cancelingRecord->state == DomDownToolPreview::ExportTaskState::Running &&
+            cancelingRecord->stage == "正在取消";
+
+        control->allowFinish.store(true, std::memory_order_release);
+        const bool activeFinished = waitForFinished(manager, activeTaskId);
+        const std::vector<DomDownToolPreview::ExportTaskRecord> canceledRecords =
+            manager.GetRecords();
+        const DomDownToolPreview::ExportTaskRecord* canceledRecord =
+            findRecord(canceledRecords, activeTaskId);
+        const bool activeStateIsCanceled = canceledRecord &&
+            canceledRecord->state == DomDownToolPreview::ExportTaskState::Canceled;
+        if (!postprocess_test::Require(
+                activeStarted && queuedCanceled && queuedStateIsCanceled &&
+                    activeCanceled && stopObserved && cancelingStateIsVisible &&
+                    activeFinished && activeStateIsCanceled,
+                "导出任务取消没有保持正在取消状态并最终结束"))
+        {
+            return false;
+        }
+    }
+
+    {
+        const auto factoryEntered = std::make_shared<std::atomic_bool>(false);
+        const auto allowFactoryReturn = std::make_shared<std::atomic_bool>(false);
+        const auto downloaderStartCount = std::make_shared<std::atomic_uint32_t>(0);
+        DomDownToolPreview::ExportTaskManager manager(
+            {}, testRoot / "cancel-before-downloader-records.json",
+            [factoryEntered, allowFactoryReturn, downloaderStartCount](std::string_view)
+            {
+                factoryEntered->store(true, std::memory_order_release);
+                while (!allowFactoryReturn->load(std::memory_order_acquire))
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                return std::make_unique<CountingDownloader>(downloaderStartCount);
+            });
+        const DomDownToolPreview::ExportConfiguration configuration =
+            makeCancelableConfiguration(testRoot / "cancel-before-downloader-output");
+        const std::string taskId = manager.Enqueue(configuration);
+        const bool enteredFactory = waitForCondition(
+            [&factoryEntered]
+            {
+                return factoryEntered->load(std::memory_order_acquire);
+            });
+        const bool canceled = manager.Cancel(taskId);
+        allowFactoryReturn->store(true, std::memory_order_release);
+        const bool finished = waitForFinished(manager, taskId);
+        const std::vector<DomDownToolPreview::ExportTaskRecord> records =
+            manager.GetRecords();
+        const DomDownToolPreview::ExportTaskRecord* record =
+            findRecord(records, taskId);
+        if (!postprocess_test::Require(
+                enteredFactory && canceled && finished && record &&
+                    record->state == DomDownToolPreview::ExportTaskState::Canceled &&
+                    downloaderStartCount->load(std::memory_order_relaxed) == 0,
+                "下载器注册前取消后仍启动了卫星下载"))
+        {
+            return false;
+        }
+    }
+
     const std::filesystem::path protectedOutput = testRoot / "protected-output";
     std::filesystem::create_directories(protectedOutput, fileError);
     std::ofstream(protectedOutput / "keep.txt") << "keep";
@@ -455,12 +648,24 @@ bool runTest()
             }
         }
 
-        const Json concurrentRoot = loadJsonFile(concurrentRecordsPath);
+        Json concurrentRoot;
+        const bool concurrentRecordsPersisted = waitForCondition(
+            [&]
+            {
+                concurrentRoot = loadJsonFile(concurrentRecordsPath);
+                const auto tasks = concurrentRoot.is_object()
+                    ? concurrentRoot.find("tasks")
+                    : concurrentRoot.end();
+                return !concurrentRoot.is_discarded() && concurrentRoot.is_object() &&
+                    tasks != concurrentRoot.end() && tasks->is_array() &&
+                    tasks->size() == taskIds.size();
+            });
         const auto concurrentTasks = concurrentRoot.is_object()
             ? concurrentRoot.find("tasks")
             : concurrentRoot.end();
         if (!postprocess_test::Require(
-                !concurrentRoot.is_discarded() && concurrentRoot.is_object(),
+                concurrentRecordsPersisted && !concurrentRoot.is_discarded() &&
+                    concurrentRoot.is_object(),
                 "并发更新后导出任务记录不是有效 JSON") ||
             !postprocess_test::Require(
                 concurrentTasks != concurrentRoot.end() && concurrentTasks->is_array() &&

@@ -230,14 +230,22 @@ namespace
 		return std::min(configuredWorkers, memoryLimitedWorkers);
 	}
 
-	template<typename Function>
-	void ParallelForIndex(size_t itemCount, uint32_t configuredQueueCount, Function function)
+	template<typename Function, typename StopRequested>
+	void ParallelForIndex(
+		size_t itemCount,
+		uint32_t configuredQueueCount,
+		Function function,
+		StopRequested stopRequested)
 	{
 		const uint32_t workerCount = GetParallelWorkerCount(itemCount, configuredQueueCount);
 		if (workerCount <= 1)
 		{
 			for (size_t index = 0; index < itemCount; index++)
 			{
+				if (stopRequested())
+				{
+					break;
+				}
 				function(index);
 			}
 			return;
@@ -254,6 +262,10 @@ namespace
 				{
 					for (;;)
 					{
+						if (stopRequested())
+						{
+							break;
+						}
 						const size_t index =
 							nextIndex.fetch_add(1, std::memory_order_relaxed);
 						if (index >= itemCount)
@@ -272,6 +284,16 @@ namespace
 				worker.join();
 			}
 		}
+	}
+
+	template<typename Function>
+	void ParallelForIndex(size_t itemCount, uint32_t configuredQueueCount, Function function)
+	{
+		ParallelForIndex(
+			itemCount,
+			configuredQueueCount,
+			std::move(function),
+			[] { return false; });
 	}
 
 	double SecondsSince(const std::chrono::steady_clock::time_point& startTime)
@@ -1695,7 +1717,10 @@ void DownTool::DownToolBase::WaitDown()
 	bool hasProgressUpdate = false;
 	while ((msg = curl_multi_info_read(curlMulti, &msgs_left)))
 	{
-		if (bStop) break;
+		if (IsStopRequested())
+		{
+			break;
+		}
 
 		if (msg->msg == CURLMSG_DONE)
 		{
@@ -1852,8 +1877,13 @@ void DownTool::DownToolBase::StartDown()
 		return;
 	}
 
-	bDowning = true;
 	bStop = false;
+	if (IsStopRequested())
+	{
+		return;
+	}
+
+	bDowning = true;
 	DowningCount = 0;
 	TotalDownCount = 0;
 
@@ -1866,6 +1896,11 @@ void DownTool::DownToolBase::StartDown()
 	CalculateDownRange();
 	std::vector<Tile> targetTiles;
 	BuildTargetTiles(targetTiles);
+	if (IsStopRequested())
+	{
+		bDowning = false;
+		return;
+	}
 	TotalDownCount = static_cast<uint32_t>(targetTiles.size());
 	ReportProgress("下载瓦片", 0, TotalDownCount);
 
@@ -1873,31 +1908,41 @@ void DownTool::DownToolBase::StartDown()
 		MinLonLat.lon, MaxLonLat.lat, MaxLonLat.lon, MinLonLat.lat,
 		MinTile.X, MinTile.Y, MaxTile.X, MaxTile.Y, CachePath, TotalDownCount);
 
-	std::vector<Tile> pendingTiles =
+	const std::vector<Tile> pendingTiles =
 		ScanCacheAndCollectPendingTiles(targetTiles, "下载前缓存检测", true);
 
 	for (const Tile& tile : pendingTiles)
 	{
-		if (bStop) break;
+		if (IsStopRequested())
+		{
+			break;
+		}
 		DownloadTile(tile.X, tile.Y);
 	}
 
 	// 等待所有下载完成
 	while (curlEasyHandles.size() > 0)
 	{
-		if (bStop) break;
+		if (IsStopRequested())
+		{
+			break;
+		}
 		WaitDown();
 	}
 	fmt::print("\n");
 
-	std::vector<Tile> failedTiles =
-		ScanCacheAndCollectPendingTiles(targetTiles, "下载后缓存检测", false);
+	std::vector<Tile> failedTiles;
+	if (!IsStopRequested())
+	{
+		failedTiles =
+			ScanCacheAndCollectPendingTiles(targetTiles, "下载后缓存检测", false);
+	}
 	if (!failedTiles.empty())
 	{
 		fmt::print("下载结束后仍有 {} 个瓦片不可用，请查看上面的缓存检测明细。\n",
 			failedTiles.size());
 	}
-	else if (!bStop && (PostProcessEnabled || PostProcessMergedImageEnabled ||
+	else if (!IsStopRequested() && (PostProcessEnabled || PostProcessMergedImageEnabled ||
 		PostProcessFbxEnabled))
 	{
 		RunPostProcess();
@@ -1909,6 +1954,12 @@ void DownTool::DownToolBase::StartDown()
 	}*/
 
 	bDowning = false;
+}
+
+bool DownTool::DownToolBase::IsStopRequested() const
+{
+	return bStop.load(std::memory_order_relaxed) ||
+		(CancellationRequestedCallback && CancellationRequestedCallback());
 }
 
 void DownTool::DownToolBase::ReportProgress(
@@ -1923,6 +1974,10 @@ void DownTool::DownToolBase::ReportProgress(
 void DownTool::DownToolBase::BuildTargetTiles(std::vector<Tile>& targetTiles)
 {
 	targetTiles.clear();
+	if (IsStopRequested())
+	{
+		return;
+	}
 	const uint64_t xCount = TileRangeCount(MinTile.X, MaxTile.X);
 	const uint64_t yCount = TileRangeCount(MinTile.Y, MaxTile.Y);
 	const uint64_t estimatedTileCount = xCount * yCount * (IsTileOffset() ? 4 : 1);
@@ -1941,18 +1996,32 @@ void DownTool::DownToolBase::BuildTargetTiles(std::vector<Tile>& targetTiles)
 
 	for (int32_t xBase = MinTile.X; xBase <= MaxTile.X; xBase++)
 	{
-		if (bStop) break;
+		if (IsStopRequested())
+		{
+			break;
+		}
 		for (int32_t yBase = MinTile.Y; yBase <= MaxTile.Y; yBase++)
 		{
-			if (bStop) break;
+			if (IsStopRequested())
+			{
+				break;
+			}
 
 			if (IsTileOffset())
 			{
 				const TileRange offsetTiles = GetOffsetTiles(Tile(xBase, yBase, Zoom));
 				for (int32_t x = offsetTiles.MinTile.X; x <= offsetTiles.MaxTile.X; x++)
 				{
+					if (IsStopRequested())
+					{
+						break;
+					}
 					for (int32_t y = offsetTiles.MinTile.Y; y <= offsetTiles.MaxTile.Y; y++)
 					{
+						if (IsStopRequested())
+						{
+							break;
+						}
 						addTile(Tile(x, y, Zoom));
 					}
 				}
@@ -1968,14 +2037,26 @@ void DownTool::DownToolBase::BuildTargetTiles(std::vector<Tile>& targetTiles)
 void DownTool::DownToolBase::BuildRequestedTiles(std::vector<Tile>& targetTiles) const
 {
 	targetTiles.clear();
+	if (IsStopRequested())
+	{
+		return;
+	}
 	const uint64_t xCount = TileRangeCount(MinTile.X, MaxTile.X);
 	const uint64_t yCount = TileRangeCount(MinTile.Y, MaxTile.Y);
 	targetTiles.reserve(static_cast<size_t>(xCount * yCount));
 
 	for (int32_t x = MinTile.X; x <= MaxTile.X; x++)
 	{
+		if (IsStopRequested())
+		{
+			break;
+		}
 		for (int32_t y = MinTile.Y; y <= MaxTile.Y; y++)
 		{
+			if (IsStopRequested())
+			{
+				break;
+			}
 			targetTiles.emplace_back(x, y, Zoom);
 		}
 	}
@@ -1985,7 +2066,7 @@ void DownTool::DownToolBase::BuildRequestedTilesAtZoom(
 	uint32_t zoom, std::vector<Tile>& targetTiles) const
 {
 	targetTiles.clear();
-	if (zoom > Zoom)
+	if (IsStopRequested() || zoom > Zoom)
 	{
 		return;
 	}
@@ -2008,8 +2089,16 @@ void DownTool::DownToolBase::BuildRequestedTilesAtZoom(
 
 	for (int32_t x = minX; x <= maxX; x++)
 	{
+		if (IsStopRequested())
+		{
+			break;
+		}
 		for (int32_t y = minY; y <= maxY; y++)
 		{
+			if (IsStopRequested())
+			{
+				break;
+			}
 			targetTiles.emplace_back(x, y, zoom);
 		}
 	}
@@ -2049,6 +2138,11 @@ std::vector<DownTool::Tile> DownTool::DownToolBase::ScanCacheAndCollectPendingTi
 	const std::string& phaseName,
 	bool updateProgress)
 {
+	if (IsStopRequested())
+	{
+		return {};
+	}
+
 	std::vector<TileCacheState> states(targetTiles.size(), TileCacheState::Missing);
 	fmt::print("{}: 开始扫描 {} 个瓦片\n", phaseName, targetTiles.size());
 
@@ -2103,6 +2197,10 @@ std::vector<DownTool::Tile> DownTool::DownToolBase::ScanCacheAndCollectPendingTi
 				{
 					for (;;)
 					{
+						if (IsStopRequested())
+						{
+							break;
+						}
 						const size_t blockBegin = nextTileIndex.fetch_add(
 							CacheScanBatchSize, std::memory_order_relaxed);
 						if (blockBegin >= targetTiles.size())
@@ -2112,12 +2210,21 @@ std::vector<DownTool::Tile> DownTool::DownToolBase::ScanCacheAndCollectPendingTi
 
 						const size_t blockEnd =
 							std::min(blockBegin + CacheScanBatchSize, targetTiles.size());
+						size_t processedCount = 0;
 						for (size_t index = blockBegin; index < blockEnd; index++)
 						{
+							if (IsStopRequested())
+							{
+								break;
+							}
 							scanTile(index);
+							processedCount++;
 						}
-						scannedTileCount.fetch_add(
-							blockEnd - blockBegin, std::memory_order_relaxed);
+						scannedTileCount.fetch_add(processedCount, std::memory_order_relaxed);
+						if (processedCount != blockEnd - blockBegin)
+						{
+							break;
+						}
 					}
 				});
 		}
@@ -2133,6 +2240,10 @@ std::vector<DownTool::Tile> DownTool::DownToolBase::ScanCacheAndCollectPendingTi
 	{
 		for (size_t index = 0; index < targetTiles.size(); index++)
 		{
+			if (IsStopRequested())
+			{
+				break;
+			}
 			scanTile(index);
 			scannedTileCount.fetch_add(1, std::memory_order_relaxed);
 		}
@@ -2141,6 +2252,10 @@ std::vector<DownTool::Tile> DownTool::DownToolBase::ScanCacheAndCollectPendingTi
 	size_t lastPrintedCount = 0;
 	while (lastPrintedCount < targetTiles.size())
 	{
+		if (IsStopRequested())
+		{
+			break;
+		}
 		const size_t currentCount = scannedTileCount.load(std::memory_order_relaxed);
 		if (currentCount != lastPrintedCount)
 		{
@@ -2163,8 +2278,13 @@ std::vector<DownTool::Tile> DownTool::DownToolBase::ScanCacheAndCollectPendingTi
 			worker.join();
 		}
 	}
+	const size_t finalScannedCount = scannedTileCount.load(std::memory_order_relaxed);
 	fmt::print("\r{}: {}/{}，worker {}\n",
-		phaseName, targetTiles.size(), targetTiles.size(), scanWorkers.size());
+		phaseName, finalScannedCount, targetTiles.size(), scanWorkers.size());
+	if (IsStopRequested())
+	{
+		return {};
+	}
 	if (scanErrorCount.load(std::memory_order_relaxed) > 0)
 	{
 		fmt::print("{}: 缓存检测异常 {} 次，首个异常: {}\n",
@@ -2750,8 +2870,16 @@ bool DownTool::DownToolBase::RepairTilesFromParent(
 	repairTasks.reserve(static_cast<size_t>(batchTileCount));
 	for (int32_t childX = 0; childX < static_cast<int32_t>(scale); childX++)
 	{
+		if (IsStopRequested())
+		{
+			return false;
+		}
 		for (int32_t childY = 0; childY < static_cast<int32_t>(scale); childY++)
 		{
+			if (IsStopRequested())
+			{
+				return false;
+			}
 			const Tile childTile(
 				parentTile.X * scale + childX,
 				parentTile.Y * scale + childY,
@@ -2789,7 +2917,13 @@ bool DownTool::DownToolBase::RepairTilesFromParent(
 			{
 				atomicRepairedTileCount.fetch_add(1, std::memory_order_relaxed);
 			}
-		});
+		},
+		[this] { return IsStopRequested(); });
+
+	if (IsStopRequested())
+	{
+		return false;
+	}
 
 	const uint32_t readyTileCount = atomicReadyTileCount.load(std::memory_order_relaxed);
 	const uint32_t repairedTileCount =
@@ -2806,6 +2940,10 @@ void DownTool::DownToolBase::RunPostProcess()
 	const auto postProcessStartTime = std::chrono::steady_clock::now();
 	std::vector<Tile> targetTiles;
 	BuildRequestedTiles(targetTiles);
+	if (IsStopRequested())
+	{
+		return;
+	}
 	if (targetTiles.empty())
 	{
 		fmt::print("后处理跳过：没有可处理的目标瓦片。\n");
@@ -2814,20 +2952,24 @@ void DownTool::DownToolBase::RunPostProcess()
 
 	fmt::print("开始瓦片后处理，输出目录：{}\n", PathToUtf8String(GetPostProcessRootPath()));
 	bool maxZoomTilesReady = false;
-	if (PostProcessEnabled || PostProcessFbxEnabled)
+	if (!IsStopRequested() && (PostProcessEnabled || PostProcessFbxEnabled))
 	{
 		auto phaseStartTime = std::chrono::steady_clock::now();
 		maxZoomTilesReady = GeneratePostProcessMaxZoomTiles(targetTiles);
 		fmt::print("最高层级后处理耗时：{:.2f}s\n", SecondsSince(phaseStartTime));
 	}
 
-	if (PostProcessEnabled)
+	if (!IsStopRequested() && PostProcessEnabled)
 	{
 		if (maxZoomTilesReady)
 		{
 			auto phaseStartTime = std::chrono::steady_clock::now();
 			GeneratePostProcessLowerZoomTiles(targetTiles);
 			fmt::print("低层级金字塔后处理耗时：{:.2f}s\n", SecondsSince(phaseStartTime));
+			if (IsStopRequested())
+			{
+				return;
+			}
 			phaseStartTime = std::chrono::steady_clock::now();
 			if (!WritePostProcessMetadata())
 			{
@@ -2841,7 +2983,7 @@ void DownTool::DownToolBase::RunPostProcess()
 		}
 	}
 
-	if (PostProcessMergedImageEnabled)
+	if (!IsStopRequested() && PostProcessMergedImageEnabled)
 	{
 		const auto phaseStartTime = std::chrono::steady_clock::now();
 		const bool postProcessTilesAvailable = PostProcessEnabled && maxZoomTilesReady;
@@ -2852,7 +2994,7 @@ void DownTool::DownToolBase::RunPostProcess()
 		fmt::print("合并大图后处理耗时：{:.2f}s\n", SecondsSince(phaseStartTime));
 	}
 
-	if (PostProcessFbxEnabled)
+	if (!IsStopRequested() && PostProcessFbxEnabled)
 	{
 		const auto phaseStartTime = std::chrono::steady_clock::now();
 		if (!GeneratePostProcessFbx(maxZoomTilesReady))
@@ -2862,7 +3004,11 @@ void DownTool::DownToolBase::RunPostProcess()
 		fmt::print("FBX 后处理耗时：{:.2f}s\n", SecondsSince(phaseStartTime));
 	}
 
-	fmt::print("瓦片后处理完成，总耗时：{:.2f}s\n", SecondsSince(postProcessStartTime));
+	if (!IsStopRequested())
+	{
+		fmt::print("瓦片后处理完成，总耗时：{:.2f}s\n",
+			SecondsSince(postProcessStartTime));
+	}
 }
 
 bool DownTool::DownToolBase::GeneratePostProcessMaxZoomTiles(
@@ -2908,7 +3054,13 @@ bool DownTool::DownToolBase::GeneratePostProcessMaxZoomTiles(
 				ReportProgress("转换 XYZ 瓦片", currentCount, targetTiles.size(),
 					failedCount.load(std::memory_order_relaxed));
 			}
-		});
+		},
+		[this] { return IsStopRequested(); });
+
+	if (IsStopRequested())
+	{
+		return false;
+	}
 
 	fmt::print("\r最高层级后处理: {}/{}，失败 {}\n",
 		targetTiles.size(),
@@ -3009,7 +3161,13 @@ bool DownTool::DownToolBase::GeneratePostProcessTilesAtZoom(
 				ReportProgress(phaseName, currentCount, targetTiles.size(),
 					failedCount.load(std::memory_order_relaxed));
 			}
-		});
+		},
+		[this] { return IsStopRequested(); });
+
+	if (IsStopRequested())
+	{
+		return false;
+	}
 
 	fmt::print("\r{}: {}/{}，失败 {}\n",
 		phaseName,
@@ -3022,7 +3180,8 @@ bool DownTool::DownToolBase::GeneratePostProcessTilesAtZoom(
 void DownTool::DownToolBase::GeneratePostProcessLowerZoomTiles(
 	std::vector<Tile> currentLevelTiles)
 {
-	while (!currentLevelTiles.empty() && currentLevelTiles.front().Zoom > 0)
+	while (!IsStopRequested() && !currentLevelTiles.empty() &&
+		currentLevelTiles.front().Zoom > 0)
 	{
 		const std::unordered_set<Tile, TileHash, TileEqual> currentLevelTileSet(
 			currentLevelTiles.begin(), currentLevelTiles.end());
@@ -3033,6 +3192,10 @@ void DownTool::DownToolBase::GeneratePostProcessLowerZoomTiles(
 
 		for (const Tile& childTile : currentLevelTiles)
 		{
+			if (IsStopRequested())
+			{
+				return;
+			}
 			Tile parentTile(
 				FloorDiv(childTile.X, 2),
 				FloorDiv(childTile.Y, 2),
@@ -3100,7 +3263,13 @@ void DownTool::DownToolBase::GeneratePostProcessLowerZoomTiles(
 				{
 					writtenCount.fetch_add(1, std::memory_order_relaxed);
 				}
-			});
+			},
+			[this] { return IsStopRequested(); });
+
+		if (IsStopRequested())
+		{
+			return;
+		}
 
 		fmt::print("生成低层级 z{}：写入 {}，总 {} 张\n",
 			parentTiles.front().Zoom,
@@ -3131,6 +3300,11 @@ cv::Mat DownTool::DownToolBase::ReadPostProcessTileRegion(
 	int outputWidth,
 	int outputHeight) const
 {
+	if (IsStopRequested())
+	{
+		return {};
+	}
+
 	if (sourceZoom < targetTile.Zoom)
 	{
 		return {};
@@ -3161,6 +3335,10 @@ cv::Mat DownTool::DownToolBase::ReadPostProcessTileRegion(
 
 	for (int y = 0; y < outputHeight; y++)
 	{
+		if (IsStopRequested())
+		{
+			return {};
+		}
 		for (int x = 0; x < outputWidth; x++)
 		{
 			const double targetPixelX =
@@ -3204,6 +3382,10 @@ cv::Mat DownTool::DownToolBase::ReadPostProcessTileRegion(
 	sourceImages.reserve(sourceTiles.size());
 	for (const Tile& sourceTile : sourceTiles)
 	{
+		if (IsStopRequested())
+		{
+			return {};
+		}
 		const std::filesystem::path sourcePath =
 			GetPostProcessSourceTileFilePath(sourceTile);
 		if (!IsValidImageFile(sourcePath) || IsUnavailableTileFile(sourcePath, sourceTile))
@@ -3227,6 +3409,10 @@ cv::Mat DownTool::DownToolBase::ReadPostProcessTileRegion(
 	bool hasPixel = false;
 	for (int y = 0; y < outputHeight; y++)
 	{
+		if (IsStopRequested())
+		{
+			return {};
+		}
 		for (int x = 0; x < outputWidth; x++)
 		{
 			const TileSample& sample = samples[static_cast<size_t>(y * outputWidth + x)];
@@ -3259,6 +3445,10 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 	bool postProcessTilesAvailable) const
 {
 	const auto totalStartTime = std::chrono::steady_clock::now();
+	if (IsStopRequested())
+	{
+		return false;
+	}
 	const uint32_t targetMaxResolution = PostProcessMergedImageResolution;
 	if (targetMaxResolution == 0 ||
 		targetMaxResolution > static_cast<uint32_t>(std::numeric_limits<int>::max()))
@@ -3329,6 +3519,10 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 	generatedSampleTiles.reserve(sampleTiles.size());
 	for (const Tile& tile : sampleTiles)
 	{
+		if (IsStopRequested())
+		{
+			return false;
+		}
 		if (isSampleTileFullyCovered(tile))
 		{
 			generatedSampleTiles.push_back(tile);
@@ -3351,6 +3545,10 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 			return false;
 		}
 		fmt::print("大图采样层后处理耗时：{:.2f}s\n", SecondsSince(phaseStartTime));
+	}
+	if (IsStopRequested())
+	{
+		return false;
 	}
 
 	const int outputWidth = static_cast<int>(outputSize.width);
@@ -3476,7 +3674,13 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 				ReportProgress("合并大图", currentCount, sampleTiles.size(),
 					failedCount.load(std::memory_order_relaxed));
 			}
-		});
+		},
+		[this] { return IsStopRequested(); });
+
+	if (IsStopRequested())
+	{
+		return false;
+	}
 
 	fmt::print("\r大图合并: {}/{}，失败 {}\n",
 		sampleTiles.size(), sampleTiles.size(), failedCount.load());
@@ -3487,6 +3691,10 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 		return false;
 	}
 
+	if (IsStopRequested())
+	{
+		return false;
+	}
 	phaseStartTime = std::chrono::steady_clock::now();
 	const bool writeSuccess = WriteImage(outputPath, mergedImage);
 	fmt::print("合并大图写入耗时：{:.2f}s\n", SecondsSince(phaseStartTime));
@@ -3501,6 +3709,10 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailable) const
 {
 	const auto totalStartTime = std::chrono::steady_clock::now();
+	if (IsStopRequested())
+	{
+		return false;
+	}
 	if (!postProcessTilesAvailable)
 	{
 		fmt::print("FBX 导出失败：最高层级后处理瓦片不可用。\n");
@@ -3562,8 +3774,16 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 
 	for (int32_t gridY = minGridY; gridY <= maxGridY; gridY++)
 	{
+		if (IsStopRequested())
+		{
+			return false;
+		}
 		for (int32_t gridX = minGridX; gridX <= maxGridX; gridX++)
 		{
+			if (IsStopRequested())
+			{
+				return false;
+			}
 			const double minPixelX =
 				centerPixelX + static_cast<double>(gridX) * textureSize -
 				textureSize / 2.;
@@ -3716,7 +3936,8 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 
 	auto readTileImage = [&](const Tile& tile)
 	{
-		return ReadBgraTile(GetPostProcessTileFilePath(tile), TileSize);
+		return IsStopRequested() ? cv::Mat{} :
+			ReadBgraTile(GetPostProcessTileFilePath(tile), TileSize);
 	};
 
 	std::atomic_uint32_t processedCount = 0;
@@ -3756,7 +3977,12 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 			}
 			ReportProgress("生成 FBX 贴图", currentCount, textureInfos.size(),
 				failedCount.load(std::memory_order_relaxed));
-		});
+		},
+		[this] { return IsStopRequested(); });
+	if (IsStopRequested())
+	{
+		return false;
+	}
 	fmt::print("\rFBX 贴图生成: {}/{}，失败 {}\n",
 		textureInfos.size(),
 		textureInfos.size(),
@@ -3766,6 +3992,10 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 		return false;
 	}
 
+	if (IsStopRequested())
+	{
+		return false;
+	}
 	if (!WriteTextFile(
 		textureRoot / "manifest.json",
 		BuildFbxManifestJson(
@@ -3789,6 +4019,10 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 		const std::vector<uint32_t> indices = BuildFbxMeshIndices(subdivision);
 		for (const FbxTextureOutputInfo& textureInfo : textureInfos)
 		{
+			if (IsStopRequested())
+			{
+				break;
+			}
 			FbxMeshData meshData;
 			meshData.name = MakeFbxMeshName(textureInfo.gridX, textureInfo.gridY);
 			meshData.texturePath = textureInfo.texturePath;
@@ -3806,6 +4040,10 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 	bool meshSuccess = true;
 	if (FbxShape == FbxPlanetShape::Plane || FbxShape == FbxPlanetShape::Both)
 	{
+		if (IsStopRequested())
+		{
+			return false;
+		}
 		const std::filesystem::path planePath = outputRoot / "plane.fbx";
 		const auto phaseStartTime = std::chrono::steady_clock::now();
 		meshSuccess = ExportAssimpFbx(buildMeshDatas(FbxPlanetShape::Plane), planePath) &&
@@ -3816,6 +4054,10 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 	}
 	if (FbxShape == FbxPlanetShape::Sphere || FbxShape == FbxPlanetShape::Both)
 	{
+		if (IsStopRequested())
+		{
+			return false;
+		}
 		const std::filesystem::path spherePath = outputRoot / "sphere.fbx";
 		const auto phaseStartTime = std::chrono::steady_clock::now();
 		meshSuccess = ExportAssimpFbx(buildMeshDatas(FbxPlanetShape::Sphere), spherePath) &&

@@ -57,6 +57,7 @@ namespace DownTool
 	};
 
 	using DownToolProgressCallback = std::function<void(const DownToolProgress&)>;
+	using DownToolCancellationCallback = std::function<bool()>;
 
 	struct CurlMultiHandle
 	{
@@ -161,6 +162,10 @@ namespace DownTool
 		std::uint32_t TotalDownCount = 0;
 
 		DownToolProgressCallback ProgressCallback;
+
+		DownToolCancellationCallback CancellationRequestedCallback;
+
+		[[nodiscard]] bool IsStopRequested() const;
 
 		void ReportProgress(std::string_view stage, uint64_t completed,
 			uint64_t total, uint64_t failed = 0) const;
@@ -378,6 +383,17 @@ namespace DownTool
 			LonLat& lonLat) const;
 
         GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Proxy, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTextureDistanceOffsets, TileSize, ProgressCallback)
+
+		const DownToolCancellationCallback& GetCancellationRequestedCallback()
+		{
+			return CancellationRequestedCallback;
+		}
+
+		void SetCancellationRequestedCallback(
+			const DownToolCancellationCallback& cancellationRequestedCallback)
+		{
+			CancellationRequestedCallback = cancellationRequestedCallback;
+		}
 		
 			//停止下载，正在下载的线程会尽快停止下载
 		void StopDown()

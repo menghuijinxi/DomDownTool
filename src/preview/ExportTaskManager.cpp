@@ -422,17 +422,25 @@ bool WriteTaskRecordFiles(const ExportConfiguration& configuration,
 
 DownTool::AmapVectorDecodedData FilterGisData(
     const DownTool::AmapVectorDecodedData& decodedData,
-    const std::set<DownTool::AmapVectorRenderCategory>& categories)
+    const std::set<DownTool::AmapVectorRenderCategory>& categories,
+    const std::function<bool()>& cancellationRequested)
 {
-    DownTool::AmapVectorDecodedData filteredData = decodedData;
-    filteredData.features.clear();
-    std::copy_if(
-        decodedData.features.begin(), decodedData.features.end(),
-        std::back_inserter(filteredData.features),
-        [&categories](const DownTool::AmapVectorFeature& feature)
+    DownTool::AmapVectorDecodedData filteredData;
+    filteredData.version = decodedData.version;
+    filteredData.status = decodedData.status;
+    filteredData.packetCount = decodedData.packetCount;
+    filteredData.features.reserve(decodedData.features.size());
+    for (const DownTool::AmapVectorFeature& feature : decodedData.features)
+    {
+        if (cancellationRequested && cancellationRequested())
         {
-            return categories.contains(DownTool::ClassifyAmapVectorFeature(feature));
-        });
+            break;
+        }
+        if (categories.contains(DownTool::ClassifyAmapVectorFeature(feature)))
+        {
+            filteredData.features.push_back(feature);
+        }
+    }
     return filteredData;
 }
 
@@ -583,8 +591,11 @@ std::filesystem::path DomDownToolPreview::ExportTaskOutputRoot(
 }
 
 DomDownToolPreview::ExportTaskManager::ExportTaskManager(
-    std::function<void()> changeCallback, std::filesystem::path recordsPath)
-    : changeCallback_(std::move(changeCallback)), recordsPath_(std::move(recordsPath))
+    std::function<void()> changeCallback, std::filesystem::path recordsPath,
+    ExportDownloaderFactory downloaderFactory)
+    : changeCallback_(std::move(changeCallback)),
+      downloaderFactory_(std::move(downloaderFactory)),
+      recordsPath_(std::move(recordsPath))
 {
     LoadRecords();
     worker_ = std::thread([this] { WorkerLoop(); });
@@ -852,6 +863,11 @@ void DomDownToolPreview::ExportTaskManager::WorkerLoop()
 bool DomDownToolPreview::ExportTaskManager::RunExport(
     const QueuedExport& queuedExport, std::string& error)
 {
+    if (IsCancellationRequested())
+    {
+        return false;
+    }
+
     const ExportConfiguration& configuration = queuedExport.configuration;
     const bool satelliteRequested = !configuration.satelliteSources.empty() &&
         (configuration.exportTiles || configuration.exportMergedImage ||
@@ -904,6 +920,10 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
     {
         for (const SatelliteExportSource& source : configuration.satelliteSources)
         {
+            if (IsCancellationRequested())
+            {
+                return false;
+            }
             if (!RunSatelliteExport(queuedExport, source, stepIndex++, stepCount, error))
             {
                 return false;
@@ -912,6 +932,10 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
     }
     if (gisRequested)
     {
+        if (IsCancellationRequested())
+        {
+            return false;
+        }
         if (mergedCount != 0 &&
             !RunGisExport(queuedExport, configuration.gisCategories,
                           GisExportMode::MergeSelectedLayers, "合并图层",
@@ -931,6 +955,10 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
             for (const DownTool::AmapVectorRenderCategory category :
                  configuration.gisCategories)
             {
+                if (IsCancellationRequested())
+                {
+                    return false;
+                }
                 if (!RunGisExport(queuedExport, {category}, GisExportMode::SeparateLayers,
                                   CategoryName(category), stepIndex++, stepCount, error))
                 {
@@ -953,11 +981,21 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
     std::string& error)
 {
     const ExportConfiguration& configuration = queuedExport.configuration;
+    if (IsCancellationRequested())
+    {
+        return false;
+    }
     std::unique_ptr<DownTool::DownToolBase> downloader =
-        CreateDownloader(source.id);
+        downloaderFactory_ ? downloaderFactory_(source.id) : CreateDownloader(source.id);
     if (!downloader)
     {
         error = "当前地图源不能导出卫星图。";
+        return false;
+    }
+    downloader->SetCancellationRequestedCallback(
+        [this] { return IsCancellationRequested(); });
+    if (IsCancellationRequested())
+    {
         return false;
     }
 
@@ -999,6 +1037,12 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
                            progress.completed, progress.total);
         });
     SetActiveDownloader(downloader.get());
+    if (IsCancellationRequested())
+    {
+        downloader->StopDown();
+        ClearActiveDownloader();
+        return false;
+    }
     try
     {
         downloader->StartDown();
@@ -1044,6 +1088,10 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
     size_t stepIndex, size_t stepCount, std::string& error)
 {
     const ExportConfiguration& configuration = queuedExport.configuration;
+    if (IsCancellationRequested())
+    {
+        return false;
+    }
     if (categories.empty())
     {
         error = "GIS 导出组不能为空。";
@@ -1057,6 +1105,10 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
         std::filesystem::u8path(groupName);
     std::error_code cleanupError;
     std::filesystem::remove_all(temporaryRoot, cleanupError);
+    if (IsCancellationRequested())
+    {
+        return false;
+    }
 
     DownTool::AmapVectorPngDownloadOptions options;
     options.vectorDownload.centerWgs84 = configuration.centerWgs84;
@@ -1143,6 +1195,10 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
         throw;
     }
     ClearActiveDownloader();
+    if (IsCancellationRequested())
+    {
+        return false;
+    }
     if (!result.success)
     {
         error = result.error;
@@ -1167,29 +1223,36 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
 
     if (mode == GisExportMode::OverlayOnSatellite)
     {
+        const ExportCancellationCallback cancellationRequested =
+            [this] { return IsCancellationRequested(); };
         for (const SatelliteExportSource& source : configuration.satelliteSources)
         {
+            if (IsCancellationRequested())
+            {
+                return false;
+            }
             const std::filesystem::path satelliteRoot = SatelliteOutputRoot(
                 configuration, queuedExport.taskId, source);
             const std::filesystem::path overlayRoot = configuration.exportTiles ?
                 tileOutputPath : temporaryRoot / "后处理";
             const std::filesystem::path compositeRoot = OverlayOutputRoot(
                 configuration, queuedExport.taskId, source);
-            if (!ExportImageComposer::CopyDirectory(satelliteRoot, compositeRoot, error))
+            if (!ExportImageComposer::CopyDirectory(
+                    satelliteRoot, compositeRoot, error, cancellationRequested))
             {
                 return false;
             }
             if ((configuration.exportTiles || configuration.exportFbx) &&
                 !ExportImageComposer::CompositeXyzTileTree(
                     compositeRoot / "XYZ", overlayRoot,
-                    compositeRoot / "XYZ", error))
+                    compositeRoot / "XYZ", error, cancellationRequested))
             {
                 return false;
             }
             if (configuration.exportFbx &&
                 !ExportImageComposer::CompositeTileTree(
                     compositeRoot / "FBX", fbxOutputPath,
-                    compositeRoot / "FBX", error))
+                    compositeRoot / "FBX", error, cancellationRequested))
             {
                 return false;
             }
@@ -1201,7 +1264,8 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
                 const std::filesystem::path gisImage = mergedImagePath;
                 const std::filesystem::path compositeImage = compositeRoot / "merged.png";
                 if (!ExportImageComposer::CompositeImage(
-                        satelliteImage, gisImage, compositeImage, error))
+                        satelliteImage, gisImage, compositeImage, error,
+                        cancellationRequested))
                 {
                     return false;
                 }
@@ -1229,6 +1293,10 @@ bool DomDownToolPreview::ExportTaskManager::RunGeoJsonExport(
     std::string& error)
 {
     const ExportConfiguration& configuration = queuedExport.configuration;
+    if (IsCancellationRequested())
+    {
+        return false;
+    }
     DownTool::AmapVectorDownloadOptions options;
     options.centerWgs84 = configuration.centerWgs84;
     options.radiusMeters = configuration.radiusMeters;
@@ -1252,6 +1320,10 @@ bool DomDownToolPreview::ExportTaskManager::RunGeoJsonExport(
 
     DownTool::AmapVectorDownloader downloader;
     const DownTool::AmapVectorDownloadResult result = downloader.Download(options);
+    if (IsCancellationRequested())
+    {
+        return false;
+    }
     if (!result.success)
     {
         error = result.error;
@@ -1259,10 +1331,16 @@ bool DomDownToolPreview::ExportTaskManager::RunGeoJsonExport(
     }
     const std::filesystem::path outputRoot = GisOutputRoot(
         configuration, queuedExport.taskId, "GeoJSON", "所选图层");
+    const std::function<bool()> cancellationRequested =
+        [this] { return IsCancellationRequested(); };
     const DownTool::AmapVectorDecodedData filteredData = FilterGisData(
-        result.decodedData, configuration.gisCategories);
+        result.decodedData, configuration.gisCategories, cancellationRequested);
+    if (IsCancellationRequested())
+    {
+        return false;
+    }
     if (!DownTool::AmapVectorGeoJsonWriter::WriteFile(
-            filteredData, outputRoot / "数据.geojson", error))
+            filteredData, outputRoot / "数据.geojson", error, cancellationRequested))
     {
         return false;
     }
@@ -1282,6 +1360,10 @@ void DomDownToolPreview::ExportTaskManager::UpdateProgress(
             records_.begin(), records_.end(),
             [taskId](const ExportTaskRecord& item) { return item.id == taskId; });
         if (record == records_.end() || record->state != ExportTaskState::Running)
+        {
+            return;
+        }
+        if (cancelActive_.load(std::memory_order_relaxed))
         {
             return;
         }

@@ -622,6 +622,16 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
     const AmapVectorRenderOptions& renderOptions)
 {
     AmapVectorPngRenderResult result;
+    const auto isCancellationRequested = [&renderOptions]
+    {
+        return renderOptions.cancellationRequested &&
+            renderOptions.cancellationRequested();
+    };
+    if (isCancellationRequested())
+    {
+        result.error = "高德 GIS PNG 渲染已取消。";
+        return result;
+    }
     if (renderOptions.categories.empty())
     {
         result.error = "高德 GIS PNG 输出至少需要选择一个类别。";
@@ -681,6 +691,11 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
     projectedFeatures.reserve(decodedData.features.size());
     for (const AmapVectorFeature& feature : decodedData.features)
     {
+        if (isCancellationRequested())
+        {
+            result.error = "高德 GIS PNG 渲染已取消。";
+            return result;
+        }
         if (!IsFeatureVisibleAtZoom(
             feature,
             vectorOptions.zoom,
@@ -716,6 +731,11 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
             }
             return left.source->uid < right.source->uid;
         });
+    if (isCancellationRequested())
+    {
+        result.error = "高德 GIS PNG 渲染已取消。";
+        return result;
+    }
 
     std::map<std::pair<int32_t, int32_t>, std::vector<size_t>> tileFeatureIndexes;
     const int32_t minimumTileX = GetMinTile().X;
@@ -724,6 +744,11 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
     const int32_t maximumTileY = GetMaxTile().Y;
     for (size_t featureIndex = 0; featureIndex < projectedFeatures.size(); ++featureIndex)
     {
+        if (isCancellationRequested())
+        {
+            result.error = "高德 GIS PNG 渲染已取消。";
+            return result;
+        }
         const ProjectedFeature& feature = projectedFeatures[featureIndex];
         const int margin = feature.source->geometryType == AmapVectorGeometryType::Point ?
             renderOptions.pointRadius :
@@ -753,6 +778,11 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
         }
         for (int32_t x = clampedMinimumX; x <= clampedMaximumX; ++x)
         {
+            if (isCancellationRequested())
+            {
+                result.error = "高德 GIS PNG 渲染已取消。";
+                return result;
+            }
             for (int32_t y = clampedMinimumY; y <= clampedMaximumY; ++y)
             {
                 tileFeatureIndexes[{ x, y }].push_back(featureIndex);
@@ -862,6 +892,10 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
                         {
                             for (const size_t featureIndex : indexIterator->second)
                             {
+                                if (isCancellationRequested())
+                                {
+                                    return;
+                                }
                                 DrawFeature(
                                     projectedFeatures[featureIndex],
                                     tile,
@@ -922,6 +956,12 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
         RunPostProcess();
     }
 
+    if (isCancellationRequested() || IsStopRequested())
+    {
+        result.error = "高德 GIS PNG 渲染已取消。";
+        return result;
+    }
+
     result.success = true;
     return result;
 }
@@ -955,7 +995,8 @@ DownTool::AmapVectorPngDownloadResult DownTool::AmapVectorPngDownloader::Downloa
         !AmapVectorGeoJsonWriter::WriteFile(
             result.vectorDownload.decodedData,
             options.vectorDownload.geoJsonOutputPath,
-            result.error))
+            result.error,
+            options.vectorDownload.cancellationRequested))
     {
         return result;
     }

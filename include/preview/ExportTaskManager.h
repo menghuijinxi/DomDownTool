@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
@@ -47,6 +48,9 @@ struct SatelliteExportSource
     std::string name;
     std::filesystem::path cachePath;
 };
+
+using ExportDownloaderFactory =
+    std::function<std::unique_ptr<DownTool::DownToolBase>(std::string_view)>;
 
 struct ExportConfiguration
 {
@@ -95,7 +99,8 @@ class ExportTaskManager
     explicit ExportTaskManager(
         std::function<void()> changeCallback,
         std::filesystem::path recordsPath =
-            std::filesystem::u8path("cache/导出任务.json"));
+            std::filesystem::u8path("cache/导出任务.json"),
+        ExportDownloaderFactory downloaderFactory = {});
 
     ~ExportTaskManager();
 
@@ -159,6 +164,7 @@ class ExportTaskManager
     [[nodiscard]] bool IsCancellationRequested() const;
 
     std::function<void()> changeCallback_;
+    ExportDownloaderFactory downloaderFactory_;
     std::filesystem::path recordsPath_;
     mutable std::mutex mutex_;
     std::mutex recordsFileMutex_;
