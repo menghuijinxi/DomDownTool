@@ -74,25 +74,53 @@ bool runTest()
         return false;
     }
 
-    const std::filesystem::path baseImagePath = testRoot / "images/base.png";
-    const std::filesystem::path overlayImagePath = testRoot / "images/overlay.png";
-    const std::filesystem::path composedImagePath = testRoot / "images/composed.png";
+    const std::filesystem::path imageRoot =
+        testRoot / std::filesystem::u8path("中文图像目录");
+    const std::filesystem::path baseImagePath =
+        imageRoot / std::filesystem::u8path("卫星底图.png");
+    const std::filesystem::path overlayImagePath =
+        imageRoot / std::filesystem::u8path("GIS叠加层.png");
+    const std::filesystem::path composedImagePath =
+        imageRoot / std::filesystem::u8path("合成结果.png");
     std::filesystem::create_directories(baseImagePath.parent_path(), fileError);
     cv::Mat baseImage(2, 2, CV_8UC4, cv::Scalar(10, 20, 30, 255));
     cv::Mat overlayImage(2, 2, CV_8UC4, cv::Scalar(110, 120, 130, 128));
     baseImage.at<cv::Vec4b>(0, 1) = cv::Vec4b(0, 0, 0, 0);
+    const std::filesystem::path asciiBaseImagePath = testRoot / "base.png";
+    const std::filesystem::path asciiOverlayImagePath = testRoot / "overlay.png";
+    if (!postprocess_test::Require(
+            cv::imwrite(
+                postprocess_test::PathToUtf8String(asciiBaseImagePath), baseImage) &&
+                cv::imwrite(
+                    postprocess_test::PathToUtf8String(asciiOverlayImagePath), overlayImage),
+            "无法准备 GIS alpha 合成测试图"))
+    {
+        return false;
+    }
+    std::filesystem::copy_file(asciiBaseImagePath, baseImagePath, fileError);
+    if (!fileError)
+    {
+        std::filesystem::copy_file(asciiOverlayImagePath, overlayImagePath, fileError);
+    }
     std::string composeError;
     if (!postprocess_test::Require(
-            cv::imwrite(postprocess_test::PathToUtf8String(baseImagePath), baseImage) &&
-                cv::imwrite(postprocess_test::PathToUtf8String(overlayImagePath), overlayImage) &&
+            !fileError &&
                 DomDownToolPreview::ExportImageComposer::CompositeImage(
                     baseImagePath, overlayImagePath, composedImagePath, composeError),
             "无法生成 GIS alpha 合成测试图：" + composeError))
     {
         return false;
     }
+    const std::filesystem::path asciiComposedImagePath =
+        testRoot / "composed.png";
+    std::filesystem::copy_file(
+        composedImagePath,
+        asciiComposedImagePath,
+        std::filesystem::copy_options::overwrite_existing,
+        fileError);
     const cv::Mat composedImage = cv::imread(
-        postprocess_test::PathToUtf8String(composedImagePath), cv::IMREAD_UNCHANGED);
+        postprocess_test::PathToUtf8String(asciiComposedImagePath),
+        cv::IMREAD_UNCHANGED);
     const cv::Vec4b composedPixel = composedImage.at<cv::Vec4b>(0, 0);
     const cv::Vec4b transparentBasePixel = composedImage.at<cv::Vec4b>(0, 1);
     if (!postprocess_test::Require(
@@ -102,6 +130,114 @@ bool runTest()
                 transparentBasePixel[1] == 120 && transparentBasePixel[2] == 130 &&
                 transparentBasePixel[3] == 128,
             "GIS alpha 合成结果不符合标准 source-over 公式"))
+    {
+        return false;
+    }
+
+    const std::filesystem::path tileRelativePath =
+        std::filesystem::path("14") / "1" / "2.png";
+    const std::filesystem::path baseTileRoot =
+        testRoot / std::filesystem::u8path("瓦片树/卫星XYZ");
+    const std::filesystem::path overlayTileRoot =
+        testRoot / std::filesystem::u8path("瓦片树/GIS图层");
+    const std::filesystem::path outputTileRoot =
+        testRoot / std::filesystem::u8path("瓦片树/叠加结果");
+    const std::filesystem::path asciiBaseTilePath = testRoot / "base-tile.jpg";
+    const cv::Mat baseTile(2, 2, CV_8UC3, cv::Scalar(10, 20, 30));
+    if (!postprocess_test::Require(
+            cv::imwrite(
+                postprocess_test::PathToUtf8String(asciiBaseTilePath), baseTile),
+            "无法准备 JPEG 卫星瓦片"))
+    {
+        return false;
+    }
+    std::filesystem::create_directories(
+        (baseTileRoot / tileRelativePath).parent_path(), fileError);
+    std::filesystem::create_directories(
+        (overlayTileRoot / tileRelativePath).parent_path(), fileError);
+    std::filesystem::copy_file(
+        asciiBaseTilePath, baseTileRoot / tileRelativePath, fileError);
+    if (!fileError)
+    {
+        std::filesystem::copy_file(
+            asciiOverlayImagePath, overlayTileRoot / tileRelativePath, fileError);
+    }
+    composeError.clear();
+    if (!postprocess_test::Require(
+            !fileError && DomDownToolPreview::ExportImageComposer::CopyDirectory(
+                baseTileRoot, outputTileRoot, composeError) &&
+                DomDownToolPreview::ExportImageComposer::CompositeXyzTileTree(
+                    outputTileRoot, overlayTileRoot, outputTileRoot, composeError),
+            "中文 XYZ 目录无法叠加 GIS 图层：" + composeError))
+    {
+        return false;
+    }
+    const std::filesystem::path asciiComposedTilePath =
+        testRoot / "composed-tile.png";
+    std::filesystem::copy_file(
+        outputTileRoot / tileRelativePath,
+        asciiComposedTilePath,
+        std::filesystem::copy_options::overwrite_existing,
+        fileError);
+    const cv::Mat composedTile = cv::imread(
+        postprocess_test::PathToUtf8String(asciiComposedTilePath),
+        cv::IMREAD_UNCHANGED);
+    const cv::Vec3b composedTilePixel = composedTile.at<cv::Vec3b>(0, 0);
+    if (!postprocess_test::Require(
+            !fileError &&
+                postprocess_test::RequireJpegEncoding(
+                    outputTileRoot / tileRelativePath) &&
+                composedTile.channels() == 3 &&
+                composedTilePixel[0] == 60 && composedTilePixel[1] == 70 &&
+                composedTilePixel[2] == 80,
+            "XYZ 卫星瓦片与 GIS 图层没有正确合成"))
+    {
+        return false;
+    }
+
+    const std::filesystem::path fbxTextureRelativePath = "0_0.png";
+    const std::filesystem::path baseFbxRoot =
+        testRoot / std::filesystem::u8path("FBX贴图/卫星图");
+    const std::filesystem::path overlayFbxRoot =
+        testRoot / std::filesystem::u8path("FBX贴图/GIS图层");
+    std::filesystem::create_directories(baseFbxRoot, fileError);
+    std::filesystem::create_directories(overlayFbxRoot, fileError);
+    std::filesystem::copy_file(
+        asciiBaseImagePath, baseFbxRoot / fbxTextureRelativePath, fileError);
+    if (!fileError)
+    {
+        std::filesystem::copy_file(
+            asciiOverlayImagePath,
+            overlayFbxRoot / fbxTextureRelativePath,
+            fileError);
+    }
+    composeError.clear();
+    if (!postprocess_test::Require(
+            !fileError && DomDownToolPreview::ExportImageComposer::CompositeTileTree(
+                baseFbxRoot, overlayFbxRoot, baseFbxRoot, composeError),
+            "中文 FBX 贴图目录无法叠加 GIS 图层：" + composeError))
+    {
+        return false;
+    }
+    const std::filesystem::path asciiComposedFbxTexturePath =
+        testRoot / "composed-fbx-texture.png";
+    std::filesystem::copy_file(
+        baseFbxRoot / fbxTextureRelativePath,
+        asciiComposedFbxTexturePath,
+        std::filesystem::copy_options::overwrite_existing,
+        fileError);
+    const cv::Mat composedFbxTexture = cv::imread(
+        postprocess_test::PathToUtf8String(asciiComposedFbxTexturePath),
+        cv::IMREAD_UNCHANGED);
+    const cv::Vec4b composedFbxPixel = composedFbxTexture.at<cv::Vec4b>(0, 0);
+    if (!postprocess_test::Require(
+            !fileError &&
+                postprocess_test::RequirePngEncoding(
+                    baseFbxRoot / fbxTextureRelativePath) &&
+                composedFbxTexture.channels() == 4 && composedFbxPixel[0] == 60 &&
+                composedFbxPixel[1] == 70 && composedFbxPixel[2] == 80 &&
+                composedFbxPixel[3] == 255,
+            "FBX 卫星贴图与 GIS 图层没有正确合成"))
     {
         return false;
     }

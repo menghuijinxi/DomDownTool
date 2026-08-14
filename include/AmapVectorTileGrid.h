@@ -26,6 +26,12 @@ namespace DownTool
             double radiusMeters,
             uint32_t zoom);
 
+        // 输入为 WGS84 西北角和东南角；返回覆盖完整边界的高德 GCJ-02 矢量瓦片。
+        static std::vector<AmapVectorTile> SelectTilesForWgs84Bounds(
+            const LonLat& northWestWgs84,
+            const LonLat& southEastWgs84,
+            uint32_t zoom);
+
         static AmapVectorTile LonLatToTile(const LonLat& gcj02LonLat, uint32_t zoom);
 
         static LonLat TileNorthWestToLonLat(const AmapVectorTile& tile);

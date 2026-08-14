@@ -14,6 +14,8 @@
 
 namespace DownTool
 {
+    class AmapVectorPngDownloader;
+
     struct AmapVectorDownloadProgress
     {
         size_t completedTaskCount = 0;
@@ -65,6 +67,12 @@ namespace DownTool
 
     class AmapVectorDownloader
     {
+        friend class AmapVectorPngDownloader;
+
+        AmapVectorDownloadResult DownloadTiles(
+            const AmapVectorDownloadOptions& options,
+            std::vector<AmapVectorTile> selectedTiles) const;
+
     public:
         // auth_key 由此方法按每个请求向高德服务申请，调用方无需保存或生成它。
         AmapVectorDownloadResult Download(const AmapVectorDownloadOptions& options) const;

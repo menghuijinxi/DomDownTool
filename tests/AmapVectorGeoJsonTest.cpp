@@ -238,6 +238,30 @@ namespace
             return false;
         }
 
+        const std::vector<DownTool::AmapVectorTile> fullOutputTileSelection =
+            DownTool::AmapVectorTileGrid::SelectTilesForWgs84Bounds(
+                { 116.3232421875, 39.968700744916944 },
+                { 116.455078125, 39.867587624510186 },
+                14);
+        const auto containsTile = [&fullOutputTileSelection](uint32_t x, uint32_t y)
+        {
+            return std::ranges::any_of(
+                fullOutputTileSelection,
+                [x, y](const DownTool::AmapVectorTile& tile)
+                {
+                    return tile.x == x && tile.y == y && tile.zoom == 14;
+                });
+        };
+        if (!Require(
+                fullOutputTileSelection.size() == 77,
+                "完整输出范围应选择 7x11 个高德 PBF 瓦片") ||
+            !Require(
+                containsTile(13486, 4553) && containsTile(13492, 4563),
+                "完整输出范围缺少东侧或南北边界高德 PBF 瓦片"))
+        {
+            return false;
+        }
+
         std::string envelope;
         if (!Require(
             BuildEnvelope(BuildSyntheticResult(selectedTiles.front()), envelope),

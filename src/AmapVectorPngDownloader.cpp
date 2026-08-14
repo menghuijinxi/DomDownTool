@@ -10,6 +10,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -34,6 +35,45 @@ namespace
     using DownTool::Tile;
 
     constexpr uint32_t kRenderScale = 2;
+
+    std::vector<DownTool::AmapVectorTile> SelectSourceTilesForPngOutput(
+        const DownTool::AmapVectorDownloadOptions& options)
+    {
+        if (!std::isfinite(options.centerWgs84.lon) ||
+            !std::isfinite(options.centerWgs84.lat) ||
+            options.centerWgs84.lon < -180. || options.centerWgs84.lon > 180. ||
+            options.centerWgs84.lat < -90. || options.centerWgs84.lat > 90.)
+        {
+            throw std::invalid_argument("高德矢量瓦片坐标必须是有效的经纬度。");
+        }
+        if (!std::isfinite(options.radiusMeters) || options.radiusMeters < 0.)
+        {
+            throw std::invalid_argument("高德矢量下载半径必须是非负有限米数。");
+        }
+
+        const uint32_t dataZoom =
+            DownTool::AmapVectorTileGrid::ResolveDataZoom(options.zoom);
+        DownTool::GoogleDownBase outputGrid;
+        outputGrid.SetCenterLonLat(options.centerWgs84);
+        outputGrid.SetRadius(options.radiusMeters);
+        outputGrid.SetZoom(options.zoom);
+        outputGrid.CalculateDownRange();
+
+        const Tile& minimumTile = outputGrid.GetMinTile();
+        const Tile& maximumTile = outputGrid.GetMaxTile();
+        const DownTool::LonLat northWestWgs84 =
+            DownTool::GoogleDownBase::TileToLonLat(minimumTile);
+        const DownTool::LonLat southEastWgs84 =
+            DownTool::GoogleDownBase::TileToLonLat({
+                maximumTile.X + 1,
+                maximumTile.Y + 1,
+                maximumTile.Zoom
+            });
+        return DownTool::AmapVectorTileGrid::SelectTilesForWgs84Bounds(
+            northWestWgs84,
+            southEastWgs84,
+            dataZoom);
+    }
 
     struct ProjectedFeature
     {
@@ -890,8 +930,21 @@ DownTool::AmapVectorPngDownloadResult DownTool::AmapVectorPngDownloader::Downloa
     const AmapVectorPngDownloadOptions& options)
 {
     AmapVectorPngDownloadResult result;
+    std::vector<AmapVectorTile> sourceTiles;
+    try
+    {
+        sourceTiles = SelectSourceTilesForPngOutput(options.vectorDownload);
+    }
+    catch (const std::exception& exception)
+    {
+        result.error = exception.what();
+        return result;
+    }
+
     AmapVectorDownloader vectorDownloader;
-    result.vectorDownload = vectorDownloader.Download(options.vectorDownload);
+    result.vectorDownload = vectorDownloader.DownloadTiles(
+        options.vectorDownload,
+        std::move(sourceTiles));
     if (!result.vectorDownload.success)
     {
         result.error = result.vectorDownload.error;

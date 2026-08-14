@@ -21,5 +21,10 @@ class ExportImageComposer
                                   const std::filesystem::path& overlayRoot,
                                   const std::filesystem::path& outputRoot,
                                   std::string& error);
+
+    static bool CompositeXyzTileTree(const std::filesystem::path& baseRoot,
+                                     const std::filesystem::path& overlayRoot,
+                                     const std::filesystem::path& outputRoot,
+                                     std::string& error);
 };
 } // namespace DomDownToolPreview

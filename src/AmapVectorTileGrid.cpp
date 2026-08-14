@@ -1,6 +1,7 @@
 #include "AmapVectorTileGrid.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -193,6 +194,69 @@ std::vector<DownTool::AmapVectorTile> DownTool::AmapVectorTileGrid::SelectTilesF
         AppendTileRange(tiles, 0, southEast.x, northWest.y, southEast.y, zoom);
     }
 
+    return tiles;
+}
+
+std::vector<DownTool::AmapVectorTile> DownTool::AmapVectorTileGrid::SelectTilesForWgs84Bounds(
+    const LonLat& northWestWgs84,
+    const LonLat& southEastWgs84,
+    uint32_t zoom)
+{
+    ValidateLonLat(northWestWgs84);
+    ValidateLonLat(southEastWgs84);
+    if (northWestWgs84.lon > southEastWgs84.lon ||
+        northWestWgs84.lat < southEastWgs84.lat)
+    {
+        throw std::invalid_argument("高德矢量下载边界必须由西北角和东南角组成。");
+    }
+    if (zoom > kMaximumAmapVectorZoom)
+    {
+        throw std::invalid_argument("高德矢量瓦片缩放级别超出支持范围。");
+    }
+
+    const std::array<LonLat, 4> cornersWgs84 = {{
+        northWestWgs84,
+        { southEastWgs84.lon, northWestWgs84.lat },
+        { northWestWgs84.lon, southEastWgs84.lat },
+        southEastWgs84
+    }};
+    std::array<LonLat, 4> cornersGcj02;
+    std::transform(
+        cornersWgs84.begin(),
+        cornersWgs84.end(),
+        cornersGcj02.begin(),
+        [](const LonLat& corner)
+        {
+            return GCJ02GoogleDownBase::WGS84ToGCJ02(corner);
+        });
+
+    double minimumLongitude = cornersGcj02.front().lon;
+    double maximumLongitude = cornersGcj02.front().lon;
+    double minimumLatitude = cornersGcj02.front().lat;
+    double maximumLatitude = cornersGcj02.front().lat;
+    for (const LonLat& corner : cornersGcj02)
+    {
+        minimumLongitude = std::min(minimumLongitude, corner.lon);
+        maximumLongitude = std::max(maximumLongitude, corner.lon);
+        minimumLatitude = std::min(minimumLatitude, corner.lat);
+        maximumLatitude = std::max(maximumLatitude, corner.lat);
+    }
+
+    const AmapVectorTile northWest = LonLatToTile(
+        { minimumLongitude, maximumLatitude }, zoom);
+    const AmapVectorTile southEast = LonLatToTile(
+        { maximumLongitude, minimumLatitude }, zoom);
+    std::vector<AmapVectorTile> tiles;
+    tiles.reserve(
+        static_cast<size_t>(southEast.x - northWest.x + 1) *
+        static_cast<size_t>(southEast.y - northWest.y + 1));
+    AppendTileRange(
+        tiles,
+        northWest.x,
+        southEast.x,
+        northWest.y,
+        southEast.y,
+        zoom);
     return tiles;
 }
 

@@ -430,37 +430,49 @@ namespace
         result.success = true;
         return true;
     }
+
+    bool ValidateDownloadOptions(
+        const DownTool::AmapVectorDownloadOptions& options,
+        std::string& error)
+    {
+        if (options.webApiKey.empty())
+        {
+            error = "下载高德矢量数据需要 Web API key。";
+            return false;
+        }
+        if (options.webApiVersion.empty())
+        {
+            error = "下载高德矢量数据需要 Web JSAPI 版本。";
+            return false;
+        }
+        if (!options.includeBaseLayers && !options.includeLabels)
+        {
+            error = "至少需要选择一类高德矢量图层。";
+            return false;
+        }
+        if (options.containRange == 0 || options.containRange > 16)
+        {
+            error = "高德矢量 contain_range 必须介于 1 和 16 之间。";
+            return false;
+        }
+        return true;
+    }
 }
 
 DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::Download(
     const AmapVectorDownloadOptions& options) const
 {
     AmapVectorDownloadResult result;
-    if (options.webApiKey.empty())
+    if (!ValidateDownloadOptions(options, result.error))
     {
-        result.error = "下载高德矢量数据需要 Web API key。";
-        return result;
-    }
-    if (options.webApiVersion.empty())
-    {
-        result.error = "下载高德矢量数据需要 Web JSAPI 版本。";
-        return result;
-    }
-    if (!options.includeBaseLayers && !options.includeLabels)
-    {
-        result.error = "至少需要选择一类高德矢量图层。";
-        return result;
-    }
-    if (options.containRange == 0 || options.containRange > 16)
-    {
-        result.error = "高德矢量 contain_range 必须介于 1 和 16 之间。";
         return result;
     }
 
+    std::vector<AmapVectorTile> selectedTiles;
     try
     {
         const uint32_t dataZoom = AmapVectorTileGrid::ResolveDataZoom(options.zoom);
-        result.selectedTiles = AmapVectorTileGrid::SelectTilesForWgs84Radius(
+        selectedTiles = AmapVectorTileGrid::SelectTilesForWgs84Radius(
             options.centerWgs84,
             options.radiusMeters,
             dataZoom);
@@ -470,6 +482,25 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::Download(
         result.error = exception.what();
         return result;
     }
+
+    return DownloadTiles(options, std::move(selectedTiles));
+}
+
+DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadTiles(
+    const AmapVectorDownloadOptions& options,
+    std::vector<AmapVectorTile> selectedTiles) const
+{
+    AmapVectorDownloadResult result;
+    if (!ValidateDownloadOptions(options, result.error))
+    {
+        return result;
+    }
+    if (selectedTiles.empty())
+    {
+        result.error = "高德 GIS 下载范围没有包含矢量瓦片。";
+        return result;
+    }
+    result.selectedTiles = std::move(selectedTiles);
 
     std::vector<uint32_t> tileTypes;
     if (options.includeBaseLayers)

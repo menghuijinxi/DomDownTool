@@ -229,13 +229,11 @@ std::filesystem::path GisOutputRoot(const ExportConfiguration& configuration,
 
 std::filesystem::path OverlayOutputRoot(const ExportConfiguration& configuration,
                                         const std::string& taskId,
-                                        const SatelliteExportSource& source,
-                                        std::string_view categoryName)
+                                        const SatelliteExportSource& source)
 {
     return TaskOutputRoot(configuration, taskId) /
         std::filesystem::u8path("叠加卫星图") /
-        std::filesystem::u8path(SanitizeFileName(source.name)) /
-        std::filesystem::u8path(categoryName);
+        std::filesystem::u8path(SanitizeFileName(source.name));
 }
 
 std::string FormatSourceNames(const ExportConfiguration& configuration)
@@ -1151,13 +1149,13 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
             const std::filesystem::path overlayRoot = configuration.exportTiles ?
                 tileOutputPath : temporaryRoot / "后处理";
             const std::filesystem::path compositeRoot = OverlayOutputRoot(
-                configuration, queuedExport.taskId, source, groupName);
+                configuration, queuedExport.taskId, source);
             if (!ExportImageComposer::CopyDirectory(satelliteRoot, compositeRoot, error))
             {
                 return false;
             }
             if ((configuration.exportTiles || configuration.exportFbx) &&
-                !ExportImageComposer::CompositeTileTree(
+                !ExportImageComposer::CompositeXyzTileTree(
                     compositeRoot / "XYZ", overlayRoot,
                     compositeRoot / "XYZ", error))
             {
