@@ -201,35 +201,17 @@ std::string GisModeName(GisExportMode mode)
     return "GIS";
 }
 
-std::filesystem::path DefaultSatelliteOutputRoot(const SatelliteExportSource& source)
-{
-    return source.cachePath / std::filesystem::u8path("Google_墨卡托");
-}
-
-std::filesystem::path DefaultGisOutputRoot()
-{
-    return std::filesystem::u8path("cache/高德地图/gis数据/输出");
-}
-
 std::filesystem::path TaskOutputRoot(const ExportConfiguration& configuration,
-                                     const std::string& taskId,
-                                     const std::filesystem::path& defaultRoot)
+                                     const std::string& taskId)
 {
-    if (configuration.outputRoot.empty())
-    {
-        return defaultRoot / std::filesystem::u8path("导出任务") /
-            std::filesystem::u8path(taskId);
-    }
-    return configuration.outputRoot / std::filesystem::u8path("导出任务") /
-        std::filesystem::u8path(taskId);
+    return DomDownToolPreview::ExportTaskOutputRoot(configuration, taskId);
 }
 
 std::filesystem::path SatelliteOutputRoot(const ExportConfiguration& configuration,
                                           const std::string& taskId,
                                           const SatelliteExportSource& source)
 {
-    const std::filesystem::path root = TaskOutputRoot(
-        configuration, taskId, DefaultSatelliteOutputRoot(source));
+    const std::filesystem::path root = TaskOutputRoot(configuration, taskId);
     return root / std::filesystem::u8path("卫星图") /
         std::filesystem::u8path(SanitizeFileName(source.name));
 }
@@ -239,8 +221,7 @@ std::filesystem::path GisOutputRoot(const ExportConfiguration& configuration,
                                     std::string_view modeName,
                                     std::string_view categoryName)
 {
-    const std::filesystem::path root = TaskOutputRoot(
-        configuration, taskId, DefaultGisOutputRoot());
+    const std::filesystem::path root = TaskOutputRoot(configuration, taskId);
     return root / std::filesystem::u8path("GIS") /
         std::filesystem::u8path(modeName) /
         std::filesystem::u8path(categoryName);
@@ -251,15 +232,7 @@ std::filesystem::path OverlayOutputRoot(const ExportConfiguration& configuration
                                         const SatelliteExportSource& source,
                                         std::string_view categoryName)
 {
-    if (configuration.outputRoot.empty())
-    {
-        return TaskOutputRoot(
-            configuration, taskId, DefaultSatelliteOutputRoot(source)) /
-            std::filesystem::u8path("叠加卫星图") /
-            std::filesystem::u8path(SanitizeFileName(source.name)) /
-            std::filesystem::u8path(categoryName);
-    }
-    return TaskOutputRoot(configuration, taskId, configuration.outputRoot) /
+    return TaskOutputRoot(configuration, taskId) /
         std::filesystem::u8path("叠加卫星图") /
         std::filesystem::u8path(SanitizeFileName(source.name)) /
         std::filesystem::u8path(categoryName);
@@ -362,7 +335,7 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
            << "层级: " << configuration.zoom << "\n"
            << "卫星图来源: " << FormatSourceNames(configuration) << "\n"
            << "用户指定输出根目录: "
-           << (configuration.outputRoot.empty() ? "未指定，使用各下载器默认目录" :
+           << (configuration.outputRoot.empty() ? "未指定，使用 cache" :
                PathToUtf8(configuration.outputRoot)) << "\n";
     for (const SatelliteExportSource& source : configuration.satelliteSources)
     {
@@ -382,8 +355,7 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
     }
     output
            << "GIS 产物根目录: "
-           << PathToUtf8(TaskOutputRoot(
-                  configuration, std::string(taskId), DefaultGisOutputRoot()) /
+           << PathToUtf8(TaskOutputRoot(configuration, std::string(taskId)) /
               std::filesystem::u8path("GIS")) << "\n"
            << "GIS 分类: " << MakeCategoryName(configuration.gisCategories) << "\n"
            << "GIS 组合方式: " << FormatGisModes(configuration) << "\n"
@@ -406,25 +378,7 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
 std::vector<std::filesystem::path> TaskRecordRoots(
     const ExportConfiguration& configuration, const std::string& taskId)
 {
-    if (!configuration.outputRoot.empty())
-    {
-        return {TaskOutputRoot(configuration, taskId, configuration.outputRoot)};
-    }
-
-    std::vector<std::filesystem::path> roots;
-    for (const SatelliteExportSource& source : configuration.satelliteSources)
-    {
-        roots.push_back(TaskOutputRoot(
-            configuration, taskId, DefaultSatelliteOutputRoot(source)));
-    }
-    if (!configuration.gisCategories.empty())
-    {
-        roots.push_back(TaskOutputRoot(
-            configuration, taskId, DefaultGisOutputRoot()));
-    }
-    std::sort(roots.begin(), roots.end());
-    roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
-    return roots;
+    return {TaskOutputRoot(configuration, taskId)};
 }
 
 bool WriteTaskRecordFiles(const ExportConfiguration& configuration,
@@ -534,6 +488,48 @@ std::string TaskStateValue(ExportTaskState state)
     }
     return "failed";
 }
+
+bool IsFinishedState(ExportTaskState state)
+{
+    return state == ExportTaskState::Succeeded || state == ExportTaskState::Failed ||
+        state == ExportTaskState::Canceled;
+}
+
+std::optional<std::vector<std::filesystem::path>> ValidatedTaskOutputPaths(
+    const ExportTaskRecord& record, std::string& error)
+{
+    constexpr std::string_view kSeparator = "；";
+    std::vector<std::filesystem::path> paths;
+    size_t start = 0;
+    while (start <= record.outputPath.size())
+    {
+        const size_t end = record.outputPath.find(kSeparator, start);
+        const std::string_view pathText = std::string_view(record.outputPath).substr(
+            start, end == std::string::npos ? std::string::npos : end - start);
+        if (pathText.empty())
+        {
+            error = "任务导出路径为空，已阻止删除。";
+            return std::nullopt;
+        }
+
+        std::error_code pathError;
+        const std::filesystem::path path = std::filesystem::absolute(
+            std::filesystem::u8path(std::string(pathText)), pathError).lexically_normal();
+        if (pathError || path.filename() != std::filesystem::u8path(record.id) ||
+            path.parent_path().filename() != std::filesystem::u8path("导出任务"))
+        {
+            error = "任务导出路径不符合“导出任务/任务ID”结构，已阻止删除。";
+            return std::nullopt;
+        }
+        paths.push_back(path);
+        if (end == std::string::npos)
+        {
+            break;
+        }
+        start = end + kSeparator.size();
+    }
+    return paths;
+}
 } // namespace
 
 std::string DomDownToolPreview::ExportTaskStateName(ExportTaskState state)
@@ -552,6 +548,15 @@ std::string DomDownToolPreview::ExportTaskStateName(ExportTaskState state)
         return "已取消";
     }
     return "未知";
+}
+
+std::filesystem::path DomDownToolPreview::ExportTaskOutputRoot(
+    const ExportConfiguration& configuration, std::string_view taskId)
+{
+    const std::filesystem::path outputRoot = configuration.outputRoot.empty() ?
+        std::filesystem::u8path("cache") : configuration.outputRoot;
+    return outputRoot / std::filesystem::u8path("导出任务") /
+        std::filesystem::u8path(std::string(taskId));
 }
 
 DomDownToolPreview::ExportTaskManager::ExportTaskManager(
@@ -671,6 +676,66 @@ bool DomDownToolPreview::ExportTaskManager::Cancel(std::string_view taskId)
     return changed;
 }
 
+bool DomDownToolPreview::ExportTaskManager::RemoveFinished(std::string_view taskId)
+{
+    {
+        const std::lock_guard lock(mutex_);
+        const auto record = std::find_if(
+            records_.begin(), records_.end(),
+            [taskId](const ExportTaskRecord& item) { return item.id == taskId; });
+        if (record == records_.end() || !IsFinishedState(record->state))
+        {
+            return false;
+        }
+        records_.erase(record);
+    }
+    SaveRecords(true);
+    NotifyChanged();
+    return true;
+}
+
+bool DomDownToolPreview::ExportTaskManager::DeleteFinishedOutput(
+    std::string_view taskId, std::string& error)
+{
+    ExportTaskRecord record;
+    {
+        const std::lock_guard lock(mutex_);
+        const auto found = std::find_if(
+            records_.begin(), records_.end(),
+            [taskId](const ExportTaskRecord& item) { return item.id == taskId; });
+        if (found == records_.end() || !IsFinishedState(found->state))
+        {
+            error = "只能永久删除已完成、失败或已取消的任务。";
+            return false;
+        }
+        record = *found;
+    }
+
+    const std::optional<std::vector<std::filesystem::path>> outputPaths =
+        ValidatedTaskOutputPaths(record, error);
+    if (!outputPaths.has_value())
+    {
+        return false;
+    }
+    for (const std::filesystem::path& outputPath : *outputPaths)
+    {
+        std::error_code removeError;
+        std::filesystem::remove_all(outputPath, removeError);
+        if (removeError)
+        {
+            error = fmt::format("无法删除导出目录：{}（{}）",
+                                PathToUtf8(outputPath), removeError.message());
+            return false;
+        }
+    }
+    if (!RemoveFinished(taskId))
+    {
+        error = "导出文件已删除，但任务记录状态已变化，无法移除记录。";
+        return false;
+    }
+    return true;
+}
+
 void DomDownToolPreview::ExportTaskManager::ClearFinished()
 {
     {
@@ -679,9 +744,7 @@ void DomDownToolPreview::ExportTaskManager::ClearFinished()
                            records_.begin(), records_.end(),
                            [](const ExportTaskRecord& record)
                            {
-                               return record.state == ExportTaskState::Succeeded ||
-                                   record.state == ExportTaskState::Failed ||
-                                   record.state == ExportTaskState::Canceled;
+                               return IsFinishedState(record.state);
                            }),
                        records_.end());
     }

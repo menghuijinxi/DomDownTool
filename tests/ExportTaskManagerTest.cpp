@@ -58,6 +58,22 @@ bool runTest()
         return false;
     }
 
+    DomDownToolPreview::ExportConfiguration defaultOutputConfiguration;
+    DomDownToolPreview::ExportConfiguration selectedOutputConfiguration;
+    selectedOutputConfiguration.outputRoot = testRoot / "selected-output";
+    if (!postprocess_test::Require(
+            DomDownToolPreview::ExportTaskOutputRoot(
+                defaultOutputConfiguration, "task-id") ==
+                std::filesystem::u8path("cache/导出任务/task-id") &&
+                DomDownToolPreview::ExportTaskOutputRoot(
+                    selectedOutputConfiguration, "task-id") ==
+                selectedOutputConfiguration.outputRoot /
+                    std::filesystem::u8path("导出任务/task-id"),
+            "默认输出目录和用户选择输出目录没有使用统一的任务结构"))
+    {
+        return false;
+    }
+
     const std::filesystem::path baseImagePath = testRoot / "images/base.png";
     const std::filesystem::path overlayImagePath = testRoot / "images/overlay.png";
     const std::filesystem::path composedImagePath = testRoot / "images/composed.png";
@@ -197,6 +213,61 @@ bool runTest()
         {
             return false;
         }
+
+        if (!postprocess_test::Require(
+                manager.RemoveFinished(invalidTaskId) &&
+                    findRecord(manager.GetRecords(), invalidTaskId) == nullptr &&
+                    std::filesystem::exists(conversionRecord),
+                "移除单个任务记录时不应删除导出文件"))
+        {
+            return false;
+        }
+
+        const std::string deleteTaskId = manager.Enqueue(invalidConfiguration);
+        if (!postprocess_test::Require(waitForFinished(manager, deleteTaskId),
+                                       "永久删除测试任务没有结束"))
+        {
+            return false;
+        }
+        const std::filesystem::path deleteTaskOutput =
+            DomDownToolPreview::ExportTaskOutputRoot(invalidConfiguration, deleteTaskId);
+        std::string deleteError;
+        if (!postprocess_test::Require(
+                std::filesystem::exists(deleteTaskOutput) &&
+                    manager.DeleteFinishedOutput(deleteTaskId, deleteError) &&
+                    !std::filesystem::exists(deleteTaskOutput) &&
+                    findRecord(manager.GetRecords(), deleteTaskId) == nullptr,
+                "永久删除没有同时删除任务目录和任务记录：" + deleteError))
+        {
+            return false;
+        }
+    }
+
+    const std::filesystem::path protectedOutput = testRoot / "protected-output";
+    std::filesystem::create_directories(protectedOutput, fileError);
+    std::ofstream(protectedOutput / "keep.txt") << "keep";
+    const std::filesystem::path unsafeRecordsPath = testRoot / "unsafe-records.json";
+    std::ofstream unsafeRecords(unsafeRecordsPath, std::ios::binary | std::ios::trunc);
+    unsafeRecords << "{\"version\":1,\"tasks\":[{\"id\":\"unsafe\","
+                     "\"title\":\"异常路径\",\"detail\":\"test\",\"outputPath\":\""
+                  << protectedOutput.generic_string()
+                  << "\",\"createdAt\":\"2026-08-10 10:00:00\",\"finishedAt\":"
+                     "\"2026-08-10 10:01:00\",\"state\":\"succeeded\","
+                     "\"stage\":\"已完成\",\"progress\":1,\"completed\":1,"
+                     "\"total\":1,\"error\":\"\"}]}";
+    unsafeRecords.close();
+    {
+        DomDownToolPreview::ExportTaskManager manager({}, unsafeRecordsPath);
+        std::string deleteError;
+        if (!postprocess_test::Require(
+                !manager.DeleteFinishedOutput("unsafe", deleteError) &&
+                    std::filesystem::exists(protectedOutput / "keep.txt") &&
+                    findRecord(manager.GetRecords(), "unsafe") != nullptr &&
+                    !deleteError.empty(),
+                "永久删除没有拒绝异常任务路径"))
+        {
+            return false;
+        }
     }
 
     const std::filesystem::path concurrentRecordsPath =
@@ -207,6 +278,7 @@ bool runTest()
             concurrentRecordsPath);
         DomDownToolPreview::ExportConfiguration invalidConfiguration;
         invalidConfiguration.radiusMeters = 1000.;
+        invalidConfiguration.outputRoot = testRoot / "concurrent-output";
 
         std::mutex taskIdsMutex;
         std::vector<std::string> taskIds;

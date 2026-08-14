@@ -183,6 +183,10 @@ class PreviewController
     bool gisColorFieldDragging_ = false;
     bool gisColorHueDragging_ = false;
     bool gisColorEyedropperActive_ = false;
+    bool taskClearConfirmOpen_ = false;
+    std::optional<std::string> taskDeleteTargetId_;
+    std::string taskDeleteTargetTitle_;
+    std::string taskDeleteTargetPath_;
     std::optional<GisOverlayCategories> lastUiGisCategories_;
     std::array<std::string, 9> lastUiGisColorValues_{};
     std::string lastUiGisPickerState_;

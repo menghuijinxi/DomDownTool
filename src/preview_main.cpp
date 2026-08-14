@@ -11,6 +11,7 @@
 #include "skui_win32_app.h"
 
 #include "preview/PreviewController.h"
+#include "preview/GuiStandardStreams.h"
 #include "preview/PreviewResourceIds.h"
 #include "preview/SearchTrace.h"
 
@@ -57,6 +58,13 @@ std::optional<std::string> loadEmbeddedPreviewDocument(HINSTANCE instance)
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 {
+    if (!DomDownToolPreview::initializeGuiStandardStreams())
+    {
+        MessageBoxW(nullptr, L"Failed to initialize application output streams.",
+                    L"DomDownTool", MB_OK | MB_ICONERROR);
+        return EXIT_FAILURE;
+    }
+
     const std::filesystem::path applicationRoot = executableDirectory();
     if (applicationRoot.empty())
     {

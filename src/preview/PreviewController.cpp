@@ -20,6 +20,7 @@
 #include "skui_runtime_helpers.h"
 
 #include <shobjidl.h>
+#include <shellapi.h>
 #include <wrl/client.h>
 
 #include "preview/PreviewInputRouting.h"
@@ -114,6 +115,25 @@ std::string pathToUtf8(const std::filesystem::path& path)
 {
     const std::u8string value = path.generic_u8string();
     return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+}
+
+std::wstring utf8ToWide(std::string_view value)
+{
+    if (value.empty())
+    {
+        return {};
+    }
+    const int length = MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()),
+        nullptr, 0);
+    if (length <= 0)
+    {
+        return L"无法显示错误详情。";
+    }
+    std::wstring result(static_cast<size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+                        static_cast<int>(value.size()), result.data(), length);
+    return result;
 }
 
 struct CoTaskMemDeleter
@@ -277,6 +297,57 @@ std::optional<std::string> taskIdFromCancelButton(std::string_view id)
         return std::nullopt;
     }
     return std::string(id.substr(kPrefix.size()));
+}
+
+std::optional<std::string> taskIdFromOpenButton(std::string_view id)
+{
+    constexpr std::string_view kPrefix = "task-open-";
+    if (!id.starts_with(kPrefix) || id.size() == kPrefix.size())
+    {
+        return std::nullopt;
+    }
+    return std::string(id.substr(kPrefix.size()));
+}
+
+std::optional<std::string> taskIdFromRemoveButton(std::string_view id)
+{
+    constexpr std::string_view kPrefix = "task-remove-";
+    if (!id.starts_with(kPrefix) || id.size() == kPrefix.size())
+    {
+        return std::nullopt;
+    }
+    return std::string(id.substr(kPrefix.size()));
+}
+
+std::optional<std::string> taskIdFromDeleteButton(std::string_view id)
+{
+    constexpr std::string_view kPrefix = "task-delete-";
+    if (!id.starts_with(kPrefix) || id.size() == kPrefix.size())
+    {
+        return std::nullopt;
+    }
+    return std::string(id.substr(kPrefix.size()));
+}
+
+std::optional<std::filesystem::path> existingTaskOutputPath(std::string_view outputPath)
+{
+    const size_t separator = outputPath.find("；");
+    const std::filesystem::path path = std::filesystem::u8path(
+        std::string(outputPath.substr(0, separator)));
+    std::error_code pathError;
+    if (!std::filesystem::is_directory(path, pathError) || pathError)
+    {
+        return std::nullopt;
+    }
+    const std::filesystem::path absolutePath = std::filesystem::absolute(path, pathError);
+    return pathError ? std::optional<std::filesystem::path>(path) : absolutePath;
+}
+
+bool openTaskOutputDirectory(HWND owner, const std::filesystem::path& path)
+{
+    const HINSTANCE result = ShellExecuteW(
+        owner, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    return reinterpret_cast<INT_PTR>(result) > 32;
 }
 
 std::optional<double> parseFiniteDouble(std::string_view value)
@@ -1152,8 +1223,57 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             }
             if (event.id == "tasks-clear-finished")
             {
+                taskDeleteTargetId_.reset();
+                taskClearConfirmOpen_ = true;
+                updateUi(runtime);
+                requestRedraw();
+                return;
+            }
+            if (event.id == "tasks-cancel-clear" || event.id == "task-clear-confirm")
+            {
+                taskClearConfirmOpen_ = false;
+                updateUi(runtime);
+                requestRedraw();
+                return;
+            }
+            if (event.id == "tasks-confirm-clear")
+            {
+                taskClearConfirmOpen_ = false;
                 exportTaskManager_.ClearFinished();
                 UpdateTaskUi(runtime);
+                updateUi(runtime);
+                requestRedraw();
+                return;
+            }
+            if (event.id == "task-delete-cancel" ||
+                event.id == "task-delete-confirm")
+            {
+                taskDeleteTargetId_.reset();
+                taskDeleteTargetTitle_.clear();
+                taskDeleteTargetPath_.clear();
+                updateUi(runtime);
+                requestRedraw();
+                return;
+            }
+            if (event.id == "task-delete-accept")
+            {
+                if (taskDeleteTargetId_.has_value())
+                {
+                    std::string error;
+                    if (!exportTaskManager_.DeleteFinishedOutput(
+                            *taskDeleteTargetId_, error))
+                    {
+                        MessageBoxW(
+                            window_.load(std::memory_order_relaxed),
+                            utf8ToWide(error).c_str(), L"DomDownTool",
+                            MB_OK | MB_ICONERROR);
+                    }
+                }
+                taskDeleteTargetId_.reset();
+                taskDeleteTargetTitle_.clear();
+                taskDeleteTargetPath_.clear();
+                UpdateTaskUi(runtime);
+                updateUi(runtime);
                 requestRedraw();
                 return;
             }
@@ -1163,6 +1283,52 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 exportTaskManager_.Cancel(*taskId);
                 UpdateTaskUi(runtime);
                 requestRedraw();
+                return;
+            }
+            if (const std::optional<std::string> taskId =
+                    taskIdFromOpenButton(event.id))
+            {
+                const std::vector<ExportTaskRecord> records = exportTaskManager_.GetRecords();
+                const auto record = std::find_if(
+                    records.begin(), records.end(),
+                    [&taskId](const ExportTaskRecord& item) { return item.id == *taskId; });
+                const std::optional<std::filesystem::path> outputPath =
+                    record == records.end() ? std::nullopt :
+                    existingTaskOutputPath(record->outputPath);
+                if (!outputPath.has_value() ||
+                    !openTaskOutputDirectory(
+                        window_.load(std::memory_order_relaxed), *outputPath))
+                {
+                    MessageBoxW(window_.load(std::memory_order_relaxed),
+                                L"导出目录不存在或无法打开。", L"DomDownTool",
+                                MB_OK | MB_ICONWARNING);
+                }
+                return;
+            }
+            if (const std::optional<std::string> taskId =
+                    taskIdFromRemoveButton(event.id))
+            {
+                exportTaskManager_.RemoveFinished(*taskId);
+                UpdateTaskUi(runtime);
+                requestRedraw();
+                return;
+            }
+            if (const std::optional<std::string> taskId =
+                    taskIdFromDeleteButton(event.id))
+            {
+                const std::vector<ExportTaskRecord> records = exportTaskManager_.GetRecords();
+                const auto record = std::find_if(
+                    records.begin(), records.end(),
+                    [&taskId](const ExportTaskRecord& item) { return item.id == *taskId; });
+                if (record != records.end())
+                {
+                    taskClearConfirmOpen_ = false;
+                    taskDeleteTargetId_ = *taskId;
+                    taskDeleteTargetTitle_ = record->title;
+                    taskDeleteTargetPath_ = record->outputPath;
+                    updateUi(runtime);
+                    requestRedraw();
+                }
                 return;
             }
             if (const std::optional<GisOverlayCategory> target =
@@ -1254,6 +1420,15 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
     runtime.setElementKeyDownCallback(
         [this, &runtime](const skui::ElementEvent& event)
         {
+            if (event.key == VK_ESCAPE &&
+                (taskClearConfirmOpen_ || taskDeleteTargetId_.has_value()))
+            {
+                taskClearConfirmOpen_ = false;
+                taskDeleteTargetId_.reset();
+                updateUi(runtime);
+                requestRedraw();
+                return true;
+            }
             if (event.id == "center-coordinate")
             {
                 if (event.key == VK_RETURN)
@@ -1433,6 +1608,16 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
                 requestRedraw();
             }
         }
+        return true;
+    }
+
+    if (message == WM_KEYDOWN && wParam == VK_ESCAPE &&
+        (taskClearConfirmOpen_ || taskDeleteTargetId_.has_value()))
+    {
+        taskClearConfirmOpen_ = false;
+        taskDeleteTargetId_.reset();
+        updateUi(runtime);
+        requestRedraw();
         return true;
     }
 
@@ -2032,6 +2217,13 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
     runtime.setVisibleById("preview-page", page_ == Page::Preview);
     runtime.setVisibleById("export-page", page_ == Page::Export);
     runtime.setVisibleById("task-page", page_ == Page::Tasks);
+    runtime.setVisibleById("task-clear-confirm",
+                           page_ == Page::Tasks && taskClearConfirmOpen_);
+    runtime.setVisibleById("task-delete-confirm",
+                           page_ == Page::Tasks && taskDeleteTargetId_.has_value());
+    runtime.setTextsById({
+        {"task-delete-title-value", taskDeleteTargetTitle_},
+        {"task-delete-path-value", taskDeleteTargetPath_}});
     if (page_ == Page::Export)
     {
         UpdateExportUi(runtime);
@@ -2090,7 +2282,6 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
         lastUiGisCategories_ = gisCategories;
     }
     runtime.setVisibleById("gis-overlay-panel", gisOverlayPopupOpen_);
-    runtime.setTextById("gis-overlay-arrow", gisOverlayPopupOpen_ ? "^" : "v");
     runtime.setAttributeById("gis-overlay-toggle", "aria-expanded",
                              gisOverlayPopupOpen_ ? "true" : "false");
 
@@ -2188,6 +2379,8 @@ void DomDownToolPreview::PreviewController::schedulePageChange(Page page,
 
 void DomDownToolPreview::PreviewController::OpenExportPage(skui::Runtime& runtime)
 {
+    taskClearConfirmOpen_ = false;
+    taskDeleteTargetId_.reset();
     InitializeExportDraft(runtime);
     page_ = Page::Export;
     updateUi(runtime);
@@ -2196,6 +2389,8 @@ void DomDownToolPreview::PreviewController::OpenExportPage(skui::Runtime& runtim
 
 void DomDownToolPreview::PreviewController::OpenTaskPage(skui::Runtime& runtime)
 {
+    taskClearConfirmOpen_ = false;
+    taskDeleteTargetId_.reset();
     page_ = Page::Tasks;
     UpdateTaskUi(runtime);
     updateUi(runtime);
@@ -2204,6 +2399,8 @@ void DomDownToolPreview::PreviewController::OpenTaskPage(skui::Runtime& runtime)
 
 void DomDownToolPreview::PreviewController::OpenPreviewPage(skui::Runtime& runtime)
 {
+    taskClearConfirmOpen_ = false;
+    taskDeleteTargetId_.reset();
     page_ = Page::Preview;
     updateUi(runtime);
     requestRedraw();
@@ -2233,11 +2430,17 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(skui::Runtime&
     exportGisLayersMerged_ = false;
     exportGisLayersSeparate_ = false;
 
+    const GisOverlayCategories previewGisCategories =
+        renderer_.GetGisOverlayCategories();
+    const bool allGisCategoriesSelected =
+        previewGisCategories.contains(GisOverlayCategory::All);
     exportGisGroups_.clear();
     uint64_t groupId = 1;
     for (const DownTool::AmapVectorRenderCategory category : kExportCategories)
     {
-        exportGisGroups_.push_back(ExportGisUiGroup{groupId++, {category}, false});
+        const bool selected = allGisCategoriesSelected ||
+            previewGisCategories.contains(previewCategory(category));
+        exportGisGroups_.push_back(ExportGisUiGroup{groupId++, {category}, selected});
     }
 
     runtime.setValueById("export-lon", exportLongitudeValue_);
@@ -2350,23 +2553,58 @@ void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
             fmt::format("{:.0f}%", record.progress * 100.) :
             fmt::format("{:.0f}% · {}/{}", record.progress * 100.,
                         record.completed, record.total);
+        const bool finished = record.state == ExportTaskState::Succeeded ||
+            record.state == ExportTaskState::Failed ||
+            record.state == ExportTaskState::Canceled;
         const std::string action = record.state == ExportTaskState::Queued ||
                 record.state == ExportTaskState::Running ?
             fmt::format("<button id=\"task-cancel-{}\" class=\"danger-command\" "
                         "type=\"button\" data-action=\"cancel-export-task\">"
                         "取消</button>", escapeHtml(record.id)) : "";
+        const std::string openOutput = fmt::format(
+            "<button id=\"task-open-{}\" class=\"task-open-output\" type=\"button\" "
+            "data-action=\"open-export-task-output\" title=\"打开导出路径\" "
+            "aria-label=\"打开导出路径\"><svg viewBox=\"0 0 24 24\" width=\"17\" "
+            "height=\"17\" pointer-events=\"none\" "
+            "aria-hidden=\"true\"><path d=\"M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 "
+            "0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" fill=\"none\" "
+            "stroke=\"#cbd4d0\" stroke-width=\"1.6\" stroke-linejoin=\"round\"/>"
+            "</svg></button>",
+            escapeHtml(record.id));
+        const std::string finishedActions = finished ? fmt::format(
+            "<button id=\"task-remove-{}\" class=\"task-icon-button "
+            "task-remove-record\" type=\"button\" data-action=\"remove-export-task\" "
+            "title=\"移除任务记录（保留导出文件）\" aria-label=\"移除任务记录\">"
+            "<svg viewBox=\"0 0 24 24\" width=\"17\" height=\"17\" "
+            "pointer-events=\"none\" aria-hidden=\"true\"><path "
+            "d=\"M6 6l12 12M18 6L6 18\" fill=\"none\" stroke=\"#cbd4d0\" "
+            "stroke-width=\"1.6\" stroke-linecap=\"round\"/></svg></button>"
+            "<button id=\"task-delete-{}\" class=\"task-icon-button "
+            "task-delete-output\" type=\"button\" "
+            "data-action=\"delete-export-task-output\" title=\"永久删除导出文件\" "
+            "aria-label=\"永久删除导出文件\"><svg viewBox=\"0 0 24 24\" width=\"17\" "
+            "height=\"17\" pointer-events=\"none\" "
+            "aria-hidden=\"true\"><path d=\"M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13"
+            "M10 11v5M14 11v5\" fill=\"none\" stroke=\"#ffaaa2\" "
+            "stroke-width=\"1.6\" stroke-linecap=\"round\" "
+            "stroke-linejoin=\"round\"/></svg></button>",
+            escapeHtml(record.id), escapeHtml(record.id)) : "";
+        const std::string errorHtml = record.error.empty() ? "" :
+            fmt::format("<div class=\"task-error\" title=\"{}\">失败原因：{}</div>",
+                        escapeHtml(record.error), escapeHtml(record.error));
         listHtml += fmt::format(
             "<article class=\"task-row\"><div><div class=\"task-title\">{}</div>"
             "<div class=\"task-detail\">{} · {}</div><div class=\"task-output\">{}</div>"
-            "<div class=\"task-error\">{}</div></div><div><div class=\"task-stage\">"
+            "{}</div><div><div class=\"task-stage\">"
             "<span>{}</span><span>{}</span></div><div class=\"progress-track\"><div "
             "class=\"progress-value\" style=\"width: {:.2f}%;\"></div></div></div>"
             "<div><span class=\"task-state {}\">{}</span><div class=\"task-time\">{}</div></div>"
             "<div class=\"task-row-actions\">{}</div></article>",
             escapeHtml(record.title), escapeHtml(record.detail), escapeHtml(record.createdAt),
-            escapeHtml(record.outputPath), escapeHtml(record.error), escapeHtml(record.stage),
+            escapeHtml(record.outputPath), errorHtml, escapeHtml(record.stage),
             progressText, record.progress * 100., stateValue,
-            ExportTaskStateName(record.state), escapeHtml(record.finishedAt), action);
+            ExportTaskStateName(record.state), escapeHtml(record.finishedAt),
+            openOutput + action + finishedActions);
     }
     if (records.empty())
     {
@@ -2390,7 +2628,16 @@ void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
         {"task-count-queued", std::to_string(queuedCount)},
         {"task-count-running", std::to_string(runningCount)},
         {"task-count-succeeded", std::to_string(succeededCount)},
-        {"task-count-failed", std::to_string(failedCount)}});
+        {"task-count-failed", std::to_string(failedCount)},
+        {"task-clear-count", std::to_string(succeededCount + failedCount)}});
+    if (succeededCount + failedCount == 0)
+    {
+        runtime.setAttributeById("tasks-clear-finished", "disabled", "");
+    }
+    else
+    {
+        runtime.removeAttributeById("tasks-clear-finished", "disabled");
+    }
 }
 
 void DomDownToolPreview::PreviewController::setExportGisGroupSelected(

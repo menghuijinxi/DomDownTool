@@ -86,6 +86,9 @@ struct ExportTaskRecord
 
 [[nodiscard]] std::string ExportTaskStateName(ExportTaskState state);
 
+[[nodiscard]] std::filesystem::path ExportTaskOutputRoot(
+    const ExportConfiguration& configuration, std::string_view taskId);
+
 class ExportTaskManager
 {
   public:
@@ -102,6 +105,10 @@ class ExportTaskManager
     [[nodiscard]] std::string Enqueue(const ExportConfiguration& configuration);
 
     bool Cancel(std::string_view taskId);
+
+    bool RemoveFinished(std::string_view taskId);
+
+    bool DeleteFinishedOutput(std::string_view taskId, std::string& error);
 
     void ClearFinished();
 

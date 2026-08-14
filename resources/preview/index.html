@@ -809,7 +809,7 @@
             background: #1F2224;
             color: #edf1ef;
             font: inherit;
-            text-align: right;
+            text-align: left;
         }
 
         .radius-control input:focus,
@@ -1253,7 +1253,7 @@
 
         .task-row {
             display: grid;
-            grid-template-columns: minmax(240px, 1.3fr) minmax(220px, 1fr) 150px 90px;
+            grid-template-columns: minmax(240px, 1.3fr) minmax(220px, 1fr) 150px 112px;
             gap: 18px;
             align-items: center;
             min-height: 96px;
@@ -1286,6 +1286,8 @@
         .task-error {
             margin-top: 4px;
             color: #ffaaa2;
+            overflow-wrap: anywhere;
+            white-space: normal;
         }
 
         .task-stage {
@@ -1339,10 +1341,118 @@
             min-width: 64px;
         }
 
+        .task-row-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        .task-open-output,
+        .task-icon-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            min-width: 32px;
+            height: 30px;
+            border: 1px solid #454b48;
+            border-radius: 4px;
+            color: #cbd4d0;
+        }
+
+        .task-open-output svg,
+        .task-icon-button svg {
+            width: 17px;
+            height: 17px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 1.6;
+            stroke-linejoin: round;
+            stroke-linecap: round;
+        }
+
+        .task-delete-output {
+            border-color: #855955;
+            color: #ffaaa2;
+        }
+
         .task-empty {
             padding: 80px 24px;
             color: #828d88;
             text-align: center;
+        }
+
+        .task-clear-confirm {
+            position: absolute;
+            z-index: 120;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.56);
+        }
+
+        .task-clear-dialog {
+            width: 420px;
+            padding: 24px;
+            border: 1px solid #4b5550;
+            border-radius: 5px;
+            background: #252a29;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+        }
+
+        .task-clear-dialog h2 {
+            margin: 0 0 12px;
+            color: #f3f6f5;
+            font-size: 16px;
+        }
+
+        .task-clear-dialog p {
+            margin: 0;
+            color: #b8c2bd;
+            line-height: 1.6;
+        }
+
+        .task-clear-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 22px;
+        }
+
+        .task-clear-actions button {
+            width: 92px;
+            min-width: 92px;
+            height: 32px;
+            border: 1px solid #454b48;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        #tasks-confirm-clear,
+        #task-delete-accept {
+            border-color: #855955;
+            color: #ffaaa2;
+        }
+
+        .task-delete-target {
+            margin-top: 12px;
+            padding: 10px 12px;
+            border-left: 2px solid #855955;
+            background: #202423;
+        }
+
+        .task-delete-target strong,
+        .task-delete-target span {
+            display: block;
+            overflow-wrap: anywhere;
+        }
+
+        .task-delete-target span {
+            margin-top: 5px;
+            color: #8f9a95;
+            font-size: 11px;
         }
 
         @media (max-width: 1100px) {
@@ -1416,8 +1526,11 @@
                         aria-haspopup="true" aria-expanded="false">
                     <span id="gis-overlay-summary">无</span>
                     <span id="gis-overlay-arrow">
-                        <svg viewBox="0 0 10 6" width="10" height="6" aria-hidden="true">
-                            <path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.4"
+                        <svg id="gis-overlay-arrow-icon" viewBox="0 0 10 6"
+                             width="10" height="6"
+                             pointer-events="none" aria-hidden="true">
+                            <path id="gis-overlay-arrow-path" d="M1 1l4 4 4-4"
+                                  fill="none" stroke="#b8c1bd" stroke-width="1.4"
                                   stroke-linecap="round" stroke-linejoin="round"/>
                         </svg>
                     </span>
@@ -1847,12 +1960,15 @@
                         <span>输出目录</span>
                         <div class="output-dir-row">
                             <input id="export-output" type="text"
-                                   placeholder="使用各下载器默认输出目录">
+                                   placeholder="未选择时导出到 cache/导出任务">
                             <button id="export-browse-output" type="button"
                                     data-action="browse-export-output"
                                     title="选择输出目录" aria-label="选择输出目录">
-                                <svg viewBox="0 0 24 24" aria-hidden="true">
-                                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                                <svg viewBox="0 0 24 24" width="18" height="18"
+                                     pointer-events="none" aria-hidden="true">
+                                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
+                                          fill="none" stroke="#c9cfcc" stroke-width="1.6"
+                                          stroke-linecap="round" stroke-linejoin="round"/>
                                 </svg>
                             </button>
                         </div>
@@ -1894,6 +2010,38 @@
             <div id="export-task-list" class="task-list">
                 <div id="export-task-list-items">
                     <div class="task-empty">暂无导出任务</div>
+                </div>
+            </div>
+        </div>
+        <div id="task-clear-confirm" class="task-clear-confirm" style="display: none">
+            <div id="task-clear-dialog" class="task-clear-dialog" role="dialog"
+                 aria-modal="true" aria-labelledby="task-clear-title"
+                 aria-describedby="task-clear-message">
+                <h2 id="task-clear-title">确认移除已结束任务？</h2>
+                <p id="task-clear-message">这将移除 <strong id="task-clear-count">0</strong> 条已完成、失败和已取消的任务记录，操作无法撤销。</p>
+                <div id="task-clear-actions" class="task-clear-actions">
+                    <button id="tasks-cancel-clear" type="button"
+                            data-action="cancel-clear-finished-export-tasks">取消</button>
+                    <button id="tasks-confirm-clear" class="danger-command" type="button"
+                            data-action="confirm-clear-finished-export-tasks">确认移除</button>
+                </div>
+            </div>
+        </div>
+        <div id="task-delete-confirm" class="task-clear-confirm" style="display: none">
+            <div id="task-delete-dialog" class="task-clear-dialog" role="dialog"
+                 aria-modal="true" aria-labelledby="task-delete-title"
+                 aria-describedby="task-delete-message">
+                <h2 id="task-delete-title">永久删除导出文件？</h2>
+                <p id="task-delete-message">该操作会删除此任务的全部导出文件和任务记录，无法撤销。</p>
+                <div id="task-delete-target" class="task-delete-target">
+                    <strong id="task-delete-title-value"></strong>
+                    <span id="task-delete-path-value"></span>
+                </div>
+                <div id="task-delete-actions" class="task-clear-actions">
+                    <button id="task-delete-cancel" type="button"
+                            data-action="cancel-delete-export-task">取消</button>
+                    <button id="task-delete-accept" class="danger-command" type="button"
+                            data-action="confirm-delete-export-task">永久删除</button>
                 </div>
             </div>
         </div>

@@ -29,3 +29,24 @@
 - 解决方案：缓存扫描 worker 内部捕获异常，把对应瓦片标记为无效并集中打印首个异常；并行修复回调内部捕获异常，避免异常逃出 OpenCV 回调；腾讯占位图检测改为文件大小 + MD5，不在缓存扫描阶段批量解码图片。
 - 验证方式：Debug 和 Release 构建通过。
 - 快速检查清单：遇到“某个并发阶段结束就崩”的问题，先检查线程函数、`std::thread` 创建过程、OpenCV `parallel_for_` 回调里是否有异常边界；文件系统查询优先使用带 `std::error_code` 的重载。
+
+## Windows GUI 任务被标准输出异常误判为失败
+
+- 现象：预览程序中的导出任务随机失败，转换记录只显示
+  `cannot write to file: bad file descriptor`；失败前通常已经生成部分瓦片或大图。
+- 影响范围：由 Windows GUI 子系统启动、没有有效标准输出句柄，但调用了
+  `fmt::print` 的下载、缓存检测和后处理流程。命令行程序不受影响。
+- 根因：`DomDownToolPreview` 使用 `WIN32` 子系统，不保证 `stdout` 和 `stderr`
+  可写。导出核心的进度日志调用 `fmt::print` 时，fmt 12 会对写入失败抛出
+  `fmt::system_error`，文本即为 `cannot write to file`。任务管理器捕获该异常后，
+  将原本可继续执行的导出标记为失败。
+- 排查路径：先查看任务转换记录中的精确错误，再搜索导出热路径的输出调用；本地
+  fmt `format-inl.h` 的写入失败分支与记录文本完全一致。确认项目没有主动关闭标准
+  输出后，即可定位为 GUI 子系统缺少输出句柄。
+- 解决方案：预览程序进入 `wWinMain` 后立即将 `stdout` 和 `stderr` 重定向到 Windows
+  空设备 `NUL`，再启动任何后台任务。CLI 保留原有控制台输出行为。
+- 验证方式：`GuiStandardStreamsTest` 以 Windows GUI 子系统运行，调用同一个初始化
+  函数后分别执行 stdout 和 stderr 的 `fmt::print`，要求无异常退出。
+- 快速检查清单：GUI 程序出现 `bad file descriptor` 时，不要先假设产物文件写坏；
+  先核对异常库的完整文本、可执行文件子系统、标准流是否有效，以及日志函数是否会
+  抛异常。后台任务的诊断输出不应成为业务失败条件。

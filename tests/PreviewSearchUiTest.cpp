@@ -66,11 +66,20 @@ bool runTest()
             return false;
         }
     }
+    if (!postprocess_test::Require(
+            postprocess_test::ContainsText(
+                documentPath, "fill=\"none\" stroke=\"#c9cfcc\" stroke-width=\"1.6\""),
+            "输出目录按钮的 SVG 没有显式设置透明填充和浅色描边"))
+    {
+        return false;
+    }
 
     if (!postprocess_test::Require(
             runtime.setVisibleById("preview-page", true) &&
                 runtime.setVisibleById("export-page", false) &&
-                runtime.setVisibleById("task-page", false),
+                runtime.setVisibleById("task-page", false) &&
+                runtime.setVisibleById("task-clear-confirm", false) &&
+                runtime.setVisibleById("task-delete-confirm", false),
             "预览、导出配置或导出任务页面结构缺失") ||
         !postprocess_test::Require(
             runtime.setValueById("export-radius", "2000") &&
@@ -113,10 +122,33 @@ bool runTest()
         return false;
     }
 
+    const std::filesystem::path controllerPath =
+        sourceRoot / "src" / "preview" / "PreviewController.cpp";
+    if (!postprocess_test::Require(
+            postprocess_test::ContainsText(documentPath, "id=\"gis-overlay-arrow-icon\"") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "id=\"gis-overlay-arrow-path\"") &&
+                !postprocess_test::ContainsText(
+                    controllerPath, "setTextById(\"gis-overlay-arrow\""),
+            "GIS 下拉箭头没有保持单一静态 SVG"))
+    {
+        return false;
+    }
+
     const std::vector<std::string> exportHeaderChildren =
         runtime.childElementIdsById("export-page-header");
     const std::vector<std::string> taskHeaderChildren =
         runtime.childElementIdsById("task-page-header");
+    const std::vector<std::string> taskClearConfirmChildren =
+        runtime.childElementIdsById("task-clear-confirm");
+    const std::vector<std::string> taskClearDialogChildren =
+        runtime.childElementIdsById("task-clear-dialog");
+    const std::vector<std::string> taskDeleteConfirmChildren =
+        runtime.childElementIdsById("task-delete-confirm");
+    const std::vector<std::string> taskDeleteDialogChildren =
+        runtime.childElementIdsById("task-delete-dialog");
+    const std::vector<std::string> taskDeleteTargetChildren =
+        runtime.childElementIdsById("task-delete-target");
     const auto exportTasksButton =
         std::ranges::find(exportHeaderChildren, "export-open-tasks");
     const auto exportBackButton =
@@ -136,7 +168,27 @@ bool runTest()
                 taskNewButton == std::next(taskClearButton) &&
                 taskNewButton != taskHeaderChildren.end() &&
                 taskBackButton == std::next(taskNewButton),
-            "导出任务页的返回按钮没有紧跟在新建导出按钮后"))
+            "导出任务页的返回按钮没有紧跟在新建导出按钮后") ||
+        !postprocess_test::Require(
+            taskClearConfirmChildren == std::vector<std::string>{"task-clear-dialog"} &&
+                taskClearDialogChildren ==
+                    std::vector<std::string>{"task-clear-title", "task-clear-message",
+                                             "task-clear-actions"} &&
+                runtime.setVisibleById("task-clear-confirm", true) &&
+                runtime.setVisibleById("task-clear-confirm", false),
+            "移除已结束任务缺少可取消的确认界面") ||
+        !postprocess_test::Require(
+            taskDeleteConfirmChildren ==
+                    std::vector<std::string>{"task-delete-dialog"} &&
+                taskDeleteDialogChildren ==
+                    std::vector<std::string>{"task-delete-title", "task-delete-message",
+                                             "task-delete-target", "task-delete-actions"} &&
+                taskDeleteTargetChildren ==
+                    std::vector<std::string>{"task-delete-title-value",
+                                             "task-delete-path-value"} &&
+                runtime.setVisibleById("task-delete-confirm", true) &&
+                runtime.setVisibleById("task-delete-confirm", false),
+            "永久删除导出文件缺少独立确认界面"))
     {
         return false;
     }
@@ -659,7 +711,11 @@ bool runTest()
                     "<span>48% · 24/50</span></div><div class=\"progress-track\">"
                     "<div class=\"progress-value\" style=\"width:48%\"></div></div>"
                     "</div><div><span class=\"task-state running\">导出中</span>"
-                    "</div><div class=\"task-row-actions\"><button class=\"danger-command\">"
+                    "</div><div class=\"task-row-actions\">"
+                    "<button id=\"task-open-running\" class=\"task-open-output\">"
+                    "<svg viewBox=\"0 0 24 24\"><path d=\"M3 7h18v12H3z\" "
+                    "fill=\"none\" stroke=\"#cbd4d0\"/></svg></button>"
+                    "<button class=\"danger-command\">"
                     "取消</button></div></article>"
                     "<article class=\"task-row\"><div><div class=\"task-title\">"
                     "z14 5000 米 高德卫星</div><div class=\"task-detail\">"
@@ -669,7 +725,17 @@ bool runTest()
                     "<div class=\"progress-track\"><div class=\"progress-value\" "
                     "style=\"width:100%\"></div></div></div><div>"
                     "<span class=\"task-state succeeded\">已完成</span></div>"
-                    "<div class=\"task-row-actions\"></div></article></div>"),
+                    "<div class=\"task-row-actions\"><button id=\"task-open-done\" "
+                    "class=\"task-open-output\"><svg viewBox=\"0 0 24 24\">"
+                    "<path d=\"M3 7h18v12H3z\" fill=\"none\" "
+                    "stroke=\"#cbd4d0\"/></svg></button>"
+                    "<button id=\"task-remove-done\" class=\"task-remove-record\">"
+                    "<svg viewBox=\"0 0 24 24\"><path d=\"M6 6l12 12M18 6L6 18\" "
+                    "fill=\"none\" stroke=\"#cbd4d0\"/></svg></button>"
+                    "<button id=\"task-delete-done\" class=\"task-delete-output\">"
+                    "<svg viewBox=\"0 0 24 24\"><path d=\"M4 7h16M7 7l1 13h8l1-13\" "
+                    "fill=\"none\" stroke=\"#ffaaa2\"/></svg></button>"
+                    "</div></article></div>"),
             "无法显示或填充导出任务页面"))
     {
         return false;

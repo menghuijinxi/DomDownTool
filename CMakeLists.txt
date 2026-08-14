@@ -208,6 +208,7 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/Dx12GisRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportImageComposer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportTaskManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GuiStandardStreams.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisOverlayRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisMeshBuilder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/MapRenderer.cpp
@@ -390,6 +391,20 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     target_compile_options(ExportTaskManagerTest PRIVATE /EHsc /permissive-)
   endif()
   add_test(NAME ExportTaskManagerTest COMMAND ExportTaskManagerTest)
+
+  add_executable(GuiStandardStreamsTest WIN32
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuiStandardStreamsTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GuiStandardStreams.cpp)
+  target_link_libraries(GuiStandardStreamsTest PRIVATE fmt::fmt-header-only)
+  target_include_directories(GuiStandardStreamsTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_compile_definitions(GuiStandardStreamsTest PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+  set_property(TARGET GuiStandardStreamsTest PROPERTY CXX_STANDARD 23)
+  set_property(TARGET GuiStandardStreamsTest PROPERTY CXX_STANDARD_REQUIRED ON)
+  if(MSVC)
+    target_compile_options(GuiStandardStreamsTest PRIVATE /EHsc /permissive-)
+  endif()
+  add_test(NAME GuiStandardStreamsTest COMMAND GuiStandardStreamsTest)
 endif()
 add_domdown_test(AmapVectorPngTileTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorPngTileTest.cpp)
