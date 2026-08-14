@@ -443,6 +443,19 @@ namespace
 		return ImageType::Unknown;
 	}
 
+    ImageType DetectImageType(const std::filesystem::path& path)
+    {
+        std::ifstream fileStream(path, std::ios::binary);
+        if (!fileStream.is_open())
+        {
+            return ImageType::Unknown;
+        }
+
+        unsigned char header[8];
+        fileStream.read(reinterpret_cast<char*>(header), sizeof(header));
+        return DetectImageType(header, fileStream.gcount());
+    }
+
 	size_t WriteTileData(void* ptr, size_t size, size_t nmemb, void* userdata)
 	{
 		DownTool::CurlMultiHandle* context = static_cast<DownTool::CurlMultiHandle*>(userdata);
@@ -477,18 +490,10 @@ namespace
 		return totalSize;
 	}
 
-	bool IsValidImageFile(const std::filesystem::path& path)
-	{
-		std::ifstream fileStream(path, std::ios::binary);
-		if (!fileStream.is_open())
-		{
-			return false;
-		}
-
-		unsigned char header[8];
-		fileStream.read(reinterpret_cast<char*>(header), sizeof(header));
-		return DetectImageType(header, fileStream.gcount()) != ImageType::Unknown;
-	}
+    bool IsValidImageFile(const std::filesystem::path& path)
+    {
+        return DetectImageType(path) != ImageType::Unknown;
+    }
 
 	cv::Mat ReadImage(const std::filesystem::path& path)
 	{
@@ -1583,58 +1588,89 @@ namespace
 			reinterpret_cast<const char*>(buffer.get()), static_cast<size_t>(bufferSize));
 	}
 
-	bool WriteImage(const std::filesystem::path& path, const cv::Mat& image)
-	{
-		if (image.empty())
-		{
-			return false;
-		}
+    bool WriteEncodedImage(
+        const std::filesystem::path& path,
+        const cv::Mat& image,
+        std::string extension)
+    {
+        if (image.empty())
+        {
+            return false;
+        }
 
-		std::error_code createDirectoryError;
-		std::filesystem::create_directories(path.parent_path(), createDirectoryError);
-		if (createDirectoryError)
-		{
-			return false;
-		}
-		std::string extension = path.extension().string();
-		if (extension.empty())
-		{
-			extension = ".png";
-		}
-		std::transform(
-			extension.begin(),
-			extension.end(),
-			extension.begin(),
-			[](unsigned char character)
-			{
-				return static_cast<char>(std::tolower(character));
-			});
+        std::error_code createDirectoryError;
+        std::filesystem::create_directories(path.parent_path(), createDirectoryError);
+        if (createDirectoryError)
+        {
+            return false;
+        }
+        if (extension.empty())
+        {
+            extension = ".png";
+        }
+        std::transform(
+            extension.begin(),
+            extension.end(),
+            extension.begin(),
+            [](unsigned char character)
+            {
+                return static_cast<char>(std::tolower(character));
+            });
 
-		cv::Mat convertedImage;
-		const cv::Mat* imageToEncode = &image;
-		if ((extension == ".jpg" || extension == ".jpeg") && image.channels() == 4)
-		{
-			cv::cvtColor(image, convertedImage, cv::COLOR_BGRA2BGR);
-			imageToEncode = &convertedImage;
-		}
+        cv::Mat convertedImage;
+        const cv::Mat* imageToEncode = &image;
+        if ((extension == ".jpg" || extension == ".jpeg") && image.channels() == 4)
+        {
+            cv::cvtColor(image, convertedImage, cv::COLOR_BGRA2BGR);
+            imageToEncode = &convertedImage;
+        }
 
-		std::vector<unsigned char> data;
-		if (!cv::imencode(extension, *imageToEncode, data))
-		{
-			return false;
-		}
+        std::vector<unsigned char> data;
+        if (!cv::imencode(extension, *imageToEncode, data))
+        {
+            return false;
+        }
 
-		std::ofstream fileStream(path, std::ios::binary);
-		if (!fileStream.is_open())
-		{
-			return false;
-		}
+        std::ofstream fileStream(path, std::ios::binary);
+        if (!fileStream.is_open())
+        {
+            return false;
+        }
 
-		fileStream.write(reinterpret_cast<const char*>(data.data()), data.size());
-		const bool writeSuccess = fileStream.good();
-		fileStream.close();
-		return writeSuccess && !fileStream.fail();
-	}
+        fileStream.write(reinterpret_cast<const char*>(data.data()), data.size());
+        const bool writeSuccess = fileStream.good();
+        fileStream.close();
+        return writeSuccess && !fileStream.fail();
+    }
+
+    bool WriteImage(const std::filesystem::path& path, const cv::Mat& image)
+    {
+        return WriteEncodedImage(path, image, path.extension().string());
+    }
+
+    bool HasTransparentPixels(const cv::Mat& image)
+    {
+        if (image.channels() != 4)
+        {
+            return false;
+        }
+        if (image.depth() != CV_8U)
+        {
+            return true;
+        }
+
+        cv::Mat alphaChannel;
+        cv::extractChannel(image, alphaChannel, 3);
+        double minimumAlpha = 255.;
+        cv::minMaxLoc(alphaChannel, &minimumAlpha, nullptr);
+        return minimumAlpha < 255.;
+    }
+
+    bool WriteXyzTileImage(const std::filesystem::path& path, const cv::Mat& image)
+    {
+        const std::string extension = HasTransparentPixels(image) ? ".png" : ".jpg";
+        return WriteEncodedImage(path, image, extension);
+    }
 
 	void ReleaseCurlContext(CURL* easy, DownTool::CurlMultiHandle& context)
 	{
@@ -3068,7 +3104,7 @@ void DownTool::DownToolBase::GeneratePostProcessLowerZoomTiles(
 					0.,
 					0.,
 					cv::INTER_AREA);
-				if (WriteImage(GetPostProcessTileFilePath(parentTile), targetImage))
+                if (WriteXyzTileImage(GetPostProcessTileFilePath(parentTile), targetImage))
 				{
 					writtenCount.fetch_add(1, std::memory_order_relaxed);
 				}
@@ -3806,22 +3842,35 @@ bool DownTool::DownToolBase::WritePostProcessTileFromSourceZoom(
 	const std::filesystem::path& outputPath,
 	uint32_t sourceZoom) const
 {
-	if (CanCopyPostProcessTileDirectly() && sourceZoom == targetTile.Zoom)
-	{
-		const std::filesystem::path sourcePath =
-			GetPostProcessSourceTileFilePath(targetTile);
-		if (!IsValidImageFile(sourcePath) || IsUnavailableTileFile(sourcePath, targetTile))
-		{
-			return false;
-		}
+    if (CanCopyPostProcessTileDirectly() && sourceZoom == targetTile.Zoom)
+    {
+        const std::filesystem::path sourcePath =
+            GetPostProcessSourceTileFilePath(targetTile);
+        const ImageType sourceImageType = DetectImageType(sourcePath);
+        if (sourceImageType == ImageType::Unknown ||
+            IsUnavailableTileFile(sourcePath, targetTile))
+        {
+            return false;
+        }
 
-		return CopyFileReplacing(sourcePath, outputPath);
-	}
+        if (sourceImageType == ImageType::Jpeg)
+        {
+            return CopyFileReplacing(sourcePath, outputPath);
+        }
 
-	const int tileSize = static_cast<int>(TileSize);
-	return WriteImage(
-		outputPath,
-		ReadPostProcessTileRegion(targetTile, sourceZoom, tileSize, tileSize));
+        const cv::Mat sourceImage = ReadImageUnchanged(sourcePath);
+        if (HasTransparentPixels(sourceImage))
+        {
+            return CopyFileReplacing(sourcePath, outputPath);
+        }
+
+        return WriteXyzTileImage(outputPath, sourceImage);
+    }
+
+    const int tileSize = static_cast<int>(TileSize);
+    return WriteXyzTileImage(
+        outputPath,
+        ReadPostProcessTileRegion(targetTile, sourceZoom, tileSize, tileSize));
 }
 
 bool DownTool::DownToolBase::WritePostProcessMaxZoomTile(

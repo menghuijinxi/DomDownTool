@@ -103,6 +103,43 @@ namespace postprocess_test
             "empty file: " + PathToUtf8String(path));
     }
 
+    inline bool RequireFileSignature(
+        const std::filesystem::path& path,
+        const std::vector<unsigned char>& expectedSignature,
+        const std::string& expectedFormat)
+    {
+        std::ifstream fileStream(path, std::ios::binary);
+        if (!fileStream.is_open())
+        {
+            return Require(false, "cannot read file: " + PathToUtf8String(path));
+        }
+
+        std::vector<unsigned char> actualSignature(expectedSignature.size());
+        fileStream.read(
+            reinterpret_cast<char*>(actualSignature.data()),
+            static_cast<std::streamsize>(actualSignature.size()));
+        return Require(
+            fileStream.gcount() == static_cast<std::streamsize>(actualSignature.size()) &&
+                actualSignature == expectedSignature,
+            fmt::format(
+                "unexpected image encoding: {} is not {}",
+                PathToUtf8String(path),
+                expectedFormat));
+    }
+
+    inline bool RequireJpegEncoding(const std::filesystem::path& path)
+    {
+        return RequireFileSignature(path, { 0xff, 0xd8, 0xff }, "JPEG");
+    }
+
+    inline bool RequirePngEncoding(const std::filesystem::path& path)
+    {
+        return RequireFileSignature(
+            path,
+            { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a },
+            "PNG");
+    }
+
     inline bool RequireImageSize(
         const std::filesystem::path& path,
         int expectedWidth,
