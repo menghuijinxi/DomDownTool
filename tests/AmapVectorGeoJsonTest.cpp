@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "cpl_json.h"
+#include "nlohmann/json.hpp"
 #include "zlib.h"
 
 #include "amap_vector_tile.pb.h"
@@ -20,6 +20,8 @@
 
 namespace
 {
+    using Json = nlohmann::json;
+
     bool Require(bool condition, const std::string& message)
     {
         if (!condition)
@@ -358,16 +360,19 @@ namespace
         const std::string geoJson(
             (std::istreambuf_iterator<char>(inputFile)),
             std::istreambuf_iterator<char>());
-        CPLJSONDocument document;
-        if (!Require(document.LoadMemory(geoJson), "写出的 GeoJSON 不是有效 JSON"))
+        const Json root = Json::parse(geoJson, nullptr, false);
+        if (!Require(!root.is_discarded() && root.is_object(),
+                     "写出的 GeoJSON 不是有效 JSON"))
         {
             return false;
         }
-        const CPLJSONObject root = document.GetRoot();
-        const CPLJSONArray features = root.GetArray("features");
-        if (!Require(root.GetString("type") == "FeatureCollection", "输出不是 FeatureCollection") ||
-            !Require(root.GetString("coordinateSystem") == "GCJ-02", "输出坐标系标记错误") ||
-            !Require(features.Size() == 3, "输出 GeoJSON 要素数量错误"))
+        const auto features = root.find("features");
+        if (!Require(root.value("type", "") == "FeatureCollection",
+                     "输出不是 FeatureCollection") ||
+            !Require(root.value("coordinateSystem", "") == "GCJ-02",
+                     "输出坐标系标记错误") ||
+            !Require(features != root.end() && features->is_array() && features->size() == 3,
+                     "输出 GeoJSON 要素数量错误"))
         {
             return false;
         }

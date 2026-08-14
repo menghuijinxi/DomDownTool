@@ -24,18 +24,43 @@
 #include "TencentDown.h"
 #include "TianDiTuDown.h"
 
-#include "cpl_json.h"
 #include "fmt/format.h"
+#include "nlohmann/json.hpp"
 
 #include "preview/ExportImageComposer.h"
 
 namespace
 {
+using Json = nlohmann::json;
 using DomDownToolPreview::ExportConfiguration;
 using DomDownToolPreview::ExportTaskRecord;
 using DomDownToolPreview::ExportTaskState;
 using DomDownToolPreview::GisExportMode;
 using DomDownToolPreview::SatelliteExportSource;
+
+std::string GetJsonString(const Json& object, const char* fieldName)
+{
+    if (!object.is_object())
+    {
+        return {};
+    }
+    const auto iterator = object.find(fieldName);
+    return iterator != object.end() && iterator->is_string()
+        ? iterator->get<std::string>()
+        : std::string{};
+}
+
+double GetJsonDouble(const Json& object, const char* fieldName)
+{
+    if (!object.is_object())
+    {
+        return 0.;
+    }
+    const auto iterator = object.find(fieldName);
+    return iterator != object.end() && iterator->is_number()
+        ? iterator->get<double>()
+        : 0.;
+}
 
 std::string PathToUtf8(const std::filesystem::path& path)
 {
@@ -1317,30 +1342,35 @@ void DomDownToolPreview::ExportTaskManager::LoadRecords()
     const std::string json((std::istreambuf_iterator<char>(input)),
                            std::istreambuf_iterator<char>());
     input.close();
-    CPLJSONDocument document;
-    if (!document.LoadMemory(json))
+    const Json root = Json::parse(json, nullptr, false);
+    if (root.is_discarded() || !root.is_object())
     {
         return;
     }
 
-    const CPLJSONArray tasks = document.GetRoot().GetArray("tasks");
-    bool recordsChanged = false;
-    for (int index = 0; index < tasks.Size(); ++index)
+    const auto tasks = root.find("tasks");
+    if (tasks == root.end() || !tasks->is_array())
     {
-        const CPLJSONObject item = tasks[index];
+        return;
+    }
+    bool recordsChanged = false;
+    for (const Json& item : *tasks)
+    {
         ExportTaskRecord record;
-        record.id = item.GetString("id");
-        record.title = item.GetString("title");
-        record.detail = item.GetString("detail");
-        record.outputPath = item.GetString("outputPath");
-        record.createdAt = item.GetString("createdAt");
-        record.finishedAt = item.GetString("finishedAt");
-        record.state = ParseTaskState(item.GetString("state"));
-        record.stage = item.GetString("stage");
-        record.progress = item.GetDouble("progress");
-        record.completed = static_cast<uint64_t>(std::max(0., item.GetDouble("completed")));
-        record.total = static_cast<uint64_t>(std::max(0., item.GetDouble("total")));
-        record.error = item.GetString("error");
+        record.id = GetJsonString(item, "id");
+        record.title = GetJsonString(item, "title");
+        record.detail = GetJsonString(item, "detail");
+        record.outputPath = GetJsonString(item, "outputPath");
+        record.createdAt = GetJsonString(item, "createdAt");
+        record.finishedAt = GetJsonString(item, "finishedAt");
+        record.state = ParseTaskState(GetJsonString(item, "state"));
+        record.stage = GetJsonString(item, "stage");
+        record.progress = GetJsonDouble(item, "progress");
+        record.completed = static_cast<uint64_t>(
+            std::max(0., GetJsonDouble(item, "completed")));
+        record.total = static_cast<uint64_t>(
+            std::max(0., GetJsonDouble(item, "total")));
+        record.error = GetJsonString(item, "error");
         if (record.id.empty())
         {
             continue;
@@ -1378,27 +1408,24 @@ void DomDownToolPreview::ExportTaskManager::SaveRecords(bool force)
         records = records_;
     }
 
-    CPLJSONArray tasks;
+    Json tasks = Json::array();
     for (const ExportTaskRecord& record : records)
     {
-        CPLJSONObject item;
-        item.Add("id", record.id);
-        item.Add("title", record.title);
-        item.Add("detail", record.detail);
-        item.Add("outputPath", record.outputPath);
-        item.Add("createdAt", record.createdAt);
-        item.Add("finishedAt", record.finishedAt);
-        item.Add("state", TaskStateValue(record.state));
-        item.Add("stage", record.stage);
-        item.Add("progress", record.progress);
-        item.Add("completed", static_cast<double>(record.completed));
-        item.Add("total", static_cast<double>(record.total));
-        item.Add("error", record.error);
-        tasks.Add(item);
+        tasks.push_back({
+            {"id", record.id},
+            {"title", record.title},
+            {"detail", record.detail},
+            {"outputPath", record.outputPath},
+            {"createdAt", record.createdAt},
+            {"finishedAt", record.finishedAt},
+            {"state", TaskStateValue(record.state)},
+            {"stage", record.stage},
+            {"progress", record.progress},
+            {"completed", static_cast<double>(record.completed)},
+            {"total", static_cast<double>(record.total)},
+            {"error", record.error}});
     }
-    CPLJSONObject root;
-    root.Add("version", 1);
-    root.Add("tasks", tasks);
+    const Json root = {{"version", 1}, {"tasks", std::move(tasks)}};
 
     std::error_code directoryError;
     if (!recordsPath_.parent_path().empty())
@@ -1412,7 +1439,7 @@ void DomDownToolPreview::ExportTaskManager::SaveRecords(bool force)
     std::ofstream output(recordsPath_, std::ios::binary | std::ios::trunc);
     if (output.is_open())
     {
-        output << root.Format(CPLJSONObject::PrettyFormat::Pretty) << '\n';
+        output << root.dump(2) << '\n';
     }
 }
 

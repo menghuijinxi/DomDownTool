@@ -14,13 +14,15 @@
 #include <utility>
 #include <vector>
 
-#include "cpl_json.h"
 #include "curl/curl.h"
+#include "nlohmann/json.hpp"
 
 #include "AmapVectorDecoder.h"
 
 namespace
 {
+    using Json = nlohmann::json;
+
     constexpr const char* kAmapTileAuthorizationEndpoint =
         "https://jsapi.amap.com/web_map/get_tile";
     constexpr const char* kAmapWebOrigin = "https://www.amap.com";
@@ -279,28 +281,40 @@ namespace
             return false;
         }
 
-        CPLJSONDocument document;
-        if (!document.LoadMemory(response.body))
+        const Json root = Json::parse(response.body, nullptr, false);
+        if (root.is_discarded() || !root.is_object())
         {
             error = "高德矢量授权服务返回了无法解析的数据。";
             return false;
         }
-        const CPLJSONObject root = document.GetRoot();
-        if (root.GetString("status") != "1")
+
+        const auto readString = [&root](const char* fieldName)
         {
-            const std::string information = root.GetString("info", root.GetString("infocode"));
+            const auto iterator = root.find(fieldName);
+            return iterator != root.end() && iterator->is_string()
+                ? iterator->get<std::string>()
+                : std::string{};
+        };
+        if (readString("status") != "1")
+        {
+            std::string information = readString("info");
+            if (information.empty())
+            {
+                information = readString("infocode");
+            }
             error = information.empty() ?
                 "高德矢量授权请求被拒绝。" : "高德矢量授权请求被拒绝：" + information;
             return false;
         }
 
-        const CPLJSONArray urls = root.GetArray("tile_urls");
-        if (urls.Size() == 0 || urls[0].GetType() != CPLJSONObject::Type::String)
+        const auto urls = root.find("tile_urls");
+        if (urls == root.end() || !urls->is_array() || urls->empty() ||
+            !urls->front().is_string())
         {
             error = "高德矢量授权响应没有包含瓦片 URL。";
             return false;
         }
-        signedUrl = urls[0].ToString();
+        signedUrl = urls->front().get<std::string>();
         if (signedUrl.empty())
         {
             error = "高德矢量授权响应包含空瓦片 URL。";

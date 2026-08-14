@@ -12,12 +12,14 @@
 #include <string>
 #include <utility>
 
-#include "cpl_json.h"
 #include "curl/curl.h"
 #include "fmt/format.h"
+#include "nlohmann/json.hpp"
 
 namespace
 {
+    using Json = nlohmann::json;
+
 	constexpr double MinLatitude = -90.;
 	constexpr double MaxLatitude = 90.;
 	constexpr double MinLongitude = -180.;
@@ -25,6 +27,38 @@ namespace
 	constexpr const char* TianDiTuMultidateToken = "b88bfb160c81dab8d9d20aaa74846360";
 	constexpr const char* TianDiTuMultidateHost = "https://image.tianditu.gov.cn";
 	constexpr const char* TianDiTuMapHost = "https://map.tianditu.gov.cn";
+
+    std::string GetJsonString(const Json& object, const char* fieldName)
+    {
+        if (!object.is_object())
+        {
+            return {};
+        }
+        const auto iterator = object.find(fieldName);
+        return iterator != object.end() && iterator->is_string()
+            ? iterator->get<std::string>()
+            : std::string{};
+    }
+
+    int GetJsonInteger(const Json& object, const char* fieldName, int defaultValue)
+    {
+        if (!object.is_object())
+        {
+            return defaultValue;
+        }
+        const auto iterator = object.find(fieldName);
+        if (iterator == object.end() || !iterator->is_number())
+        {
+            return defaultValue;
+        }
+        const double value = iterator->get<double>();
+        if (!std::isfinite(value) || value < std::numeric_limits<int>::lowest() ||
+            value > std::numeric_limits<int>::max())
+        {
+            return defaultValue;
+        }
+        return static_cast<int>(value);
+    }
 
 	struct HttpResponse
 	{
@@ -690,44 +724,47 @@ bool DownTool::TianDiTuMultidateDown::ParseTimelineRecords(
 {
 	records.clear();
 
-	CPLJSONDocument document;
-	if (!document.LoadMemory(responseBody))
+    const Json root = Json::parse(responseBody, nullptr, false);
+    if (root.is_discarded())
 	{
 		return false;
 	}
 
-	const CPLJSONObject root = document.GetRoot();
-	if (root.GetType() == CPLJSONObject::Type::Object &&
-		root.GetInteger("status", 200) != 200)
+    if (root.is_object() && GetJsonInteger(root, "status", 200) != 200)
 	{
 		return false;
 	}
 
-	CPLJSONArray dataArray;
-	if (root.GetType() == CPLJSONObject::Type::Array)
-	{
-		dataArray = root.ToArray();
-	}
-	else
-	{
-		dataArray = root.GetArray("data");
-	}
+    const Json* dataArray = nullptr;
+    if (root.is_array())
+    {
+        dataArray = &root;
+    }
+    else if (root.is_object())
+    {
+        const auto data = root.find("data");
+        if (data != root.end() && data->is_array())
+        {
+            dataArray = &*data;
+        }
+    }
 
-	if (!dataArray.IsValid())
-	{
-		return false;
-	}
+    if (dataArray == nullptr)
+    {
+        return false;
+    }
 
-	for (int index = 0; index < dataArray.Size(); index++)
-	{
-		const CPLJSONObject item = dataArray[index];
-		TimelineInfo record;
-		record.time = item.GetString("time");
-		record.year = ExtractYear(record.time);
-		record.key = item.GetString("key");
-		record.projection = ToLowerAscii(item.GetString("projection"));
-		record.minZoom = static_cast<uint32_t>(std::max(0, item.GetInteger("minlevel", 0)));
-		record.maxZoom = static_cast<uint32_t>(std::max(0, item.GetInteger("maxlevel", 0)));
+    for (const Json& item : *dataArray)
+    {
+        TimelineInfo record;
+        record.time = GetJsonString(item, "time");
+        record.year = ExtractYear(record.time);
+        record.key = GetJsonString(item, "key");
+        record.projection = ToLowerAscii(GetJsonString(item, "projection"));
+        record.minZoom = static_cast<uint32_t>(
+            std::max(0, GetJsonInteger(item, "minlevel", 0)));
+        record.maxZoom = static_cast<uint32_t>(
+            std::max(0, GetJsonInteger(item, "maxlevel", 0)));
 		if (!record.year.empty() && !record.key.empty())
 		{
 			records.push_back(record);
@@ -746,16 +783,15 @@ bool DownTool::TianDiTuMultidateDown::TryResolveRegionFromCenter()
 		return false;
 	}
 
-	CPLJSONDocument document;
-	if (!document.LoadMemory(response.body))
-	{
-		return false;
-	}
+    const Json root = Json::parse(response.body, nullptr, false);
+    if (root.is_discarded() || !root.is_object())
+    {
+        return false;
+    }
 
-	const CPLJSONObject root = document.GetRoot();
-	const std::string gbCode = root.GetString("parentGbcode");
-	const std::string name = root.GetString("name");
-	RegionGbCode = gbCode.empty() ? root.GetString("gbcode") : gbCode;
+    const std::string gbCode = GetJsonString(root, "parentGbcode");
+    const std::string name = GetJsonString(root, "name");
+    RegionGbCode = gbCode.empty() ? GetJsonString(root, "gbcode") : gbCode;
 	RegionName = name;
 	return !RegionGbCode.empty();
 }

@@ -10,13 +10,22 @@
 #include <thread>
 #include <vector>
 
-#include "cpl_json.h"
+#include "nlohmann/json.hpp"
 
 #include "preview/ExportTaskManager.h"
 #include "preview/ExportImageComposer.h"
 
 namespace
 {
+using Json = nlohmann::json;
+
+Json loadJsonFile(const std::filesystem::path& path)
+{
+    std::ifstream input(path, std::ios::binary);
+    return input.is_open() ? Json::parse(input, nullptr, false)
+                           : Json::parse(std::string{}, nullptr, false);
+}
+
 const DomDownToolPreview::ExportTaskRecord* findRecord(
     const std::vector<DomDownToolPreview::ExportTaskRecord>& records,
     const std::string& id)
@@ -284,19 +293,19 @@ bool runTest()
             return false;
         }
 
-        CPLJSONDocument persistedDocument;
+        const Json persistedRoot = loadJsonFile(recordsPath);
         if (!postprocess_test::Require(
-                persistedDocument.Load(recordsPath.string()),
+                !persistedRoot.is_discarded() && persistedRoot.is_object(),
                 "无法读取立即写回的导出任务记录"))
         {
             return false;
         }
-        const CPLJSONArray persistedTasks =
-            persistedDocument.GetRoot().GetArray("tasks");
+        const auto persistedTasks = persistedRoot.find("tasks");
         if (!postprocess_test::Require(
-                persistedTasks.Size() == 3 &&
-                    persistedTasks[0].GetString("state") == "failed" &&
-                    persistedTasks[1].GetString("state") == "failed",
+                persistedTasks != persistedRoot.end() && persistedTasks->is_array() &&
+                    persistedTasks->size() == 3 &&
+                    (*persistedTasks)[0].value("state", "") == "failed" &&
+                    (*persistedTasks)[1].value("state", "") == "failed",
                 "中断状态没有立即持久化"))
         {
             return false;
@@ -446,13 +455,16 @@ bool runTest()
             }
         }
 
-        CPLJSONDocument concurrentDocument;
+        const Json concurrentRoot = loadJsonFile(concurrentRecordsPath);
+        const auto concurrentTasks = concurrentRoot.is_object()
+            ? concurrentRoot.find("tasks")
+            : concurrentRoot.end();
         if (!postprocess_test::Require(
-                concurrentDocument.Load(concurrentRecordsPath.string()),
+                !concurrentRoot.is_discarded() && concurrentRoot.is_object(),
                 "并发更新后导出任务记录不是有效 JSON") ||
             !postprocess_test::Require(
-                concurrentDocument.GetRoot().GetArray("tasks").Size() ==
-                    static_cast<int>(taskIds.size()),
+                concurrentTasks != concurrentRoot.end() && concurrentTasks->is_array() &&
+                    concurrentTasks->size() == taskIds.size(),
                 "并发更新后导出任务记录数量不完整"))
         {
             return false;

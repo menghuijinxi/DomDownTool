@@ -6,17 +6,10 @@
       "name": "opencv",
       "version>=": "4.12.0"
     },
-    {
-      "name": "gdal",
-      "version>=": "3.12.1"
-    },
+    "nlohmann-json",
     {
       "name": "libxml2",
       "version>=": "2.15.1"
-    },
-    {
-      "name": "libspatialite",
-      "version>=": "5.1.0#6"
     },
     "geographiclib",
     "boost-preprocessor",

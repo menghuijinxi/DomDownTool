@@ -73,3 +73,30 @@ GIS 解码日志中的 `point` 数量正常，但选择“点”或“全部”�
 - 构造位于视口中心的单个点要素，调用 `GisOverlayRenderer::Draw()`，断言中心像素非透明。
 - 日志中 `point` 大于零但画面无点时，依次检查缩放可见性、视口边界过滤和点坐标读取方式。
 - 不要使用会过滤退化轮廓的路径迭代器枚举独立点；应保留并直接遍历原始点坐标。
+
+## 不要为 CPL JSON 引入完整 GDAL 静态依赖
+
+### 现象与影响
+
+项目只使用 `cpl_json.h` 读写 JSON，但链接 `GDAL::GDAL` 后，Release EXE 同时带入 GDAL、
+PROJ、SpatiaLite、HDF5、NetCDF、GEOS 和 SQLite 等静态库。预览程序因此从约 24 MiB
+增长到约 74 MiB，而这些地理数据接口没有任何业务调用。
+
+### 根因与排查路径
+
+vcpkg 的 GDAL 默认特性包含多种数据格式和数据库支持，`GDAL::GDAL` 又通过 CMake 接口目标
+传播完整链接依赖。排查时不能只搜索 `GDAL`，还应搜索 `cpl_json.h`、`CPLJSONDocument`、
+`CPLJSONObject` 和 `CPLJSONArray`，并检查最终 `build.ninja` 或链接响应文件。
+
+### 解决方案与验证
+
+- JSON 统一使用 header-only 的 `nlohmann-json`，在 `vcpkg.json` 中声明直接依赖，并链接
+  `nlohmann_json::nlohmann_json`。
+- 删除 `gdal` 和没有直接 API 调用的 `libspatialite` manifest 依赖。
+- 解析外部响应时使用非抛异常解析，并在读取字段前检查对象、数组和标量类型。
+- 迁移后运行 GeoJSON、任务持久化、地点搜索、XYZ、大图和 FBX 相关测试。
+- 检查最终链接命令不再包含 `gdal.lib`、`proj.lib`、`spatialite.lib`、`libhdf5.lib`、
+  `netcdf.lib`、`geos.lib` 和 `sqlite3.lib`，再对比最终 EXE 大小。
+
+后续新增第三方库前，应先确认代码是否真的使用其核心能力。若只需要 JSON、摘要、图片编码等
+基础功能，应优先依赖对应的轻量成熟库，避免为了附属工具类引入大型静态依赖树。

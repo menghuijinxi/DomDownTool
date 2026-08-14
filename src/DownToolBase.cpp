@@ -33,16 +33,18 @@
 #include "assimp/material.h"
 #include "assimp/metadata.h"
 #include "assimp/scene.h"
-#include "cpl_json.h"
 #include "fmt/format.h"
 #include "libxml/tree.h"
 #include "libxml/xmlmemory.h"
+#include "nlohmann/json.hpp"
 #include "opencv2/core/utility.hpp"
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/imgproc.hpp"
 
 namespace
 {
+    using Json = nlohmann::json;
+
 	enum class ImageType { Unknown, Png, Jpeg };
 
 	enum class TileRepairWriteResult { Failed, Existing, Written };
@@ -980,119 +982,109 @@ namespace
 		return xmlNewChild(parent, nullptr, ToXmlChar(name), nullptr);
 	}
 
-	CPLJSONObject BuildBoundsJson(const PostProcessBounds& bounds)
-	{
-		CPLJSONObject jsonBounds;
-		jsonBounds.Add("east", bounds.east);
-		jsonBounds.Add("north", bounds.north);
-		jsonBounds.Add("south", bounds.south);
-		jsonBounds.Add("west", bounds.west);
-		return jsonBounds;
-	}
+    Json BuildBoundsJson(const PostProcessBounds& bounds)
+    {
+        return {{"east", bounds.east},
+                {"north", bounds.north},
+                {"south", bounds.south},
+                {"west", bounds.west}};
+    }
 
-	std::string BuildMetaJson(const PostProcessMetadata& metadata)
-	{
-		CPLJSONObject root;
-		root.Add("bounds", BuildBoundsJson(metadata.bounds));
-		root.Add("contentType", "image/png");
-		root.Add("generatetool", "DomDownTool");
-		root.Add("latLonBounds", BuildBoundsJson(metadata.bounds));
-		root.Add("maxzoom", static_cast<int>(metadata.maxZoom));
-		root.Add("minzoom", 0);
-		root.Add("proj", 4326);
-		root.Add("tilesize", static_cast<int>(metadata.tileSize));
-		root.Add("tiletrans", "google");
-		root.Add("type", "image");
-		root.Add("ziped", false);
-		return root.Format(CPLJSONObject::PrettyFormat::Plain);
-	}
+    std::string BuildMetaJson(const PostProcessMetadata& metadata)
+    {
+        const Json root = {
+            {"bounds", BuildBoundsJson(metadata.bounds)},
+            {"contentType", "image/png"},
+            {"generatetool", "DomDownTool"},
+            {"latLonBounds", BuildBoundsJson(metadata.bounds)},
+            {"maxzoom", static_cast<int>(metadata.maxZoom)},
+            {"minzoom", 0},
+            {"proj", 4326},
+            {"tilesize", static_cast<int>(metadata.tileSize)},
+            {"tiletrans", "google"},
+            {"type", "image"},
+            {"ziped", false}};
+        return root.dump();
+    }
 
-	CPLJSONObject BuildFbxGlobalPixelBoundsJson(const FbxGlobalPixelBounds& bounds)
-	{
-		CPLJSONObject root;
-		root.Add("maxx", bounds.maxX);
-		root.Add("maxy", bounds.maxY);
-		root.Add("minx", bounds.minX);
-		root.Add("miny", bounds.minY);
-		return root;
-	}
+    Json BuildFbxGlobalPixelBoundsJson(const FbxGlobalPixelBounds& bounds)
+    {
+        return {{"maxx", bounds.maxX},
+                {"maxy", bounds.maxY},
+                {"minx", bounds.minX},
+                {"miny", bounds.minY}};
+    }
 
-	CPLJSONObject BuildFbxTileJson(const DownTool::Tile& tile)
-	{
-		CPLJSONObject root;
-		root.Add("x", tile.X);
-		root.Add("y", tile.Y);
-		root.Add("z", static_cast<int>(tile.Zoom));
-		return root;
-	}
+    Json BuildFbxTileJson(const DownTool::Tile& tile)
+    {
+        return {{"x", tile.X},
+                {"y", tile.Y},
+                {"z", static_cast<int>(tile.Zoom)}};
+    }
 
-	CPLJSONObject BuildFbxTileRangeJson(const DownTool::TileRange& tileRange)
-	{
-		CPLJSONObject root;
-		root.Add("max", BuildFbxTileJson(tileRange.MaxTile));
-		root.Add("min", BuildFbxTileJson(tileRange.MinTile));
-		return root;
-	}
+    Json BuildFbxTileRangeJson(const DownTool::TileRange& tileRange)
+    {
+        return {{"max", BuildFbxTileJson(tileRange.MaxTile)},
+                {"min", BuildFbxTileJson(tileRange.MinTile)}};
+    }
 
-	CPLJSONObject BuildFbxTextureJson(
-		const FbxTextureOutputInfo& textureInfo,
-		const std::filesystem::path& basePath)
-	{
-		CPLJSONObject root;
-		root.Add("bounds", BuildBoundsJson(textureInfo.bounds));
-		root.Add("centerpixelx", textureInfo.centerPixelX);
-		root.Add("centerpixely", textureInfo.centerPixelY);
-		root.Add("centertilex", textureInfo.centerTileX);
-		root.Add("centertiley", textureInfo.centerTileY);
-		root.Add("distancecm", textureInfo.distanceCm);
-		root.Add("distanceoffset", static_cast<int>(textureInfo.distanceOffset));
-		root.Add("gridx", textureInfo.gridX);
-		root.Add("gridy", textureInfo.gridY);
-		root.Add("partial", textureInfo.partial);
-		root.Add("path", ToPortableRelativePath(textureInfo.texturePath, basePath));
-		root.Add("pixelbounds", BuildFbxGlobalPixelBoundsJson(textureInfo.pixelBounds));
-		root.Add("ring", static_cast<int>(textureInfo.ring));
-		root.Add("sourcetexturesize", static_cast<int>(textureInfo.sourceTextureSize));
-		root.Add("outputtexturesize", static_cast<int>(textureInfo.outputTextureSize));
-		root.Add("tilerange", BuildFbxTileRangeJson(textureInfo.tileRange));
-		root.Add("tilesize", static_cast<int>(textureInfo.tileSize));
-		root.Add("zoom", static_cast<int>(textureInfo.zoom));
-		root.Add("version", 1);
-		return root;
-	}
+    Json BuildFbxTextureJson(
+        const FbxTextureOutputInfo& textureInfo,
+        const std::filesystem::path& basePath)
+    {
+        return {
+            {"bounds", BuildBoundsJson(textureInfo.bounds)},
+            {"centerpixelx", textureInfo.centerPixelX},
+            {"centerpixely", textureInfo.centerPixelY},
+            {"centertilex", textureInfo.centerTileX},
+            {"centertiley", textureInfo.centerTileY},
+            {"distancecm", textureInfo.distanceCm},
+            {"distanceoffset", static_cast<int>(textureInfo.distanceOffset)},
+            {"gridx", textureInfo.gridX},
+            {"gridy", textureInfo.gridY},
+            {"partial", textureInfo.partial},
+            {"path", ToPortableRelativePath(textureInfo.texturePath, basePath)},
+            {"pixelbounds", BuildFbxGlobalPixelBoundsJson(textureInfo.pixelBounds)},
+            {"ring", static_cast<int>(textureInfo.ring)},
+            {"sourcetexturesize", static_cast<int>(textureInfo.sourceTextureSize)},
+            {"outputtexturesize", static_cast<int>(textureInfo.outputTextureSize)},
+            {"tilerange", BuildFbxTileRangeJson(textureInfo.tileRange)},
+            {"tilesize", static_cast<int>(textureInfo.tileSize)},
+            {"zoom", static_cast<int>(textureInfo.zoom)},
+            {"version", 1}};
+    }
 
-	std::string BuildFbxTextureMetadataJson(
-		const FbxTextureOutputInfo& textureInfo,
-		const std::filesystem::path& basePath)
-	{
-		return BuildFbxTextureJson(textureInfo, basePath).Format(
-			CPLJSONObject::PrettyFormat::Plain);
-	}
+    std::string BuildFbxTextureMetadataJson(
+        const FbxTextureOutputInfo& textureInfo,
+        const std::filesystem::path& basePath)
+    {
+        return BuildFbxTextureJson(textureInfo, basePath).dump();
+    }
 
-	std::string BuildFbxManifestJson(
-		const std::vector<FbxTextureOutputInfo>& textureInfos,
-		const std::filesystem::path& basePath,
-		const std::string& meshMode,
-		uint32_t textureSize,
-		uint32_t zoom,
-		uint32_t tileSize)
-	{
-		CPLJSONArray textures;
-		for (const FbxTextureOutputInfo& textureInfo : textureInfos)
-		{
-			textures.Add(BuildFbxTextureJson(textureInfo, basePath));
-		}
+    std::string BuildFbxManifestJson(
+        const std::vector<FbxTextureOutputInfo>& textureInfos,
+        const std::filesystem::path& basePath,
+        const std::string& meshMode,
+        uint32_t textureSize,
+        uint32_t zoom,
+        uint32_t tileSize)
+    {
+        Json textures = Json::array();
+        for (const FbxTextureOutputInfo& textureInfo : textureInfos)
+        {
+            textures.push_back(BuildFbxTextureJson(textureInfo, basePath));
+        }
 
-		CPLJSONObject root;
-		root.Add("meshmode", meshMode);
-		root.Add("texturecount", static_cast<int>(textureInfos.size()));
-		root.Add("textures", textures);
-		root.Add("texturesize", static_cast<int>(textureSize));
-		root.Add("tilesize", static_cast<int>(tileSize));
-		root.Add("version", 1);
-		root.Add("zoom", static_cast<int>(zoom));
-		return root.Format(CPLJSONObject::PrettyFormat::Plain);
-	}
+        const Json root = {
+            {"meshmode", meshMode},
+            {"texturecount", static_cast<int>(textureInfos.size())},
+            {"textures", std::move(textures)},
+            {"texturesize", static_cast<int>(textureSize)},
+            {"tilesize", static_cast<int>(tileSize)},
+            {"version", 1},
+            {"zoom", static_cast<int>(zoom)}};
+        return root.dump();
+    }
 
 	uint32_t SelectFbxDistanceOffset(
 		double distanceCm,

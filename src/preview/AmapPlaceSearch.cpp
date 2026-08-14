@@ -10,15 +10,17 @@
 #include <string_view>
 #include <utility>
 
-#include "cpl_json.h"
 #include "curl/curl.h"
 #include "fmt/format.h"
+#include "nlohmann/json.hpp"
 
 #include "GCJ02GoogleDownBase.h"
 #include "preview/SearchTrace.h"
 
 namespace
 {
+using Json = nlohmann::json;
+
 constexpr std::string_view kDefaultAmapApiKey = "d1f15ad3fdf0c704434eaf23c7c18698";
 constexpr std::string_view kPlaceSearchEndpoint = "https://restapi.amap.com/v5/place/text";
 constexpr std::string_view kInputTipsEndpoint =
@@ -30,6 +32,39 @@ constexpr std::string_view kWebPageTipsEndpoint =
 constexpr long kConnectTimeoutSeconds = 5;
 constexpr long kRequestTimeoutSeconds = 12;
 constexpr size_t kMaximumResponseBytes = 2ULL * 1024ULL * 1024ULL;
+
+std::string GetJsonString(const Json& object, std::string_view fieldName,
+                          std::string defaultValue = {})
+{
+    if (!object.is_object())
+    {
+        return defaultValue;
+    }
+    const auto iterator = object.find(std::string(fieldName));
+    return iterator != object.end() && iterator->is_string()
+        ? iterator->get<std::string>()
+        : defaultValue;
+}
+
+const Json* FindJsonArray(const Json& object, std::string_view fieldName)
+{
+    if (!object.is_object())
+    {
+        return nullptr;
+    }
+    const auto iterator = object.find(std::string(fieldName));
+    return iterator != object.end() && iterator->is_array() ? &*iterator : nullptr;
+}
+
+const Json* FindJsonObject(const Json& object, std::string_view fieldName)
+{
+    if (!object.is_object())
+    {
+        return nullptr;
+    }
+    const auto iterator = object.find(std::string(fieldName));
+    return iterator != object.end() && iterator->is_object() ? &*iterator : nullptr;
+}
 
 class CurlGlobalState
 {
@@ -140,7 +175,7 @@ std::string urlEncode(std::string_view value)
 }
 
 bool loadSuccessfulResponse(const DomDownToolPreview::PlaceSearchHttpResponse& response,
-                            CPLJSONDocument& document, CPLJSONObject& root, std::string& error)
+                            Json& root, std::string& error)
 {
     if (!response.error.empty())
     {
@@ -152,22 +187,22 @@ bool loadSuccessfulResponse(const DomDownToolPreview::PlaceSearchHttpResponse& r
         error = "高德地点搜索返回 HTTP " + std::to_string(response.statusCode) + "。";
         return false;
     }
-    if (!document.LoadMemory(response.body))
+    root = Json::parse(response.body, nullptr, false);
+    if (root.is_discarded())
     {
         error = "高德地点搜索返回了无法解析的数据。";
         return false;
     }
 
-    root = document.GetRoot();
-    if (root.GetString("status") != "1")
+    if (GetJsonString(root, "status") != "1")
     {
-        const std::string infoCode = root.GetString("infocode");
+        const std::string infoCode = GetJsonString(root, "infocode");
         if (infoCode == "10009")
         {
             error = "当前高德 Key 不是 Web 服务类型，请设置 AMAP_WEB_SERVICE_KEY。";
             return false;
         }
-        const std::string information = root.GetString("info", infoCode);
+        const std::string information = GetJsonString(root, "info", infoCode);
         error = information.empty() ? "高德地点搜索请求被拒绝。"
                                     : "高德地点搜索请求被拒绝：" + information;
         return false;
@@ -202,10 +237,10 @@ std::optional<DownTool::LonLat> parseGcj02Location(const std::string& location)
     return DownTool::GCJ02GoogleDownBase::GCJ02ToWGS84({longitude, latitude});
 }
 
-std::optional<DownTool::LonLat> parseGcj02CoordinateFields(const CPLJSONObject& item)
+std::optional<DownTool::LonLat> parseGcj02CoordinateFields(const Json& item)
 {
     if (const std::optional<DownTool::LonLat> location =
-            parseGcj02Location(item.GetString("location")))
+            parseGcj02Location(GetJsonString(item, "location")))
     {
         return location;
     }
@@ -213,13 +248,13 @@ std::optional<DownTool::LonLat> parseGcj02CoordinateFields(const CPLJSONObject& 
     constexpr std::array<std::pair<std::string_view, std::string_view>, 4> kFieldPairs = {
         std::pair{"x", "y"}, std::pair{"lng", "lat"}, std::pair{"lon", "lat"},
         std::pair{"longitude", "latitude"}};
-    const auto parseFields = [&kFieldPairs](const CPLJSONObject& object)
+    const auto parseFields = [&kFieldPairs](const Json& object)
         -> std::optional<DownTool::LonLat>
     {
         for (const auto& [longitudeField, latitudeField] : kFieldPairs)
         {
-            const std::string longitude = object.GetString(std::string(longitudeField));
-            const std::string latitude = object.GetString(std::string(latitudeField));
+            const std::string longitude = GetJsonString(object, longitudeField);
+            const std::string latitude = GetJsonString(object, latitudeField);
             if (longitude.empty() || latitude.empty())
             {
                 continue;
@@ -237,14 +272,16 @@ std::optional<DownTool::LonLat> parseGcj02CoordinateFields(const CPLJSONObject& 
     {
         return coordinate;
     }
-    return parseFields(item.GetObj("point"));
+    const Json* point = FindJsonObject(item, "point");
+    return point == nullptr ? std::nullopt : parseFields(*point);
 }
 
-std::string joinDistrict(const CPLJSONObject& item)
+std::string joinDistrict(const Json& item)
 {
     std::string district;
     const std::array<std::string, 3> fields = {
-        item.GetString("pname"), item.GetString("cityname"), item.GetString("adname")};
+        GetJsonString(item, "pname"), GetJsonString(item, "cityname"),
+        GetJsonString(item, "adname")};
     for (const std::string& field : fields)
     {
         if (field.empty() || district.ends_with(field))
@@ -286,47 +323,54 @@ double recommendedZoomForLevel(const std::string& level)
     return 16.;
 }
 
-bool parsePlaces(const CPLJSONObject& root,
+bool parsePlaces(const Json& root,
                  std::vector<DomDownToolPreview::PlaceSearchResult>& results)
 {
-    const CPLJSONArray places = root.GetArray("pois");
-    for (int index = 0; index < places.Size(); ++index)
+    const Json* places = FindJsonArray(root, "pois");
+    if (places == nullptr)
     {
-        const CPLJSONObject item = places[index];
+        return true;
+    }
+    for (const Json& item : *places)
+    {
         const std::optional<DownTool::LonLat> coordinate =
-            parseGcj02Location(item.GetString("location"));
+            parseGcj02Location(GetJsonString(item, "location"));
         if (!coordinate.has_value())
         {
             continue;
         }
 
         DomDownToolPreview::PlaceSearchResult result;
-        result.id = item.GetString("id");
-        result.name = item.GetString("name");
-        result.address = item.GetString("address");
+        result.id = GetJsonString(item, "id");
+        result.name = GetJsonString(item, "name");
+        result.address = GetJsonString(item, "address");
         result.district = joinDistrict(item);
-        result.category = item.GetString("type");
+        result.category = GetJsonString(item, "type");
         result.coordinateWgs84 = coordinate;
         results.push_back(std::move(result));
     }
     return true;
 }
 
-bool parseSuggestions(const CPLJSONObject& root,
+bool parseSuggestions(const Json& root,
                       std::vector<DomDownToolPreview::PlaceSearchResult>& results)
 {
-    const CPLJSONArray tips = root.GetArray("tips");
-    const int resultCount = std::min(tips.Size(), 8);
-    for (int index = 0; index < resultCount; ++index)
+    const Json* tips = FindJsonArray(root, "tips");
+    if (tips == nullptr)
     {
-        const CPLJSONObject item = tips[index];
+        return true;
+    }
+    const size_t resultCount = std::min(tips->size(), size_t{8});
+    for (size_t index = 0; index < resultCount; ++index)
+    {
+        const Json& item = (*tips)[index];
         DomDownToolPreview::PlaceSearchResult result;
-        result.id = item.GetString("id");
-        result.name = item.GetString("name");
-        result.address = item.GetString("address");
-        result.district = item.GetString("district");
-        result.category = item.GetString("typecode");
-        result.coordinateWgs84 = parseGcj02Location(item.GetString("location"));
+        result.id = GetJsonString(item, "id");
+        result.name = GetJsonString(item, "name");
+        result.address = GetJsonString(item, "address");
+        result.district = GetJsonString(item, "district");
+        result.category = GetJsonString(item, "typecode");
+        result.coordinateWgs84 = parseGcj02Location(GetJsonString(item, "location"));
         if (!result.name.empty())
         {
             results.push_back(std::move(result));
@@ -335,21 +379,30 @@ bool parseSuggestions(const CPLJSONObject& root,
     return true;
 }
 
-bool parseWebPageSuggestions(const CPLJSONObject& root,
+bool parseWebPageSuggestions(const Json& root,
                              std::vector<DomDownToolPreview::PlaceSearchResult>& results)
 {
-    const CPLJSONArray tips = root.GetObj("data").GetArray("tip_list");
-    const int resultCount = std::min(tips.Size(), 8);
-    for (int index = 0; index < resultCount; ++index)
+    const Json* data = FindJsonObject(root, "data");
+    const Json* tips = data == nullptr ? nullptr : FindJsonArray(*data, "tip_list");
+    if (tips == nullptr)
     {
-        const CPLJSONObject item = tips[index].GetObj("tip");
+        return true;
+    }
+    const size_t resultCount = std::min(tips->size(), size_t{8});
+    for (size_t index = 0; index < resultCount; ++index)
+    {
+        const Json* item = FindJsonObject((*tips)[index], "tip");
+        if (item == nullptr)
+        {
+            continue;
+        }
         DomDownToolPreview::PlaceSearchResult result;
-        result.id = item.GetString("poiid");
-        result.name = item.GetString("name");
-        result.address = item.GetString("address");
-        result.district = item.GetString("district");
-        result.category = item.GetString("t_tag_class");
-        result.coordinateWgs84 = parseGcj02CoordinateFields(item);
+        result.id = GetJsonString(*item, "poiid");
+        result.name = GetJsonString(*item, "name");
+        result.address = GetJsonString(*item, "address");
+        result.district = GetJsonString(*item, "district");
+        result.category = GetJsonString(*item, "t_tag_class");
+        result.coordinateWgs84 = parseGcj02CoordinateFields(*item);
         if (!result.name.empty())
         {
             results.push_back(std::move(result));
@@ -358,26 +411,29 @@ bool parseWebPageSuggestions(const CPLJSONObject& root,
     return true;
 }
 
-bool parseGeocodes(const CPLJSONObject& root, const std::string& query,
+bool parseGeocodes(const Json& root, const std::string& query,
                    std::vector<DomDownToolPreview::PlaceSearchResult>& results)
 {
-    const CPLJSONArray geocodes = root.GetArray("geocodes");
-    for (int index = 0; index < geocodes.Size(); ++index)
+    const Json* geocodes = FindJsonArray(root, "geocodes");
+    if (geocodes == nullptr)
     {
-        const CPLJSONObject item = geocodes[index];
+        return true;
+    }
+    for (const Json& item : *geocodes)
+    {
         const std::optional<DownTool::LonLat> coordinate =
-            parseGcj02Location(item.GetString("location"));
+            parseGcj02Location(GetJsonString(item, "location"));
         if (!coordinate.has_value())
         {
             continue;
         }
 
         DomDownToolPreview::PlaceSearchResult result;
-        result.name = item.GetString("formatted_address", query);
-        result.address = item.GetString("formatted_address");
-        result.district = item.GetString("province") + item.GetString("city") +
-            item.GetString("district");
-        result.level = item.GetString("level");
+        result.name = GetJsonString(item, "formatted_address", query);
+        result.address = GetJsonString(item, "formatted_address");
+        result.district = GetJsonString(item, "province") +
+            GetJsonString(item, "city") + GetJsonString(item, "district");
+        result.level = GetJsonString(item, "level");
         result.coordinateWgs84 = coordinate;
         result.recommendedZoom = recommendedZoomForLevel(result.level);
         results.push_back(std::move(result));
@@ -656,15 +712,14 @@ DomDownToolPreview::PlaceSearchResponse DomDownToolPreview::AmapPlaceSearch::exe
     }
     if (backend_ == Backend::WebPage)
     {
-        CPLJSONDocument document;
-        CPLJSONObject root;
+        Json root;
         const PlaceSearchHttpResponse http =
             httpGet_(makeWebPagePlaceSearchUrl(request.query, request.centerWgs84));
         writeSearchTrace(
             "PlaceSearch", "search_http_complete",
             fmt::format("id={} status={} body_bytes={} transport_error={}", request.requestId,
                         http.statusCode, http.body.size(), http.error));
-        if (!loadSuccessfulResponse(http, document, root, response.error))
+        if (!loadSuccessfulResponse(http, root, response.error))
         {
             return response;
         }
@@ -680,10 +735,9 @@ DomDownToolPreview::PlaceSearchResponse DomDownToolPreview::AmapPlaceSearch::exe
         return response;
     }
 
-    CPLJSONDocument placeDocument;
-    CPLJSONObject placeRoot;
+    Json placeRoot;
     const PlaceSearchHttpResponse placeHttp = httpGet_(makePlaceSearchUrl(apiKey_, request.query));
-    if (!loadSuccessfulResponse(placeHttp, placeDocument, placeRoot, response.error))
+    if (!loadSuccessfulResponse(placeHttp, placeRoot, response.error))
     {
         return response;
     }
@@ -694,10 +748,9 @@ DomDownToolPreview::PlaceSearchResponse DomDownToolPreview::AmapPlaceSearch::exe
     }
 
     response.usedGeocodeFallback = true;
-    CPLJSONDocument geocodeDocument;
-    CPLJSONObject geocodeRoot;
+    Json geocodeRoot;
     const PlaceSearchHttpResponse geocodeHttp = httpGet_(makeGeocodeUrl(apiKey_, request.query));
-    if (!loadSuccessfulResponse(geocodeHttp, geocodeDocument, geocodeRoot, response.error))
+    if (!loadSuccessfulResponse(geocodeHttp, geocodeRoot, response.error))
     {
         return response;
     }
@@ -718,15 +771,14 @@ DomDownToolPreview::PlaceSearchResponse DomDownToolPreview::AmapPlaceSearch::exe
     }
     if (backend_ == Backend::WebPage)
     {
-        CPLJSONDocument document;
-        CPLJSONObject root;
+        Json root;
         const PlaceSearchHttpResponse http =
             httpGet_(makeWebPageSuggestionsUrl(request.query, request.centerWgs84));
         writeSearchTrace(
             "PlaceSearch", "suggestions_http_complete",
             fmt::format("id={} status={} body_bytes={} transport_error={}", request.requestId,
                         http.statusCode, http.body.size(), http.error));
-        if (!loadSuccessfulResponse(http, document, root, response.error))
+        if (!loadSuccessfulResponse(http, root, response.error))
         {
             return response;
         }
@@ -742,11 +794,10 @@ DomDownToolPreview::PlaceSearchResponse DomDownToolPreview::AmapPlaceSearch::exe
         return response;
     }
 
-    CPLJSONDocument document;
-    CPLJSONObject root;
+    Json root;
     const PlaceSearchHttpResponse http =
         httpGet_(makeSuggestionsUrl(apiKey_, request.query, request.centerWgs84));
-    if (!loadSuccessfulResponse(http, document, root, response.error))
+    if (!loadSuccessfulResponse(http, root, response.error))
     {
         return response;
     }

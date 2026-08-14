@@ -10,9 +10,9 @@ list(APPEND VCPKG_OVERLAY_PORTS
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/vcpkg-overlays")
 list(REMOVE_DUPLICATES VCPKG_OVERLAY_PORTS)
 
-message(设置代理：127.0.0.1:10090)
-set(ENV{https_proxy} "127.0.0.1:10090")
-set(ENV{http_proxy} "127.0.0.1:10090")
+message(设置代理：127.0.0.1:7897)
+set(ENV{https_proxy} "127.0.0.1:7897")
+set(ENV{http_proxy} "127.0.0.1:7897")
 
 IF(IS_AUTODOWNLOAD_VCPKG)
     set(Vcpkg_DownloadPath ${CMAKE_CURRENT_SOURCE_DIR}/../out/vcpkg)
@@ -59,7 +59,7 @@ IF(WIN32)
     add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/Zc:__cplusplus>")
 ENDIF()
 
-project ("DomDownTool")
+project ("DomDownTool" VERSION 1.0.0.0)
 
 function(domdowntool_configure_msvc_ninja_dependencies)
     if(NOT MSVC OR NOT CMAKE_GENERATOR MATCHES "^Ninja")
@@ -105,7 +105,7 @@ if(MSVC)
     endif()
 endif()
 
-find_package(GDAL CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 find_package(LibXml2 REQUIRED)
 
 if(MSVC AND MSVC_VERSION GREATER_EQUAL 1950)
@@ -127,7 +127,7 @@ find_package(Protobuf CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
 
 set(DOMDOWNTOOL_LIBRARIES
-    GDAL::GDAL
+    nlohmann_json::nlohmann_json
     LibXml2::LibXml2
     ${GeographicLib_LIBRARIES}
     fmt::fmt-header-only
@@ -200,8 +200,13 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
   endif()
 
   find_package(SkiaUI CONFIG REQUIRED)
+  configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewVersion.rc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/PreviewVersion.rc
+    @ONLY)
   add_executable(DomDownToolPreview WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewResources.rc
+    ${CMAKE_CURRENT_BINARY_DIR}/PreviewVersion.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview_main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapPlaceSearch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapWebViewSearch.cpp

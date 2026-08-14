@@ -1,7 +1,9 @@
 #include "preview/AmapWebViewSearch.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -11,14 +13,15 @@
 #include <windows.h>
 #include <commctrl.h>
 
-#include "cpl_json.h"
 #include "fmt/format.h"
+#include "nlohmann/json.hpp"
 #include "webview/webview.h"
 
 #include "preview/SearchTrace.h"
 
 namespace
 {
+using Json = nlohmann::json;
 using namespace std::chrono_literals;
 
 constexpr std::string_view kAmapHomeUrl = "https://www.amap.com/";
@@ -28,6 +31,51 @@ constexpr std::string_view kAmapTipsUrlPrefix =
 constexpr auto kPageStartupTimeout = 20s;
 constexpr auto kRequestTimeout = 30s;
 constexpr UINT_PTR kVerificationWindowSubclassId = 1;
+
+std::string GetJsonString(const Json& object, const char* fieldName)
+{
+    if (!object.is_object())
+    {
+        return {};
+    }
+    const auto iterator = object.find(fieldName);
+    return iterator != object.end() && iterator->is_string()
+        ? iterator->get<std::string>()
+        : std::string{};
+}
+
+int64_t GetJsonInteger(const Json& object, const char* fieldName)
+{
+    if (!object.is_object())
+    {
+        return 0;
+    }
+    const auto iterator = object.find(fieldName);
+    if (iterator == object.end() || !iterator->is_number_integer())
+    {
+        return 0;
+    }
+    if (iterator->is_number_unsigned())
+    {
+        const uint64_t value = iterator->get<uint64_t>();
+        return value <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max())
+            ? static_cast<int64_t>(value)
+            : 0;
+    }
+    return iterator->get<int64_t>();
+}
+
+bool GetJsonBool(const Json& object, const char* fieldName)
+{
+    if (!object.is_object())
+    {
+        return false;
+    }
+    const auto iterator = object.find(fieldName);
+    return iterator != object.end() && iterator->is_boolean()
+        ? iterator->get<bool>()
+        : false;
+}
 
 LRESULT CALLBACK verificationWindowProcedure(HWND window, UINT message, WPARAM wParam,
                                              LPARAM lParam, UINT_PTR,
@@ -56,44 +104,34 @@ std::string describeWebViewException(const webview::exception& exception)
 
 std::string makeBindingResult(bool succeeded, std::string_view message = {})
 {
-    CPLJSONObject result;
-    result.Add("ok", succeeded);
+    Json result = {{"ok", succeeded}};
     if (!message.empty())
     {
-        result.Add("message", std::string(message));
+        result["message"] = std::string(message);
     }
-    return result.Format(CPLJSONObject::PrettyFormat::Plain);
+    return result.dump();
 }
 
-std::optional<CPLJSONObject> firstBindingArgument(const std::string& requestJson)
+std::optional<Json> firstBindingArgument(const std::string& requestJson)
 {
-    CPLJSONDocument document;
-    if (!document.LoadMemory(requestJson))
+    const Json root = Json::parse(requestJson, nullptr, false);
+    if (root.is_discarded() || !root.is_array())
     {
         return std::nullopt;
     }
 
-    const CPLJSONObject root = document.GetRoot();
-    if (root.GetType() != CPLJSONObject::Type::Array)
+    if (root.empty() || !root.front().is_object())
     {
         return std::nullopt;
     }
-
-    const CPLJSONArray arguments = root.ToArray();
-    if (arguments.Size() == 0 || arguments[0].GetType() != CPLJSONObject::Type::Object)
-    {
-        return std::nullopt;
-    }
-    return arguments[0];
+    return Json(root.front());
 }
 
 std::string makeFetchScript(uint64_t requestId, const std::string& url)
 {
-    CPLJSONObject request;
-    request.Add("requestId", requestId);
-    request.Add("url", url);
+    const Json request = {{"requestId", requestId}, {"url", url}};
     return "(() => {"
-           "const request=" + request.Format(CPLJSONObject::PrettyFormat::Plain) + ";"
+           "const request=" + request.dump() + ";"
            "if(typeof window.__domDownToolAmapFetch==='function'){"
            "window.__domDownToolAmapFetch(request);return;}"
            "const binding=window.domDownToolAmapTransportResult;"
@@ -105,11 +143,9 @@ std::string makeFetchScript(uint64_t requestId, const std::string& url)
 
 std::string makeCollectScript(uint64_t requestId, const std::string& requestUrl)
 {
-    CPLJSONObject request;
-    request.Add("requestId", requestId);
-    request.Add("url", requestUrl);
+    const Json request = {{"requestId", requestId}, {"url", requestUrl}};
     return "window.__domDownToolCollectAmapSearchPage(" +
-        request.Format(CPLJSONObject::PrettyFormat::Plain) + ");";
+        request.dump() + ");";
 }
 
 std::string bootstrapScript()
@@ -922,14 +958,14 @@ void DomDownToolPreview::AmapWebViewSearch::retryAfterVerification()
 std::string DomDownToolPreview::AmapWebViewSearch::handlePageReady(
     const std::string& requestJson)
 {
-    const std::optional<CPLJSONObject> payload = firstBindingArgument(requestJson);
+    const std::optional<Json> payload = firstBindingArgument(requestJson);
     if (!payload.has_value())
     {
         writeSearchTrace("WebView", "page_ready_invalid_payload");
         return makeBindingResult(false, "Invalid page-ready payload.");
     }
 
-    const std::string pageUrl = payload->GetString("url");
+    const std::string pageUrl = GetJsonString(*payload, "url");
     writeSearchTrace("WebView", "page_ready", "url=" + pageUrl);
     uint64_t requestToDispatch = 0;
     std::string requestUrl;
@@ -984,25 +1020,27 @@ std::string DomDownToolPreview::AmapWebViewSearch::handlePageReady(
 std::string DomDownToolPreview::AmapWebViewSearch::handleTransportResult(
     const std::string& requestJson)
 {
-    const std::optional<CPLJSONObject> payload = firstBindingArgument(requestJson);
+    const std::optional<Json> payload = firstBindingArgument(requestJson);
     if (!payload.has_value())
     {
         writeSearchTrace("WebView", "transport_invalid_payload");
         return makeBindingResult(false, "Invalid transport-result payload.");
     }
 
-    const uint64_t requestId = static_cast<uint64_t>(payload->GetLong("requestId"));
-    const bool riskControl = payload->GetBool("riskControl");
-    const bool hasResults = payload->GetBool("hasResults");
-    const std::string responseUrl = payload->GetString("responseUrl");
+    const uint64_t requestId = static_cast<uint64_t>(
+        std::max<int64_t>(0, GetJsonInteger(*payload, "requestId")));
+    const bool riskControl = GetJsonBool(*payload, "riskControl");
+    const bool hasResults = GetJsonBool(*payload, "hasResults");
+    const std::string responseUrl = GetJsonString(*payload, "responseUrl");
     writeSearchTrace(
         "WebView", "transport_result",
         fmt::format("id={} status={} risk={} has_results={} source={} content_type={} "
                     "body_bytes={} error={}",
-                    requestId, payload->GetLong("statusCode"), riskControl,
-                    hasResults, payload->GetString("resultSource"),
-                    payload->GetString("contentType"),
-                    payload->GetString("body").size(), payload->GetString("error")));
+                    requestId, GetJsonInteger(*payload, "statusCode"), riskControl,
+                    hasResults, GetJsonString(*payload, "resultSource"),
+                    GetJsonString(*payload, "contentType"),
+                    GetJsonString(*payload, "body").size(),
+                    GetJsonString(*payload, "error")));
     if (riskControl)
     {
         {
@@ -1035,9 +1073,9 @@ std::string DomDownToolPreview::AmapWebViewSearch::handleTransportResult(
             return makeBindingResult(true);
         }
         activeRequest_->waitingForVerification = false;
-        activeRequest_->response.statusCode = payload->GetLong("statusCode");
-        activeRequest_->response.body = payload->GetString("body");
-        activeRequest_->response.error = payload->GetString("error");
+        activeRequest_->response.statusCode = GetJsonInteger(*payload, "statusCode");
+        activeRequest_->response.body = GetJsonString(*payload, "body");
+        activeRequest_->response.error = GetJsonString(*payload, "error");
         activeRequest_->completed = true;
         nativeWindow = nativeWindow_;
     }
@@ -1052,14 +1090,14 @@ std::string DomDownToolPreview::AmapWebViewSearch::handleTransportResult(
 std::string DomDownToolPreview::AmapWebViewSearch::handleRiskDetected(
     const std::string& requestJson)
 {
-    const std::optional<CPLJSONObject> payload = firstBindingArgument(requestJson);
+    const std::optional<Json> payload = firstBindingArgument(requestJson);
     if (!payload.has_value())
     {
         writeSearchTrace("WebView", "risk_invalid_payload");
         return makeBindingResult(false, "Invalid risk-control payload.");
     }
 
-    writeSearchTrace("WebView", "risk_detected", "url=" + payload->GetString("url"));
+    writeSearchTrace("WebView", "risk_detected", "url=" + GetJsonString(*payload, "url"));
 
     bool shouldShowVerification = false;
     {
@@ -1087,7 +1125,7 @@ std::string DomDownToolPreview::AmapWebViewSearch::handleRiskDetected(
     condition_.notify_all();
     if (shouldShowVerification)
     {
-        showVerification(payload->GetString("url"), false);
+        showVerification(GetJsonString(*payload, "url"), false);
     }
     return makeBindingResult(true);
 }

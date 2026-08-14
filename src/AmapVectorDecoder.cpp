@@ -10,13 +10,15 @@
 #include <utility>
 #include <vector>
 
-#include "cpl_json.h"
+#include "nlohmann/json.hpp"
 #include "zlib.h"
 
 #include "amap_vector_tile.pb.h"
 
 namespace
 {
+    using Json = nlohmann::json;
+
     constexpr size_t kMaximumUncompressedPacketBytes = 64u * 1024u * 1024u;
 
     struct LayerTileLocation
@@ -610,93 +612,86 @@ namespace
         }
     }
 
-    CPLJSONArray BuildCoordinateArray(
+    Json BuildCoordinateArray(
         const std::vector<DownTool::AmapVectorCoordinate>& coordinates)
     {
-        CPLJSONArray coordinateArray;
+        Json coordinateArray = Json::array();
         for (const DownTool::AmapVectorCoordinate& coordinate : coordinates)
         {
-            CPLJSONArray position;
-            position.Add(coordinate.longitude);
-            position.Add(coordinate.latitude);
-            coordinateArray.Add(position);
+            coordinateArray.push_back(
+                Json::array({coordinate.longitude, coordinate.latitude}));
         }
         return coordinateArray;
     }
 
-    CPLJSONObject BuildFeatureJson(const DownTool::AmapVectorFeature& feature)
+    Json BuildFeatureJson(const DownTool::AmapVectorFeature& feature)
     {
-        CPLJSONObject properties;
-        properties.Add("layer", feature.layerName);
-        properties.Add("mainKey", static_cast<int>(feature.mainKey));
-        properties.Add("subKey", static_cast<int>(feature.subKey));
-        properties.Add("resolution", static_cast<int>(feature.resolution));
-        properties.Add("minZoom", static_cast<int>(feature.minZoom));
-        properties.Add("maxZoom", static_cast<int>(feature.maxZoom));
-        properties.Add("drawOrder", static_cast<int>(feature.drawOrder));
-        properties.Add("rank", static_cast<int>(feature.rank));
-        properties.Add("uid", static_cast<uint64_t>(feature.uid));
+        Json properties = {
+            {"layer", feature.layerName},
+            {"mainKey", static_cast<int>(feature.mainKey)},
+            {"subKey", static_cast<int>(feature.subKey)},
+            {"resolution", static_cast<int>(feature.resolution)},
+            {"minZoom", static_cast<int>(feature.minZoom)},
+            {"maxZoom", static_cast<int>(feature.maxZoom)},
+            {"drawOrder", static_cast<int>(feature.drawOrder)},
+            {"rank", static_cast<int>(feature.rank)},
+            {"uid", static_cast<uint64_t>(feature.uid)}};
 
-        CPLJSONArray names;
+        Json names = Json::array();
         for (const DownTool::AmapVectorName& name : feature.names)
         {
-            CPLJSONObject nameJson;
-            nameJson.Add("text", name.text);
-            nameJson.Add("language", name.language);
-            names.Add(nameJson);
+            names.push_back({{"text", name.text}, {"language", name.language}});
         }
-        properties.Add("names", names);
+        properties["names"] = std::move(names);
         if (!feature.shield.empty())
         {
-            properties.Add("shield", feature.shield);
+            properties["shield"] = feature.shield;
         }
         if (feature.shieldType != 0)
         {
-            properties.Add("shieldType", static_cast<int>(feature.shieldType));
+            properties["shieldType"] = static_cast<int>(feature.shieldType);
         }
         if (feature.hasHeight)
         {
-            properties.Add("height", static_cast<uint64_t>(feature.height));
+            properties["height"] = static_cast<uint64_t>(feature.height);
         }
         if (!feature.buildingIds.empty())
         {
-            properties.Add("buildingIds", feature.buildingIds);
+            properties["buildingIds"] = feature.buildingIds;
         }
         if (!feature.internalType.empty())
         {
-            properties.Add("internalType", feature.internalType);
+            properties["internalType"] = feature.internalType;
         }
 
-        CPLJSONObject geometry;
+        Json geometry;
         if (feature.geometryType == DownTool::AmapVectorGeometryType::Point)
         {
-            geometry.Add("type", "Point");
-            CPLJSONArray position;
-            position.Add(feature.geometryParts.front().front().longitude);
-            position.Add(feature.geometryParts.front().front().latitude);
-            geometry.Add("coordinates", position);
+            const DownTool::AmapVectorCoordinate& coordinate =
+                feature.geometryParts.front().front();
+            geometry = {{"type", "Point"},
+                        {"coordinates",
+                         Json::array({coordinate.longitude, coordinate.latitude})}};
         }
         else if (feature.geometryType == DownTool::AmapVectorGeometryType::LineString)
         {
-            geometry.Add("type", "LineString");
-            geometry.Add("coordinates", BuildCoordinateArray(feature.geometryParts.front()));
+            geometry = {
+                {"type", "LineString"},
+                {"coordinates", BuildCoordinateArray(feature.geometryParts.front())}};
         }
         else
         {
-            geometry.Add("type", "Polygon");
-            CPLJSONArray rings;
+            Json rings = Json::array();
             for (const std::vector<DownTool::AmapVectorCoordinate>& ring : feature.geometryParts)
             {
-                rings.Add(BuildCoordinateArray(ring));
+                rings.push_back(BuildCoordinateArray(ring));
             }
-            geometry.Add("coordinates", rings);
+            geometry = {{"type", "Polygon"}, {"coordinates", std::move(rings)}};
         }
 
-        CPLJSONObject result;
-        result.Add("type", "Feature");
-        result.Add("properties", properties);
-        result.Add("geometry", geometry);
-        return result;
+        return {{"type", "Feature"},
+                {"properties", std::move(properties)},
+                {"geometry", std::move(geometry)}};
     }
 }
 
@@ -778,19 +773,19 @@ bool DownTool::AmapVectorGeoJsonWriter::WriteFile(
         return false;
     }
 
-    CPLJSONArray features;
+    Json features = Json::array();
     for (const AmapVectorFeature& feature : decodedData.features)
     {
-        features.Add(BuildFeatureJson(feature));
+        features.push_back(BuildFeatureJson(feature));
     }
 
-    CPLJSONObject root;
-    root.Add("type", "FeatureCollection");
-    root.Add("coordinateSystem", "GCJ-02");
-    root.Add("sourceFormat", "AMap web vector tile v2");
-    root.Add("packetCount", static_cast<int>(decodedData.packetCount));
-    root.Add("version", decodedData.version);
-    root.Add("features", features);
+    const Json root = {
+        {"type", "FeatureCollection"},
+        {"coordinateSystem", "GCJ-02"},
+        {"sourceFormat", "AMap web vector tile v2"},
+        {"packetCount", static_cast<int>(decodedData.packetCount)},
+        {"version", decodedData.version},
+        {"features", std::move(features)}};
 
     std::error_code directoryError;
     const std::filesystem::path parentPath = outputPath.parent_path();
@@ -810,7 +805,7 @@ bool DownTool::AmapVectorGeoJsonWriter::WriteFile(
         error = "无法打开 GeoJSON 输出文件。";
         return false;
     }
-    outputFile << root.Format(CPLJSONObject::PrettyFormat::Plain) << '\n';
+    outputFile << root.dump() << '\n';
     if (!outputFile.good())
     {
         error = "写入 GeoJSON 输出文件失败。";
