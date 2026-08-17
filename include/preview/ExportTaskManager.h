@@ -177,5 +177,6 @@ class ExportTaskManager
     std::atomic_bool cancelActive_{false};
     bool stopping_ = false;
     std::chrono::steady_clock::time_point lastSaveTime_{};
+    std::chrono::steady_clock::time_point lastProgressNotificationTime_{};
 };
 } // namespace DomDownToolPreview

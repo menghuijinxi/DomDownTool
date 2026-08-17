@@ -126,6 +126,28 @@ class CountingDownloader final : public DownTool::DownToolBase
     std::shared_ptr<std::atomic_uint32_t> startCount_;
 };
 
+class ProgressBurstDownloader final : public DownTool::DownToolBase
+{
+  public:
+    void StartDown() override
+    {
+        constexpr uint64_t kProgressCount = 20000;
+        for (uint64_t completed = 1; completed <= kProgressCount; ++completed)
+        {
+            ReportProgress("下载瓦片", completed, kProgressCount);
+        }
+
+        const std::filesystem::path outputRoot =
+            std::filesystem::u8path(GetPostProcessOutputPath());
+        std::error_code directoryError;
+        std::filesystem::create_directories(outputRoot, directoryError);
+        if (!directoryError)
+        {
+            std::ofstream(outputRoot / "meta.json", std::ios::binary) << "{}\n";
+        }
+    }
+};
+
 DomDownToolPreview::ExportConfiguration makeCancelableConfiguration(
     const std::filesystem::path& outputRoot)
 {
@@ -576,6 +598,35 @@ bool runTest()
                     record->state == DomDownToolPreview::ExportTaskState::Canceled &&
                     downloaderStartCount->load(std::memory_order_relaxed) == 0,
                 "下载器注册前取消后仍启动了卫星下载"))
+        {
+            return false;
+        }
+    }
+
+    {
+        std::atomic_uint32_t burstChangeCount = 0;
+        DomDownToolPreview::ExportTaskManager manager(
+            [&burstChangeCount]
+            {
+                burstChangeCount.fetch_add(1, std::memory_order_relaxed);
+            },
+            testRoot / "progress-burst-records.json",
+            [](std::string_view)
+            {
+                return std::make_unique<ProgressBurstDownloader>();
+            });
+        const DomDownToolPreview::ExportConfiguration configuration =
+            makeCancelableConfiguration(testRoot / "progress-burst-output");
+        const std::string taskId = manager.Enqueue(configuration);
+        const bool finished = waitForFinished(manager, taskId);
+        const std::vector<DomDownToolPreview::ExportTaskRecord> records =
+            manager.GetRecords();
+        const DomDownToolPreview::ExportTaskRecord* record = findRecord(records, taskId);
+        if (!postprocess_test::Require(
+                finished && record &&
+                    record->state == DomDownToolPreview::ExportTaskState::Succeeded &&
+                    burstChangeCount.load(std::memory_order_relaxed) <= 10,
+                "高频下载进度触发了过量界面刷新"))
         {
             return false;
         }

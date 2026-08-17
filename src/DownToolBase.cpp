@@ -53,6 +53,8 @@ namespace
 	constexpr size_t CacheScanBatchSize = 128;
 	constexpr size_t MaxCacheIssueSampleCount = 20;
 	constexpr uint32_t CacheScanConcurrencyMultiplier = 4;
+	constexpr long TileRequestTimeoutSeconds = 20;
+	constexpr long TileConnectTimeoutSeconds = 10;
 
 	struct TileRepairTask
 	{
@@ -432,6 +434,23 @@ namespace
 		const int32_t scale = static_cast<int32_t>(1u << zoomOffset);
 		return FloorDiv(childTile.X, scale) == parentTile.X &&
 			FloorDiv(childTile.Y, scale) == parentTile.Y;
+	}
+
+	bool CanBatchRepairFromParentZoom(uint32_t parentZoom, uint32_t targetZoom)
+	{
+		if (targetZoom <= parentZoom)
+		{
+			return false;
+		}
+
+		const uint32_t zoomOffset = targetZoom - parentZoom;
+		if (zoomOffset >= 31)
+		{
+			return false;
+		}
+
+		const uint64_t scale = uint64_t{ 1 } << zoomOffset;
+		return scale * scale <= MaxBatchRepairedTileCount;
 	}
 
 	struct TileHash
@@ -2369,13 +2388,26 @@ std::vector<DownTool::Tile> DownTool::DownToolBase::ScanCacheAndCollectPendingTi
 void DownTool::DownToolBase::DownloadTile(int32_t x, int32_t y)
 {
 	// 等待至少一个下载完成
-	while (curlEasyHandles.size() >= GetEffectiveQueueCount(MaxDownQueue))
+	while (!IsStopRequested() &&
+		curlEasyHandles.size() >= GetEffectiveQueueCount(MaxDownQueue))
 	{
 		WaitDown();
+	}
+	if (IsStopRequested())
+	{
+		return;
 	}
 
 	Tile tile(x, y, GetZoom());
 	std::filesystem::path nativePath = GetTileFilePath(tile);
+	while (!IsStopRequested() && IsCoveredByPendingLowerZoomRepair(tile))
+	{
+		WaitDown();
+	}
+	if (IsStopRequested())
+	{
+		return;
+	}
 
 	if (IsTileDownloading(tile))
 	{
@@ -2416,14 +2448,6 @@ void DownTool::DownToolBase::DownloadTile(int32_t x, int32_t y)
 	}
 
 	if (RepairTileFromExistingLowerZoom(tile))
-	{
-		DowningCount++;
-		fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
-		ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
-		return;
-	}
-
-	if (IsCoveredByPendingLowerZoomRepair(tile))
 	{
 		DowningCount++;
 		fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
@@ -2553,6 +2577,9 @@ bool DownTool::DownToolBase::QueueTileDownload(
 	curl_easy_setopt(easy, CURLOPT_WRITEDATA, &curlEasyHandles[easy]);
 	curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, WriteTileHeaderData);
 	curl_easy_setopt(easy, CURLOPT_HEADERDATA, &curlEasyHandles[easy]);
+	curl_easy_setopt(easy, CURLOPT_TIMEOUT, TileRequestTimeoutSeconds);
+	curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, TileConnectTimeoutSeconds);
+	curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
     if (!Proxy.empty())
     {
         curl_easy_setopt(easy, CURLOPT_PROXY, Proxy.c_str());
@@ -2593,6 +2620,7 @@ bool DownTool::DownToolBase::IsCoveredByPendingLowerZoomRepair(const Tile& tile)
 		(void)easy;
 		if (context.requestType == CurlRequestType::RepairParent &&
 			context.repairTargetZoom == tile.Zoom &&
+			CanBatchRepairFromParentZoom(context.tile.Zoom, tile.Zoom) &&
 			TileInParentRange(context.tile, tile, tile.Zoom))
 		{
 			return true;
@@ -2674,12 +2702,11 @@ bool DownTool::DownToolBase::RepairTileFromLowerZoom(
 
 	for (uint32_t parentZoom = startParentZoom;; parentZoom--)
 	{
-		const uint32_t zoomOffset = tile.Zoom - parentZoom;
-		if (zoomOffset >= 31)
+		if (!CanBatchRepairFromParentZoom(parentZoom, tile.Zoom))
 		{
-			return false;
+			break;
 		}
-
+		const uint32_t zoomOffset = tile.Zoom - parentZoom;
 		const int32_t scale = static_cast<int32_t>(1u << zoomOffset);
 		const Tile parentTile(
 			FloorDiv(tile.X, scale),
@@ -2760,12 +2787,11 @@ bool DownTool::DownToolBase::RepairTileFromExistingLowerZoom(
 
 	for (uint32_t parentZoom = startParentZoom;; parentZoom--)
 	{
-		const uint32_t zoomOffset = tile.Zoom - parentZoom;
-		if (zoomOffset >= 31)
+		if (!CanBatchRepairFromParentZoom(parentZoom, tile.Zoom))
 		{
-			return false;
+			break;
 		}
-
+		const uint32_t zoomOffset = tile.Zoom - parentZoom;
 		const int32_t scale = static_cast<int32_t>(1u << zoomOffset);
 		const Tile parentTile(
 			FloorDiv(tile.X, scale),
@@ -2795,23 +2821,14 @@ bool DownTool::DownToolBase::RepairTileFromExistingLowerZoom(
 bool DownTool::DownToolBase::RepairTilesFromParent(
 	const Tile& parentTile, uint32_t targetZoom)
 {
-	if (targetZoom <= parentTile.Zoom)
+	if (!CanBatchRepairFromParentZoom(parentTile.Zoom, targetZoom))
 	{
 		return false;
 	}
 
 	const uint32_t zoomOffset = targetZoom - parentTile.Zoom;
-	if (zoomOffset >= 31)
-	{
-		return false;
-	}
-
 	const uint32_t scale = 1u << zoomOffset;
 	const uint64_t batchTileCount = static_cast<uint64_t>(scale) * scale;
-	if (batchTileCount > MaxBatchRepairedTileCount)
-	{
-		return false;
-	}
 
 	const std::filesystem::path parentPath = GetTileFilePath(parentTile);
 	if (!IsValidImageFile(parentPath) || IsUnavailableTileFile(parentPath, parentTile))

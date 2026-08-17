@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <limits>
 #include <memory>
 #include <thread>
 
@@ -39,6 +40,70 @@ namespace
       private:
         std::shared_ptr<BlockingPostProcessControl> control_;
     };
+
+    class UnavailableTileDown final : public DownTool::DownToolBase
+    {
+      public:
+        explicit UnavailableTileDown(std::filesystem::path fixturePath)
+            : fixturePath_(std::move(fixturePath))
+        {
+        }
+
+        void CalculateDownRange() override
+        {
+            MinTile = DownTool::Tile(26447, 12163, Zoom);
+            MaxTile = MinTile;
+        }
+
+        std::string MakeUri(const DownTool::Tile& tile) override
+        {
+            minimumRequestedZoom_ = std::min(minimumRequestedZoom_, tile.Zoom);
+            return "file:///" + fixturePath_.generic_string();
+        }
+
+        uint32_t GetMinimumRequestedZoom() const
+        {
+            return minimumRequestedZoom_;
+        }
+
+      protected:
+        bool IsUnavailableTileFile(
+            const std::filesystem::path&, const DownTool::Tile&) const override
+        {
+            return true;
+        }
+
+      private:
+        std::filesystem::path fixturePath_;
+        uint32_t minimumRequestedZoom_ = std::numeric_limits<uint32_t>::max();
+    };
+
+    bool RunFallbackRepairDepthTest()
+    {
+        const std::filesystem::path testRoot =
+            postprocess_test::MakeTestRoot("fallback-repair-depth");
+        if (!postprocess_test::ResetDirectory(testRoot))
+        {
+            return false;
+        }
+
+        const std::filesystem::path fixturePath = testRoot / "unavailable.png";
+        if (!postprocess_test::WriteSourceTile(
+                fixturePath, 32, cv::Scalar(23, 47, 89, 255)))
+        {
+            return false;
+        }
+
+        UnavailableTileDown tool(fixturePath);
+        tool.SetZoom(15);
+        tool.SetCachePath(postprocess_test::PathToUtf8String(testRoot / "cache"));
+        tool.SetMaxDownQueue(1);
+        tool.StartDown();
+
+        return postprocess_test::Require(
+            tool.GetMinimumRequestedZoom() == 9,
+            "z15 不可用瓦片回退到了无法批量修复的过低层级");
+    }
 
     bool RunCancellationTest()
     {
@@ -82,6 +147,11 @@ namespace
 
     bool RunTest()
     {
+        if (!RunFallbackRepairDepthTest())
+        {
+            return false;
+        }
+
         if (!RunCancellationTest())
         {
             return false;

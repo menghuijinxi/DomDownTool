@@ -38,6 +38,8 @@ using DomDownToolPreview::ExportTaskState;
 using DomDownToolPreview::GisExportMode;
 using DomDownToolPreview::SatelliteExportSource;
 
+constexpr auto kProgressNotificationInterval = std::chrono::milliseconds(100);
+
 std::string GetJsonString(const Json& object, const char* fieldName)
 {
     if (!object.is_object())
@@ -808,6 +810,7 @@ void DomDownToolPreview::ExportTaskManager::WorkerLoop()
             queuedExport = std::move(queue_.front());
             queue_.pop_front();
             cancelActive_.store(false, std::memory_order_relaxed);
+            lastProgressNotificationTime_ = {};
             const auto record = std::find_if(
                 records_.begin(), records_.end(),
                 [&queuedExport](const ExportTaskRecord& item)
@@ -1354,6 +1357,7 @@ void DomDownToolPreview::ExportTaskManager::UpdateProgress(
     std::string_view taskId, std::string stage, double progress,
     uint64_t completed, uint64_t total)
 {
+    bool notifyChanged = false;
     {
         const std::lock_guard lock(mutex_);
         const auto record = std::find_if(
@@ -1367,10 +1371,24 @@ void DomDownToolPreview::ExportTaskManager::UpdateProgress(
         {
             return;
         }
+        const bool stageChanged = record->stage != stage;
         record->stage = std::move(stage);
         record->progress = std::max(record->progress, std::clamp(progress, 0., 1.));
         record->completed = completed;
         record->total = total;
+        const auto now = std::chrono::steady_clock::now();
+        const bool reachedEnd = total != 0 && completed >= total;
+        notifyChanged = stageChanged || reachedEnd ||
+            lastProgressNotificationTime_ == std::chrono::steady_clock::time_point{} ||
+            now - lastProgressNotificationTime_ >= kProgressNotificationInterval;
+        if (notifyChanged)
+        {
+            lastProgressNotificationTime_ = now;
+        }
+    }
+    if (!notifyChanged)
+    {
+        return;
     }
     SaveRecords(false);
     NotifyChanged();
