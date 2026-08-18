@@ -138,11 +138,13 @@ bool runTest()
             postprocess_test::ContainsText(controllerPath, "task-config-") &&
                 postprocess_test::ContainsText(controllerPath,
                                                "open-export-task-config") &&
+                postprocess_test::ContainsText(controllerPath, "task-resume-") &&
+                postprocess_test::ContainsText(controllerPath, "resume-export-task") &&
                 postprocess_test::ContainsText(documentPath, "task-reopen-config") &&
                 postprocess_test::ContainsText(
                     documentPath,
-                    "grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 150px 190px;") &&
-                postprocess_test::ContainsText(documentPath, "min-width: 190px;"),
+                    "grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 150px 200px;") &&
+                postprocess_test::ContainsText(documentPath, "min-width: 200px;"),
             "导出任务缺少按当前参数重新打开配置的按钮结构"))
     {
         return false;

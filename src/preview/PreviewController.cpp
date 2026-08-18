@@ -324,6 +324,16 @@ std::optional<std::string> taskIdFromConfigButton(std::string_view id)
     return std::string(id.substr(kPrefix.size()));
 }
 
+std::optional<std::string> taskIdFromResumeButton(std::string_view id)
+{
+    constexpr std::string_view kPrefix = "task-resume-";
+    if (!id.starts_with(kPrefix) || id.size() == kPrefix.size())
+    {
+        return std::nullopt;
+    }
+    return std::string(id.substr(kPrefix.size()));
+}
+
 std::optional<std::string> taskIdFromRemoveButton(std::string_view id)
 {
     constexpr std::string_view kPrefix = "task-remove-";
@@ -1550,6 +1560,37 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 }
                 pendingExportConfiguration_ = *configuration;
                 schedulePageChange(Page::Export, runtime);
+                return;
+            }
+            if (const std::optional<std::string> taskId =
+                    taskIdFromResumeButton(event.id))
+            {
+                const std::vector<ExportTaskRecord> records = exportTaskManager_.GetRecords();
+                const auto record = std::find_if(
+                    records.begin(), records.end(),
+                    [&taskId](const ExportTaskRecord& item) { return item.id == *taskId; });
+                if (record == records.end() ||
+                    (record->state != ExportTaskState::Failed &&
+                     record->state != ExportTaskState::Canceled))
+                {
+                    MessageBoxW(window_.load(std::memory_order_relaxed),
+                                L"只有失败、已中断或已取消的任务可以继续。", L"DomDownTool",
+                                MB_OK | MB_ICONINFORMATION);
+                    return;
+                }
+                const std::optional<ExportConfiguration> configuration =
+                    record->configuration.has_value() ? record->configuration :
+                    loadLegacyTaskConfiguration(*record);
+                if (!configuration.has_value())
+                {
+                    MessageBoxW(window_.load(std::memory_order_relaxed),
+                                L"该任务没有找到可恢复的导出参数。", L"DomDownTool",
+                                MB_OK | MB_ICONINFORMATION);
+                    return;
+                }
+                (void)exportTaskManager_.Enqueue(*configuration);
+                UpdateTaskUi(runtime);
+                requestRedraw();
                 return;
             }
             if (const std::optional<std::string> taskId =
@@ -2876,6 +2917,18 @@ void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
             "r=\"2\" fill=\"#1e2121\" stroke=\"#88d9be\" stroke-width=\"1.6\"/>"
             "</svg></button>",
             escapeHtml(record.id));
+        const bool resumable = record.state == ExportTaskState::Failed ||
+            record.state == ExportTaskState::Canceled;
+        const std::string resumeAction = resumable ? fmt::format(
+            "<button id=\"task-resume-{}\" class=\"task-icon-button task-resume\" "
+            "type=\"button\" data-action=\"resume-export-task\" "
+            "title=\"继续任务（复用下载缓存）\" aria-label=\"继续任务（复用下载缓存）\">"
+            "<svg viewBox=\"0 0 24 24\" width=\"17\" height=\"17\" "
+            "pointer-events=\"none\" aria-hidden=\"true\"><path d=\"M20 11a8 8 0 1 0 "
+            "2 5.3M20 5v6h-6\" fill=\"none\" stroke=\"#e4c779\" "
+            "stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>"
+            "</svg></button>",
+            escapeHtml(record.id)) : "";
         const std::string finishedActions = finished ? fmt::format(
             "<button id=\"task-remove-{}\" class=\"task-icon-button "
             "task-remove-record\" type=\"button\" data-action=\"remove-export-task\" "
@@ -2909,7 +2962,7 @@ void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
             escapeHtml(record.outputPath), errorHtml, escapeHtml(record.stage),
             progressText, record.progress * 100., stateValue,
             ExportTaskStateName(record.state), escapeHtml(record.finishedAt),
-            openOutput + openConfiguration + action + finishedActions);
+            openOutput + openConfiguration + resumeAction + action + finishedActions);
     }
     if (records.empty())
     {
