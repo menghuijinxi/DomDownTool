@@ -1253,13 +1253,17 @@
 
         .task-row {
             display: grid;
-            grid-template-columns: minmax(240px, 1.3fr) minmax(220px, 1fr) 150px 112px;
+            grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 150px 190px;
             gap: 18px;
             align-items: center;
             min-height: 96px;
             padding: 14px 24px;
             border-bottom: 1px solid #333837;
             background: #1E2121;
+        }
+
+        .task-row > div {
+            min-width: 0;
         }
 
         .task-row:hover {
@@ -1352,6 +1356,7 @@
             align-items: center;
             justify-content: flex-end;
             gap: 8px;
+            min-width: 190px;
         }
 
         .task-open-output,
@@ -1381,6 +1386,11 @@
         .task-delete-output {
             border-color: #855955;
             color: #ffaaa2;
+        }
+
+        .task-reopen-config {
+            border-color: #2e8f7e;
+            color: #88d9be;
         }
 
         .task-empty {
@@ -1491,11 +1501,12 @@
             }
 
             .task-row {
-                grid-template-columns: minmax(220px, 1fr) minmax(200px, 1fr) 100px;
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 100px;
             }
 
             .task-row-actions {
                 grid-column: 1 / -1;
+                min-width: 0;
             }
         }
     </style>

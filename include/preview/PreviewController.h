@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -102,7 +103,8 @@ class PreviewController
 
     void OpenPreviewPage(skui::Runtime& runtime);
 
-    void InitializeExportDraft(skui::Runtime& runtime);
+    void InitializeExportDraft(
+        skui::Runtime& runtime, const ExportConfiguration* configuration = nullptr);
 
     void UpdateExportUi(skui::Runtime& runtime);
 
@@ -152,6 +154,8 @@ class PreviewController
     std::string exportRadiusValue_ = "0";
     std::string exportZoomValue_;
     std::set<std::string> exportMapSourceIds_;
+    std::map<DownTool::AmapVectorRenderCategory, DownTool::AmapVectorColor>
+        exportGisColors_;
     std::string exportOutputValue_;
     std::string exportMergedFormat_ = "png";
     std::string exportMergedResolutionValue_ = "16384";
@@ -184,6 +188,7 @@ class PreviewController
     bool gisColorHueDragging_ = false;
     bool gisColorEyedropperActive_ = false;
     bool taskClearConfirmOpen_ = false;
+    std::optional<ExportConfiguration> pendingExportConfiguration_;
     std::optional<std::string> taskDeleteTargetId_;
     std::string taskDeleteTargetTitle_;
     std::string taskDeleteTargetPath_;

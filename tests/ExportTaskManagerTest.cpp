@@ -189,6 +189,20 @@ bool runTest()
         return false;
     }
 
+    const std::filesystem::path gisTemporaryRoot =
+        testRoot / std::filesystem::u8path("GIS 临时目录");
+    const std::filesystem::path gisTileOutputRoot = gisTemporaryRoot / "XYZ";
+    if (!postprocess_test::Require(
+            DomDownToolPreview::ExportGisOverlayInputRoot(
+                false, gisTileOutputRoot, gisTemporaryRoot) ==
+                gisTemporaryRoot / std::filesystem::u8path("后处理") &&
+                DomDownToolPreview::ExportGisOverlayInputRoot(
+                    true, gisTileOutputRoot, gisTemporaryRoot) == gisTileOutputRoot,
+            "GIS 叠加输入目录没有正确兼容中文后处理路径"))
+    {
+        return false;
+    }
+
     const std::filesystem::path imageRoot =
         testRoot / std::filesystem::u8path("中文图像目录");
     const std::filesystem::path baseImagePath =
@@ -622,11 +636,47 @@ bool runTest()
         const std::vector<DomDownToolPreview::ExportTaskRecord> records =
             manager.GetRecords();
         const DomDownToolPreview::ExportTaskRecord* record = findRecord(records, taskId);
+        const Json persisted = loadJsonFile(testRoot / "progress-burst-records.json");
+        bool persistedHasConfiguration = false;
+        if (persisted.is_object())
+        {
+            const auto persistedTasks = persisted.find("tasks");
+            if (persistedTasks != persisted.end() && persistedTasks->is_array())
+            {
+                const auto persistedTask = std::find_if(
+                    persistedTasks->begin(), persistedTasks->end(),
+                    [&taskId](const Json& item) { return item.value("id", "") == taskId; });
+                persistedHasConfiguration = persistedTask != persistedTasks->end() &&
+                    persistedTask->contains("configuration");
+            }
+        }
         if (!postprocess_test::Require(
                 finished && record &&
                     record->state == DomDownToolPreview::ExportTaskState::Succeeded &&
-                    burstChangeCount.load(std::memory_order_relaxed) <= 10,
-                "高频下载进度触发了过量界面刷新"))
+                    record->configuration.has_value() &&
+                    record->configuration->zoom == configuration.zoom &&
+                    record->configuration->exportTiles == configuration.exportTiles &&
+                    burstChangeCount.load(std::memory_order_relaxed) <= 10 &&
+                    persistedHasConfiguration,
+                "任务记录没有保存可恢复的导出参数或高频进度触发了过量界面刷新"))
+        {
+            return false;
+        }
+    }
+    {
+        DomDownToolPreview::ExportTaskManager manager(
+            {}, testRoot / "progress-burst-records.json");
+        const std::vector<DomDownToolPreview::ExportTaskRecord> records =
+            manager.GetRecords();
+        const std::optional<DomDownToolPreview::ExportConfiguration> configuration =
+            records.size() == 1 ? records.front().configuration : std::nullopt;
+        if (!postprocess_test::Require(
+                configuration.has_value() && configuration->radiusMeters == 1000. &&
+                    configuration->zoom == 15 && configuration->exportTiles &&
+                    configuration->outputRoot == testRoot / "progress-burst-output" &&
+                    configuration->satelliteSources.size() == 1 &&
+                    configuration->satelliteSources.front().id == "test.satellite",
+                "重启后没有完整恢复任务导出参数"))
         {
             return false;
         }

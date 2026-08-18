@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -52,6 +53,8 @@ std::string GetJsonString(const Json& object, const char* fieldName)
         : std::string{};
 }
 
+std::string PathToUtf8(const std::filesystem::path& path);
+
 double GetJsonDouble(const Json& object, const char* fieldName)
 {
     if (!object.is_object())
@@ -62,6 +65,209 @@ double GetJsonDouble(const Json& object, const char* fieldName)
     return iterator != object.end() && iterator->is_number()
         ? iterator->get<double>()
         : 0.;
+}
+
+bool GetJsonBool(const Json& object, const char* fieldName, bool defaultValue = false)
+{
+    if (!object.is_object())
+    {
+        return defaultValue;
+    }
+    const auto iterator = object.find(fieldName);
+    return iterator != object.end() && iterator->is_boolean()
+        ? iterator->get<bool>()
+        : defaultValue;
+}
+
+Json ExportConfigurationToJson(const ExportConfiguration& configuration)
+{
+    Json satelliteSources = Json::array();
+    for (const SatelliteExportSource& source : configuration.satelliteSources)
+    {
+        satelliteSources.push_back({
+            {"id", source.id},
+            {"name", source.name},
+            {"cachePath", PathToUtf8(source.cachePath)}});
+    }
+
+    Json gisCategories = Json::array();
+    for (const DownTool::AmapVectorRenderCategory category : configuration.gisCategories)
+    {
+        gisCategories.push_back(static_cast<int>(category));
+    }
+
+    Json gisModes = Json::array();
+    for (const GisExportMode mode : configuration.gisModes)
+    {
+        gisModes.push_back(static_cast<int>(mode));
+    }
+
+    Json gisColors = Json::object();
+    for (const auto& [category, color] : configuration.gisColors)
+    {
+        gisColors[std::to_string(static_cast<int>(category))] = {
+            {"red", color.red},
+            {"green", color.green},
+            {"blue", color.blue},
+            {"alpha", color.alpha}};
+    }
+
+    return {
+        {"centerWgs84", {{"lon", configuration.centerWgs84.lon},
+                           {"lat", configuration.centerWgs84.lat}}},
+        {"radiusMeters", configuration.radiusMeters},
+        {"zoom", configuration.zoom},
+        {"satelliteSources", std::move(satelliteSources)},
+        {"gisCategories", std::move(gisCategories)},
+        {"gisModes", std::move(gisModes)},
+        {"gisColors", std::move(gisColors)},
+        {"outputRoot", PathToUtf8(configuration.outputRoot)},
+        {"exportTiles", configuration.exportTiles},
+        {"exportMergedImage", configuration.exportMergedImage},
+        {"exportFbx", configuration.exportFbx},
+        {"exportGeoJson", configuration.exportGeoJson},
+        {"colorBuildingsByHeight", configuration.colorBuildingsByHeight},
+        {"mergedImageResolution", configuration.mergedImageResolution},
+        {"mergedImageFormat", configuration.mergedImageFormat},
+        {"fbxTextureSize", configuration.fbxTextureSize}};
+}
+
+std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value)
+{
+    if (!value.is_object())
+    {
+        return std::nullopt;
+    }
+    const auto center = value.find("centerWgs84");
+    if (center == value.end() || !center->is_object() ||
+        !center->contains("lon") || !center->contains("lat") ||
+        !center->at("lon").is_number() || !center->at("lat").is_number())
+    {
+        return std::nullopt;
+    }
+
+    ExportConfiguration configuration;
+    configuration.centerWgs84.lon = center->at("lon").get<double>();
+    configuration.centerWgs84.lat = center->at("lat").get<double>();
+    configuration.radiusMeters = GetJsonDouble(value, "radiusMeters");
+    configuration.zoom = static_cast<uint32_t>(
+        std::max(0., GetJsonDouble(value, "zoom")));
+    configuration.outputRoot = std::filesystem::u8path(
+        GetJsonString(value, "outputRoot"));
+    configuration.exportTiles = GetJsonBool(value, "exportTiles");
+    configuration.exportMergedImage = GetJsonBool(value, "exportMergedImage");
+    configuration.exportFbx = GetJsonBool(value, "exportFbx");
+    configuration.exportGeoJson = GetJsonBool(value, "exportGeoJson");
+    configuration.colorBuildingsByHeight = GetJsonBool(value, "colorBuildingsByHeight");
+    configuration.mergedImageResolution = static_cast<uint32_t>(
+        std::max(0., GetJsonDouble(value, "mergedImageResolution")));
+    configuration.mergedImageFormat = GetJsonString(value, "mergedImageFormat");
+    if (configuration.mergedImageFormat != "jpg" &&
+        configuration.mergedImageFormat != "png")
+    {
+        configuration.mergedImageFormat = "png";
+    }
+    configuration.fbxTextureSize = static_cast<uint32_t>(
+        std::max(0., GetJsonDouble(value, "fbxTextureSize")));
+
+    const auto sources = value.find("satelliteSources");
+    if (sources != value.end() && sources->is_array())
+    {
+        for (const Json& source : *sources)
+        {
+            if (!source.is_object() || GetJsonString(source, "id").empty())
+            {
+                return std::nullopt;
+            }
+            configuration.satelliteSources.push_back({
+                GetJsonString(source, "id"),
+                GetJsonString(source, "name"),
+                std::filesystem::u8path(GetJsonString(source, "cachePath"))});
+        }
+    }
+
+    const auto categories = value.find("gisCategories");
+    if (categories != value.end() && categories->is_array())
+    {
+        for (const Json& category : *categories)
+        {
+            if (!category.is_number_integer())
+            {
+                return std::nullopt;
+            }
+            const int value = category.get<int>();
+            if (value < static_cast<int>(DownTool::AmapVectorRenderCategory::All) ||
+                value > static_cast<int>(DownTool::AmapVectorRenderCategory::Other))
+            {
+                return std::nullopt;
+            }
+            configuration.gisCategories.insert(
+                static_cast<DownTool::AmapVectorRenderCategory>(value));
+        }
+    }
+
+    const auto modes = value.find("gisModes");
+    if (modes != value.end() && modes->is_array())
+    {
+        for (const Json& mode : *modes)
+        {
+            if (!mode.is_number_integer())
+            {
+                return std::nullopt;
+            }
+            const int value = mode.get<int>();
+            if (value < static_cast<int>(GisExportMode::OverlayOnSatellite) ||
+                value > static_cast<int>(GisExportMode::SeparateLayers))
+            {
+                return std::nullopt;
+            }
+            configuration.gisModes.insert(static_cast<GisExportMode>(value));
+        }
+    }
+
+    const auto colors = value.find("gisColors");
+    if (colors != value.end() && colors->is_object())
+    {
+        for (const auto& [key, color] : colors->items())
+        {
+            if (!color.is_object())
+            {
+                return std::nullopt;
+            }
+            int category = 0;
+            const auto parseResult = std::from_chars(
+                key.data(), key.data() + key.size(), category);
+            if (parseResult.ec != std::errc{} || parseResult.ptr != key.data() + key.size() ||
+                category < static_cast<int>(DownTool::AmapVectorRenderCategory::All) ||
+                category > static_cast<int>(DownTool::AmapVectorRenderCategory::Other))
+            {
+                return std::nullopt;
+            }
+            const auto channel = [&color](const char* name) -> std::optional<uint8_t>
+            {
+                const auto iterator = color.find(name);
+                if (iterator == color.end() || !iterator->is_number_integer())
+                {
+                    return std::nullopt;
+                }
+                const int value = iterator->get<int>();
+                return value >= 0 && value <= 255 ? std::optional<uint8_t>(value) :
+                    std::nullopt;
+            };
+            const auto red = channel("red");
+            const auto green = channel("green");
+            const auto blue = channel("blue");
+            const auto alpha = channel("alpha");
+            if (!red || !green || !blue || !alpha)
+            {
+                return std::nullopt;
+            }
+            configuration.gisColors[
+                static_cast<DownTool::AmapVectorRenderCategory>(category)] =
+                {*red, *green, *blue, *alpha};
+        }
+    }
+    return configuration;
 }
 
 std::string PathToUtf8(const std::filesystem::path& path)
@@ -592,6 +798,14 @@ std::filesystem::path DomDownToolPreview::ExportTaskOutputRoot(
         std::filesystem::u8path(std::string(taskId));
 }
 
+std::filesystem::path DomDownToolPreview::ExportGisOverlayInputRoot(
+    bool exportTiles, const std::filesystem::path& tileOutputPath,
+    const std::filesystem::path& temporaryRoot)
+{
+    return exportTiles ? tileOutputPath :
+        temporaryRoot / std::filesystem::u8path("后处理");
+}
+
 DomDownToolPreview::ExportTaskManager::ExportTaskManager(
     std::function<void()> changeCallback, std::filesystem::path recordsPath,
     ExportDownloaderFactory downloaderFactory)
@@ -631,6 +845,7 @@ std::string DomDownToolPreview::ExportTaskManager::Enqueue(
     record.detail = BuildTaskDetail(configuration);
     record.outputPath = BuildTaskOutputPath(configuration, record.id);
     record.createdAt = CurrentTimeText();
+    record.configuration = configuration;
     const std::string taskId = record.id;
     std::string recordError;
     const bool recordWritten = WriteTaskRecordFiles(
@@ -1236,8 +1451,8 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
             }
             const std::filesystem::path satelliteRoot = SatelliteOutputRoot(
                 configuration, queuedExport.taskId, source);
-            const std::filesystem::path overlayRoot = configuration.exportTiles ?
-                tileOutputPath : temporaryRoot / "后处理";
+            const std::filesystem::path overlayRoot = ExportGisOverlayInputRoot(
+                configuration.exportTiles, tileOutputPath, temporaryRoot);
             const std::filesystem::path compositeRoot = OverlayOutputRoot(
                 configuration, queuedExport.taskId, source);
             if (!ExportImageComposer::CopyDirectory(
@@ -1471,6 +1686,11 @@ void DomDownToolPreview::ExportTaskManager::LoadRecords()
         record.total = static_cast<uint64_t>(
             std::max(0., GetJsonDouble(item, "total")));
         record.error = GetJsonString(item, "error");
+        const auto configuration = item.find("configuration");
+        if (configuration != item.end())
+        {
+            record.configuration = ExportConfigurationFromJson(*configuration);
+        }
         if (record.id.empty())
         {
             continue;
@@ -1511,7 +1731,7 @@ void DomDownToolPreview::ExportTaskManager::SaveRecords(bool force)
     Json tasks = Json::array();
     for (const ExportTaskRecord& record : records)
     {
-        tasks.push_back({
+        Json task = {
             {"id", record.id},
             {"title", record.title},
             {"detail", record.detail},
@@ -1523,7 +1743,12 @@ void DomDownToolPreview::ExportTaskManager::SaveRecords(bool force)
             {"progress", record.progress},
             {"completed", static_cast<double>(record.completed)},
             {"total", static_cast<double>(record.total)},
-            {"error", record.error}});
+            {"error", record.error}};
+        if (record.configuration.has_value())
+        {
+            task["configuration"] = ExportConfigurationToJson(*record.configuration);
+        }
+        tasks.push_back(std::move(task));
     }
     const Json root = {{"version", 1}, {"tasks", std::move(tasks)}};
 

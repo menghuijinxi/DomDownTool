@@ -134,6 +134,19 @@ bool runTest()
     {
         return false;
     }
+    if (!postprocess_test::Require(
+            postprocess_test::ContainsText(controllerPath, "task-config-") &&
+                postprocess_test::ContainsText(controllerPath,
+                                               "open-export-task-config") &&
+                postprocess_test::ContainsText(documentPath, "task-reopen-config") &&
+                postprocess_test::ContainsText(
+                    documentPath,
+                    "grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 150px 190px;") &&
+                postprocess_test::ContainsText(documentPath, "min-width: 190px;"),
+            "导出任务缺少按当前参数重新打开配置的按钮结构"))
+    {
+        return false;
+    }
 
     const std::vector<std::string> exportHeaderChildren =
         runtime.childElementIdsById("export-page-header");
@@ -715,6 +728,9 @@ bool runTest()
                     "<button id=\"task-open-running\" class=\"task-open-output\">"
                     "<svg viewBox=\"0 0 24 24\"><path d=\"M3 7h18v12H3z\" "
                     "fill=\"none\" stroke=\"#cbd4d0\"/></svg></button>"
+                    "<button id=\"task-config-running\" class=\"task-reopen-config\">"
+                    "<svg viewBox=\"0 0 24 24\"><path d=\"M4 6h16M4 12h16M4 18h16\" "
+                    "fill=\"none\" stroke=\"#88d9be\"/></svg></button>"
                     "<button class=\"danger-command\">"
                     "取消</button></div></article>"
                     "<article class=\"task-row\"><div><div class=\"task-title\">"
@@ -729,6 +745,9 @@ bool runTest()
                     "class=\"task-open-output\"><svg viewBox=\"0 0 24 24\">"
                     "<path d=\"M3 7h18v12H3z\" fill=\"none\" "
                     "stroke=\"#cbd4d0\"/></svg></button>"
+                    "<button id=\"task-config-done\" class=\"task-reopen-config\">"
+                    "<svg viewBox=\"0 0 24 24\"><path d=\"M4 6h16M4 12h16M4 18h16\" "
+                    "fill=\"none\" stroke=\"#88d9be\"/></svg></button>"
                     "<button id=\"task-remove-done\" class=\"task-remove-record\">"
                     "<svg viewBox=\"0 0 24 24\"><path d=\"M6 6l12 12M18 6L6 18\" "
                     "fill=\"none\" stroke=\"#cbd4d0\"/></svg></button>"

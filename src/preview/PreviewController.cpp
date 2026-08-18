@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <exception>
+#include <fstream>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -28,6 +29,10 @@
 
 namespace
 {
+using DomDownToolPreview::ExportConfiguration;
+using DomDownToolPreview::ExportTaskRecord;
+using DomDownToolPreview::GisExportMode;
+
 constexpr UINT kPreviewRedrawMessage = WM_APP + 0x642;
 constexpr UINT kPreviewUiRefreshMessage = WM_APP + 0x643;
 constexpr UINT kPreviewSearchRefreshMessage = WM_APP + 0x644;
@@ -309,6 +314,16 @@ std::optional<std::string> taskIdFromOpenButton(std::string_view id)
     return std::string(id.substr(kPrefix.size()));
 }
 
+std::optional<std::string> taskIdFromConfigButton(std::string_view id)
+{
+    constexpr std::string_view kPrefix = "task-config-";
+    if (!id.starts_with(kPrefix) || id.size() == kPrefix.size())
+    {
+        return std::nullopt;
+    }
+    return std::string(id.substr(kPrefix.size()));
+}
+
 std::optional<std::string> taskIdFromRemoveButton(std::string_view id)
 {
     constexpr std::string_view kPrefix = "task-remove-";
@@ -398,6 +413,210 @@ std::optional<uint32_t> parseUint32(std::string_view value)
         return std::nullopt;
     }
     return result;
+}
+
+std::string conversionRecordValue(const std::string& line, std::string_view prefix)
+{
+    return line.starts_with(prefix) ? line.substr(prefix.size()) : std::string{};
+}
+
+std::optional<ExportConfiguration> loadLegacyTaskConfiguration(
+    const ExportTaskRecord& record)
+{
+    const size_t separator = record.outputPath.find("；");
+    const std::filesystem::path outputRoot = std::filesystem::u8path(
+        record.outputPath.substr(0, separator));
+    const std::filesystem::path conversionRecord = outputRoot /
+        std::filesystem::u8path("转换记录-" + record.id + ".txt");
+    std::ifstream input(conversionRecord, std::ios::binary);
+    if (!input.is_open())
+    {
+        return std::nullopt;
+    }
+
+    ExportConfiguration configuration;
+    bool hasCenter = false;
+    bool hasRadius = false;
+    bool hasZoom = false;
+    std::string line;
+    while (std::getline(input, line))
+    {
+        const std::string centerValue = conversionRecordValue(
+            line, "中心坐标 (WGS84): ");
+        if (!centerValue.empty())
+        {
+            const std::optional<DownTool::LonLat> center = parseCenterCoordinate(centerValue);
+            if (center.has_value())
+            {
+                configuration.centerWgs84 = *center;
+                hasCenter = true;
+            }
+            continue;
+        }
+        const std::string radiusValue = conversionRecordValue(line, "半径 (米): ");
+        if (!radiusValue.empty())
+        {
+            const std::optional<double> radius = parseFiniteDouble(radiusValue);
+            if (radius.has_value())
+            {
+                configuration.radiusMeters = *radius;
+                hasRadius = true;
+            }
+            continue;
+        }
+        const std::string zoomValue = conversionRecordValue(line, "层级: ");
+        if (!zoomValue.empty())
+        {
+            const std::optional<uint32_t> zoom = parseUint32(zoomValue);
+            if (zoom.has_value())
+            {
+                configuration.zoom = *zoom;
+                hasZoom = true;
+            }
+            continue;
+        }
+        const std::string outputValue = conversionRecordValue(
+            line, "用户指定输出根目录: ");
+        if (!outputValue.empty())
+        {
+            if (!outputValue.starts_with("未指定"))
+            {
+                configuration.outputRoot = std::filesystem::u8path(outputValue);
+            }
+            continue;
+        }
+        const std::string sourceValue = conversionRecordValue(line, "卫星源: ");
+        if (!sourceValue.empty())
+        {
+            const size_t openBracket = sourceValue.rfind(" [");
+            const size_t closeBracket = sourceValue.rfind(']');
+            if (openBracket != std::string::npos && closeBracket > openBracket)
+            {
+                configuration.satelliteSources.push_back({
+                    sourceValue.substr(openBracket + 2, closeBracket - openBracket - 2),
+                    sourceValue.substr(0, openBracket), {}});
+            }
+            continue;
+        }
+        const std::string cacheValue = conversionRecordValue(line, "  缓存目录: ");
+        if (!cacheValue.empty() && !configuration.satelliteSources.empty())
+        {
+            configuration.satelliteSources.back().cachePath =
+                std::filesystem::u8path(cacheValue);
+            continue;
+        }
+        const std::string categoryValue = conversionRecordValue(line, "GIS 分类: ");
+        if (!categoryValue.empty())
+        {
+            static constexpr std::array<std::pair<std::string_view,
+                                                  DownTool::AmapVectorRenderCategory>, 10>
+                categories = {{{"全部", DownTool::AmapVectorRenderCategory::All},
+                               {"道路", DownTool::AmapVectorRenderCategory::Road},
+                               {"水", DownTool::AmapVectorRenderCategory::Water},
+                               {"绿地", DownTool::AmapVectorRenderCategory::Green},
+                               {"高速", DownTool::AmapVectorRenderCategory::Highway},
+                               {"地铁", DownTool::AmapVectorRenderCategory::Subway},
+                               {"建筑", DownTool::AmapVectorRenderCategory::Building},
+                               {"点", DownTool::AmapVectorRenderCategory::Point},
+                               {"边界", DownTool::AmapVectorRenderCategory::Boundary},
+                               {"其他", DownTool::AmapVectorRenderCategory::Other}}};
+            size_t start = 0;
+            while (start <= categoryValue.size())
+            {
+                const size_t end = categoryValue.find("、", start);
+                const std::string_view category = std::string_view(categoryValue).substr(
+                    start, end == std::string::npos ? std::string::npos : end - start);
+                const auto match = std::ranges::find_if(
+                    categories, [category](const auto& item) { return item.first == category; });
+                if (match != categories.end())
+                {
+                    configuration.gisCategories.insert(match->second);
+                }
+                if (end == std::string::npos)
+                {
+                    break;
+                }
+                start = end + std::string_view("、").size();
+            }
+            continue;
+        }
+        const std::string modeValue = conversionRecordValue(line, "GIS 组合方式: ");
+        if (!modeValue.empty())
+        {
+            if (modeValue.find("叠加卫星图") != std::string::npos)
+            {
+                configuration.gisModes.insert(GisExportMode::OverlayOnSatellite);
+            }
+            if (modeValue.find("GIS 合并") != std::string::npos)
+            {
+                configuration.gisModes.insert(GisExportMode::MergeSelectedLayers);
+            }
+            if (modeValue.find("GIS 单层") != std::string::npos)
+            {
+                configuration.gisModes.insert(GisExportMode::SeparateLayers);
+            }
+            continue;
+        }
+        const std::string exportValue = conversionRecordValue(line, "导出类型: ");
+        if (!exportValue.empty())
+        {
+            configuration.exportTiles = exportValue.find("XYZ 切片") != std::string::npos;
+            configuration.exportMergedImage = exportValue.find("合并大图") != std::string::npos;
+            configuration.exportFbx = exportValue.find("FBX") != std::string::npos;
+            configuration.exportGeoJson = exportValue.find("GeoJSON") != std::string::npos;
+            continue;
+        }
+        const std::string mergedValue = conversionRecordValue(line, "合并大图: ");
+        if (!mergedValue.empty())
+        {
+            const size_t separator = mergedValue.find("，");
+            configuration.mergedImageFormat = separator == std::string::npos ? mergedValue :
+                mergedValue.substr(0, separator);
+            if (separator != std::string::npos)
+            {
+                constexpr std::string_view resolutionLabel = "最大边";
+                const size_t resolutionLabelPosition = mergedValue.find(
+                    resolutionLabel, separator + std::string("，").size());
+                if (resolutionLabelPosition != std::string::npos)
+                {
+                    size_t resolutionPosition = resolutionLabelPosition + resolutionLabel.size();
+                    while (resolutionPosition < mergedValue.size() &&
+                           mergedValue[resolutionPosition] == ' ')
+                    {
+                        ++resolutionPosition;
+                    }
+                    const std::optional<uint32_t> resolution = parseUint32(
+                        std::string_view(mergedValue).substr(resolutionPosition));
+                    if (resolution.has_value())
+                    {
+                        configuration.mergedImageResolution = *resolution;
+                    }
+                }
+            }
+            continue;
+        }
+        const std::string fbxValue = conversionRecordValue(line, "FBX 贴图尺寸: ");
+        if (!fbxValue.empty())
+        {
+            if (const std::optional<uint32_t> size = parseUint32(fbxValue))
+            {
+                configuration.fbxTextureSize = *size;
+            }
+            continue;
+        }
+        const std::string buildingValue = conversionRecordValue(line, "建筑按高度着色: ");
+        if (!buildingValue.empty())
+        {
+            configuration.colorBuildingsByHeight = buildingValue == "是";
+        }
+    }
+
+    if (!hasCenter || !hasRadius || !hasZoom ||
+        (configuration.satelliteSources.empty() && configuration.gisCategories.empty()))
+    {
+        return std::nullopt;
+    }
+    return configuration;
 }
 
 std::optional<DomDownToolPreview::GisOverlayCategory> gisCategoryFromValue(
@@ -1309,6 +1528,28 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                                 L"导出目录不存在或无法打开。", L"DomDownTool",
                                 MB_OK | MB_ICONWARNING);
                 }
+                return;
+            }
+            if (const std::optional<std::string> taskId =
+                    taskIdFromConfigButton(event.id))
+            {
+                const std::vector<ExportTaskRecord> records = exportTaskManager_.GetRecords();
+                const auto record = std::find_if(
+                    records.begin(), records.end(),
+                    [&taskId](const ExportTaskRecord& item) { return item.id == *taskId; });
+                const std::optional<ExportConfiguration> configuration =
+                    record == records.end() ? std::nullopt :
+                    (record->configuration.has_value() ? record->configuration :
+                     loadLegacyTaskConfiguration(*record));
+                if (!configuration.has_value())
+                {
+                    MessageBoxW(window_.load(std::memory_order_relaxed),
+                                L"该任务没有找到可恢复的导出参数。", L"DomDownTool",
+                                MB_OK | MB_ICONINFORMATION);
+                    return;
+                }
+                pendingExportConfiguration_ = *configuration;
+                schedulePageChange(Page::Export, runtime);
                 return;
             }
             if (const std::optional<std::string> taskId =
@@ -2387,7 +2628,10 @@ void DomDownToolPreview::PreviewController::OpenExportPage(skui::Runtime& runtim
 {
     taskClearConfirmOpen_ = false;
     taskDeleteTargetId_.reset();
-    InitializeExportDraft(runtime);
+    std::optional<ExportConfiguration> configuration =
+        std::move(pendingExportConfiguration_);
+    pendingExportConfiguration_.reset();
+    InitializeExportDraft(runtime, configuration ? &*configuration : nullptr);
     page_ = Page::Export;
     updateUi(runtime);
     requestRedraw();
@@ -2397,6 +2641,7 @@ void DomDownToolPreview::PreviewController::OpenTaskPage(skui::Runtime& runtime)
 {
     taskClearConfirmOpen_ = false;
     taskDeleteTargetId_.reset();
+    pendingExportConfiguration_.reset();
     page_ = Page::Tasks;
     UpdateTaskUi(runtime);
     updateUi(runtime);
@@ -2407,45 +2652,80 @@ void DomDownToolPreview::PreviewController::OpenPreviewPage(skui::Runtime& runti
 {
     taskClearConfirmOpen_ = false;
     taskDeleteTargetId_.reset();
+    pendingExportConfiguration_.reset();
     page_ = Page::Preview;
     updateUi(runtime);
     requestRedraw();
 }
 
-void DomDownToolPreview::PreviewController::InitializeExportDraft(skui::Runtime& runtime)
+void DomDownToolPreview::PreviewController::InitializeExportDraft(
+    skui::Runtime& runtime, const ExportConfiguration* configuration)
 {
     const MapSourceSummary source = renderer_.activeSource();
     const DownTool::LonLat center = renderer_.center();
-    exportLongitudeValue_ = fmt::format("{:.6f}", center.lon);
-    exportLatitudeValue_ = fmt::format("{:.6f}", center.lat);
-    exportRadiusValue_ = fmt::format("{:.0f}", renderer_.GetExportRadiusMeters());
-    exportZoomValue_ = fmt::format("{:.0f}", std::round(renderer_.zoom()));
+    exportLongitudeValue_ = fmt::format("{:.6f}", configuration ?
+                                        configuration->centerWgs84.lon : center.lon);
+    exportLatitudeValue_ = fmt::format("{:.6f}", configuration ?
+                                       configuration->centerWgs84.lat : center.lat);
+    exportRadiusValue_ = fmt::format("{:.0f}", configuration ?
+                                     configuration->radiusMeters :
+                                     renderer_.GetExportRadiusMeters());
+    exportZoomValue_ = fmt::format("{:.0f}", configuration ?
+                                   configuration->zoom : std::round(renderer_.zoom()));
     exportMapSourceIds_.clear();
-    if (source.id != "none")
+    if (configuration)
+    {
+        for (const SatelliteExportSource& exportSource : configuration->satelliteSources)
+        {
+            exportMapSourceIds_.insert(exportSource.id);
+        }
+    }
+    else if (source.id != "none")
     {
         exportMapSourceIds_.insert(source.id);
     }
-    exportOutputValue_.clear();
+    exportOutputValue_ = configuration && !configuration->outputRoot.empty() ?
+        pathToUtf8(configuration->outputRoot) : "";
     exportValidationMessage_.clear();
-    exportTiles_ = false;
-    exportMergedImage_ = false;
-    exportFbx_ = false;
-    exportGeoJson_ = false;
-    exportBuildingHeightColors_ = false;
-    exportGisOverlayOnSatellite_ = false;
-    exportGisLayersMerged_ = false;
-    exportGisLayersSeparate_ = false;
+    exportTiles_ = configuration ? configuration->exportTiles : false;
+    exportMergedImage_ = configuration ? configuration->exportMergedImage : false;
+    exportFbx_ = configuration ? configuration->exportFbx : false;
+    exportGeoJson_ = configuration ? configuration->exportGeoJson : false;
+    exportBuildingHeightColors_ = configuration ? configuration->colorBuildingsByHeight : false;
+    exportGisOverlayOnSatellite_ = configuration && configuration->gisModes.contains(
+        GisExportMode::OverlayOnSatellite);
+    exportGisLayersMerged_ = configuration && configuration->gisModes.contains(
+        GisExportMode::MergeSelectedLayers);
+    exportGisLayersSeparate_ = configuration && configuration->gisModes.contains(
+        GisExportMode::SeparateLayers);
+    if (configuration)
+    {
+        exportMergedFormat_ = configuration->mergedImageFormat;
+        exportMergedResolutionValue_ = std::to_string(configuration->mergedImageResolution);
+        exportFbxSizeValue_ = std::to_string(configuration->fbxTextureSize);
+        exportGisColors_ = configuration->gisColors;
+    }
+    else
+    {
+        exportGisColors_.clear();
+        for (const DownTool::AmapVectorRenderCategory category : kExportCategories)
+        {
+            exportGisColors_[category] = renderer_.GetGisOverlayColor(previewCategory(category));
+        }
+    }
 
     const GisOverlayCategories previewGisCategories =
         renderer_.GetGisOverlayCategories();
-    const bool allGisCategoriesSelected =
+    const bool allGisCategoriesSelected = configuration ?
+        configuration->gisCategories.contains(DownTool::AmapVectorRenderCategory::All) :
         previewGisCategories.contains(GisOverlayCategory::All);
     exportGisGroups_.clear();
     uint64_t groupId = 1;
     for (const DownTool::AmapVectorRenderCategory category : kExportCategories)
     {
-        const bool selected = allGisCategoriesSelected ||
-            previewGisCategories.contains(previewCategory(category));
+        const bool selected = configuration ?
+            allGisCategoriesSelected || configuration->gisCategories.contains(category) :
+            allGisCategoriesSelected || previewGisCategories.contains(previewCategory(category));
         exportGisGroups_.push_back(ExportGisUiGroup{groupId++, {category}, selected});
     }
 
@@ -2581,6 +2861,21 @@ void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
             "stroke=\"#cbd4d0\" stroke-width=\"1.6\" stroke-linejoin=\"round\"/>"
             "</svg></button>",
             escapeHtml(record.id));
+        const std::string openConfiguration = fmt::format(
+            "<button id=\"task-config-{}\" class=\"task-icon-button "
+            "task-reopen-config\" type=\"button\" "
+            "data-action=\"open-export-task-config\" title=\"按此任务参数打开导出配置\" "
+            "aria-label=\"按此任务参数打开导出配置\"><svg viewBox=\"0 0 24 24\" "
+            "width=\"17\" height=\"17\" pointer-events=\"none\" "
+            "aria-hidden=\"true\"><path d=\"M4 6h7M15 6h5M4 12h3M11 12h9M4 18h9M17 18h3\" "
+            "fill=\"none\" stroke=\"#88d9be\" stroke-width=\"1.6\" "
+            "stroke-linecap=\"round\"/><circle cx=\"13\" cy=\"6\" r=\"2\" "
+            "fill=\"#1e2121\" stroke=\"#88d9be\" stroke-width=\"1.6\"/>"
+            "<circle cx=\"9\" cy=\"12\" r=\"2\" fill=\"#1e2121\" "
+            "stroke=\"#88d9be\" stroke-width=\"1.6\"/><circle cx=\"15\" cy=\"18\" "
+            "r=\"2\" fill=\"#1e2121\" stroke=\"#88d9be\" stroke-width=\"1.6\"/>"
+            "</svg></button>",
+            escapeHtml(record.id));
         const std::string finishedActions = finished ? fmt::format(
             "<button id=\"task-remove-{}\" class=\"task-icon-button "
             "task-remove-record\" type=\"button\" data-action=\"remove-export-task\" "
@@ -2614,7 +2909,7 @@ void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
             escapeHtml(record.outputPath), errorHtml, escapeHtml(record.stage),
             progressText, record.progress * 100., stateValue,
             ExportTaskStateName(record.state), escapeHtml(record.finishedAt),
-            openOutput + action + finishedActions);
+            openOutput + openConfiguration + action + finishedActions);
     }
     if (records.empty())
     {
@@ -2747,9 +3042,10 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
     configuration.fbxTextureSize = *fbxSize;
     for (const DownTool::AmapVectorRenderCategory category : kExportCategories)
     {
-        const DownTool::AmapVectorColor color = renderer_.GetGisOverlayColor(
-            previewCategory(category));
-        configuration.gisColors[category] = color;
+        const auto color = exportGisColors_.find(category);
+        const DownTool::AmapVectorColor value = color != exportGisColors_.end() ?
+            color->second : renderer_.GetGisOverlayColor(previewCategory(category));
+        configuration.gisColors[category] = value;
     }
     if (!configuration.exportTiles && !configuration.exportMergedImage &&
         !configuration.exportFbx && !configuration.exportGeoJson)

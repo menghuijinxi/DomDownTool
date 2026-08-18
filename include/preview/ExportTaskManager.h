@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -86,12 +87,17 @@ struct ExportTaskRecord
     uint64_t completed = 0;
     uint64_t total = 0;
     std::string error;
+    std::optional<ExportConfiguration> configuration;
 };
 
 [[nodiscard]] std::string ExportTaskStateName(ExportTaskState state);
 
 [[nodiscard]] std::filesystem::path ExportTaskOutputRoot(
     const ExportConfiguration& configuration, std::string_view taskId);
+
+[[nodiscard]] std::filesystem::path ExportGisOverlayInputRoot(
+    bool exportTiles, const std::filesystem::path& tileOutputPath,
+    const std::filesystem::path& temporaryRoot);
 
 class ExportTaskManager
 {
