@@ -65,6 +65,7 @@ namespace
         uint32_t fbxTextureSize = 4096;
         DownTool::FbxPlanetShape fbxShape = DownTool::FbxPlanetShape::Plane;
         uint32_t fbxSubdivision = 64;
+        double fbxTerrainSampleRateMeters = 30.;
         bool showHelp = false;
         bool dryRun = false;
     };
@@ -509,6 +510,15 @@ namespace
                     return false;
                 }
             }
+            else if (argument == "--fbx-terrain-sample-rate")
+            {
+                if (!ParseDouble(value, options.fbxTerrainSampleRateMeters) ||
+                    options.fbxTerrainSampleRateMeters <= 0.)
+                {
+                    error = "--fbx-terrain-sample-rate 必须是大于 0 的米数。";
+                    return false;
+                }
+            }
             else
             {
                 error = "未知参数：" + argument;
@@ -644,6 +654,7 @@ namespace
         downloader.SetFbxTextureSize(options.fbxTextureSize);
         downloader.SetFbxShape(options.fbxShape);
         downloader.SetFbxMeshSubdivision(options.fbxSubdivision);
+        downloader.SetFbxTerrainSampleRateMeters(options.fbxTerrainSampleRateMeters);
         return outputRoot;
     }
 
@@ -698,6 +709,7 @@ namespace
             "  --fbx-texture-size <像素>     FBX 贴图边长，默认 4096\n"
             "  --fbx-shape <形态>            plane,sphere,both\n"
             "  --fbx-subdivision <数量>      球面网格细分数，默认 64\n"
+            "  --fbx-terrain-sample-rate <米> 高度采样间距，默认 30\n"
             "  --dry-run                    只检查并打印配置，不下载\n"
             "  -h, --help                    显示帮助\n\n"
             "示例：\n"

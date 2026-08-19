@@ -22,6 +22,7 @@
 
 namespace DownTool
 {
+class CopernicusDemData;
 class DownToolBase;
 }
 
@@ -66,11 +67,13 @@ struct ExportConfiguration
     bool exportTiles = false;
     bool exportMergedImage = false;
     bool exportFbx = false;
+    bool exportTerrainHeight = false;
     bool exportGeoJson = false;
     bool colorBuildingsByHeight = false;
     uint32_t mergedImageResolution = 16384;
     std::string mergedImageFormat = "png";
     uint32_t fbxTextureSize = 4096;
+    double fbxTerrainSampleRateMeters = 30.;
 };
 
 struct ExportTaskRecord
@@ -138,12 +141,14 @@ class ExportTaskManager
 
     bool RunSatelliteExport(const QueuedExport& queuedExport,
                             const SatelliteExportSource& source,
+                            const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
                             size_t stepIndex, size_t stepCount,
                             std::string& error);
 
     bool RunGisExport(const QueuedExport& queuedExport,
                       const std::set<DownTool::AmapVectorRenderCategory>& categories,
                       GisExportMode mode, std::string_view name,
+                      const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
                       size_t stepIndex, size_t stepCount,
                       std::string& error);
 

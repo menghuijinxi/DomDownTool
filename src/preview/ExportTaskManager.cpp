@@ -19,6 +19,7 @@
 #include "ArcGISDown.h"
 #include "BaiduDown.h"
 #include "BingDown.h"
+#include "CopernicusDem.h"
 #include "DownToolBase.h"
 #include "GaoDeDown.h"
 #include "GoogleDown.h"
@@ -55,16 +56,17 @@ std::string GetJsonString(const Json& object, const char* fieldName)
 
 std::string PathToUtf8(const std::filesystem::path& path);
 
-double GetJsonDouble(const Json& object, const char* fieldName)
+double GetJsonDouble(
+    const Json& object, const char* fieldName, double defaultValue = 0.)
 {
     if (!object.is_object())
     {
-        return 0.;
+        return defaultValue;
     }
     const auto iterator = object.find(fieldName);
     return iterator != object.end() && iterator->is_number()
         ? iterator->get<double>()
-        : 0.;
+        : defaultValue;
 }
 
 bool GetJsonBool(const Json& object, const char* fieldName, bool defaultValue = false)
@@ -125,11 +127,13 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
         {"exportTiles", configuration.exportTiles},
         {"exportMergedImage", configuration.exportMergedImage},
         {"exportFbx", configuration.exportFbx},
+        {"exportTerrainHeight", configuration.exportTerrainHeight},
         {"exportGeoJson", configuration.exportGeoJson},
         {"colorBuildingsByHeight", configuration.colorBuildingsByHeight},
         {"mergedImageResolution", configuration.mergedImageResolution},
         {"mergedImageFormat", configuration.mergedImageFormat},
-        {"fbxTextureSize", configuration.fbxTextureSize}};
+        {"fbxTextureSize", configuration.fbxTextureSize},
+        {"fbxTerrainSampleRateMeters", configuration.fbxTerrainSampleRateMeters}};
 }
 
 std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value)
@@ -157,6 +161,7 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
     configuration.exportTiles = GetJsonBool(value, "exportTiles");
     configuration.exportMergedImage = GetJsonBool(value, "exportMergedImage");
     configuration.exportFbx = GetJsonBool(value, "exportFbx");
+    configuration.exportTerrainHeight = GetJsonBool(value, "exportTerrainHeight");
     configuration.exportGeoJson = GetJsonBool(value, "exportGeoJson");
     configuration.colorBuildingsByHeight = GetJsonBool(value, "colorBuildingsByHeight");
     configuration.mergedImageResolution = static_cast<uint32_t>(
@@ -169,6 +174,8 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
     }
     configuration.fbxTextureSize = static_cast<uint32_t>(
         std::max(0., GetJsonDouble(value, "fbxTextureSize")));
+    configuration.fbxTerrainSampleRateMeters =
+        GetJsonDouble(value, "fbxTerrainSampleRateMeters", 30.);
 
     const auto sources = value.find("satelliteSources");
     if (sources != value.end() && sources->is_array())
@@ -469,6 +476,73 @@ std::filesystem::path OverlayOutputRoot(const ExportConfiguration& configuration
         std::filesystem::u8path(SanitizeFileName(source.name));
 }
 
+bool WriteElevationMetadata(
+    const ExportConfiguration& configuration,
+    std::string_view taskId,
+    const DownTool::CopernicusDemData& elevationData,
+    std::string& error)
+{
+    const std::filesystem::path outputDirectory =
+        TaskOutputRoot(configuration, std::string(taskId)) /
+        std::filesystem::u8path("高度");
+    std::error_code directoryError;
+    std::filesystem::create_directories(outputDirectory, directoryError);
+    if (directoryError)
+    {
+        error = "无法创建高度元数据目录：" + directoryError.message();
+        return false;
+    }
+
+    Json sourceFiles = Json::array();
+    for (const std::filesystem::path& sourceFile : elevationData.GetSourceFiles())
+    {
+        sourceFiles.push_back(PathToUtf8(sourceFile));
+    }
+    const DownTool::CopernicusDemBounds& bounds = elevationData.GetBounds();
+    const Json metadata = {
+        {"provider", "Copernicus DEM GLO-30"},
+        {"resolutionMeters", 30},
+        {"verticalDatum", "EGM2008"},
+        {"referenceMode", "minimum"},
+        {"referenceElevationMeters", elevationData.GetMinimumElevationMeters()},
+        {"bounds", {{"west", bounds.west}, {"east", bounds.east},
+                    {"south", bounds.south}, {"north", bounds.north}}},
+        {"sourceFiles", std::move(sourceFiles)},
+        {"version", 1}};
+    std::ofstream output(outputDirectory / "meta.json",
+                         std::ios::binary | std::ios::trunc);
+    if (!output.is_open())
+    {
+        error = "无法创建高度元数据文件。";
+        return false;
+    }
+    output << metadata.dump(2);
+    if (!output.good())
+    {
+        error = "写入高度元数据失败。";
+        return false;
+    }
+    return true;
+}
+
+void ConfigureFbxElevation(
+    DownTool::DownToolBase& downloader,
+    const std::shared_ptr<DownTool::CopernicusDemData>& elevationData)
+{
+    if (!elevationData)
+    {
+        return;
+    }
+    downloader.SetFbxTerrainHeightEnabled(true);
+    downloader.SetFbxElevationReferenceMeters(
+        elevationData->GetMinimumElevationMeters());
+    downloader.SetFbxElevationSampler(
+        [elevationData](const DownTool::LonLat& lonLat)
+        {
+            return elevationData->Sample(lonLat);
+        });
+}
+
 std::string FormatSourceNames(const ExportConfiguration& configuration)
 {
     std::string names;
@@ -510,7 +584,8 @@ std::string BuildTaskDetailsText(const ExportConfiguration& configuration)
     }
     if (configuration.exportFbx)
     {
-        outputs.emplace_back("FBX 切片与网格");
+        outputs.emplace_back(configuration.exportTerrainHeight ?
+            "FBX 切片、网格与高度" : "FBX 切片与网格");
     }
     if (configuration.exportGeoJson)
     {
@@ -595,6 +670,10 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
            << configuration.mergedImageResolution << "\n"
            << "GIS 透明大图格式: PNG\n"
            << "FBX 贴图尺寸: " << configuration.fbxTextureSize << "\n"
+           << "FBX 导出高度: "
+           << (configuration.exportTerrainHeight ? "是" : "否") << "\n"
+           << "FBX 高度采样率 (米): "
+           << configuration.fbxTerrainSampleRateMeters << "\n"
            << "建筑按高度着色: "
            << (configuration.colorBuildingsByHeight ? "是" : "否") << "\n"
            << "结果: " << result << "\n";
@@ -1087,6 +1166,11 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
     }
 
     const ExportConfiguration& configuration = queuedExport.configuration;
+    if (configuration.exportTerrainHeight && !configuration.exportFbx)
+    {
+        error = "导出高度需要同时启用 FBX。";
+        return false;
+    }
     const bool satelliteRequested = !configuration.satelliteSources.empty() &&
         (configuration.exportTiles || configuration.exportMergedImage ||
          configuration.exportFbx);
@@ -1118,8 +1202,10 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
     const size_t overlayCount = gisVisualRequested && configuration.gisModes.contains(
         GisExportMode::OverlayOnSatellite) ? 1u : 0u;
     const size_t geoJsonCount = configuration.exportGeoJson ? 1u : 0u;
+    const size_t elevationCount = configuration.exportTerrainHeight ? 1u : 0u;
     const size_t stepCount = (satelliteRequested ? configuration.satelliteSources.size() : 0u) +
-        (gisRequested ? separateCount + mergedCount + overlayCount + geoJsonCount : 0u);
+        (gisRequested ? separateCount + mergedCount + overlayCount + geoJsonCount : 0u) +
+        elevationCount;
     if (stepCount == 0)
     {
         error = "没有选择任何导出内容。";
@@ -1134,6 +1220,40 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
     }
 
     size_t stepIndex = 0;
+    std::shared_ptr<DownTool::CopernicusDemData> elevationData;
+    if (configuration.exportTerrainHeight)
+    {
+        DownTool::CopernicusDemOptions elevationOptions;
+        elevationOptions.centerWgs84 = configuration.centerWgs84;
+        elevationOptions.radiusMeters = configuration.radiusMeters;
+        elevationOptions.cancellationRequested =
+            [this] { return IsCancellationRequested(); };
+        elevationOptions.progressCallback =
+            [this, taskId = queuedExport.taskId, stepIndex, stepCount](
+                const DownTool::CopernicusDemProgress& progress)
+            {
+                const double overall =
+                    (static_cast<double>(stepIndex) +
+                     ProgressRatio(progress.completed, progress.total)) /
+                    static_cast<double>(stepCount);
+                UpdateProgress(taskId, progress.stage, overall,
+                               progress.completed, progress.total);
+            };
+        elevationData = DownTool::CopernicusDemData::Prepare(elevationOptions, error);
+        if (!elevationData)
+        {
+            return false;
+        }
+        if (!WriteElevationMetadata(
+                configuration, queuedExport.taskId, *elevationData, error))
+        {
+            return false;
+        }
+        UpdateProgress(
+            queuedExport.taskId, "高程准备完成",
+            static_cast<double>(stepIndex + 1) / static_cast<double>(stepCount), 1, 1);
+        ++stepIndex;
+    }
     if (satelliteRequested)
     {
         for (const SatelliteExportSource& source : configuration.satelliteSources)
@@ -1142,7 +1262,8 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
             {
                 return false;
             }
-            if (!RunSatelliteExport(queuedExport, source, stepIndex++, stepCount, error))
+            if (!RunSatelliteExport(
+                    queuedExport, source, elevationData, stepIndex++, stepCount, error))
             {
                 return false;
             }
@@ -1157,6 +1278,7 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
         if (mergedCount != 0 &&
             !RunGisExport(queuedExport, configuration.gisCategories,
                           GisExportMode::MergeSelectedLayers, "合并图层",
+                          elevationData,
                           stepIndex++, stepCount, error))
         {
             return false;
@@ -1164,6 +1286,7 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
         if (overlayCount != 0 &&
             !RunGisExport(queuedExport, configuration.gisCategories,
                           GisExportMode::OverlayOnSatellite, "叠加卫星图",
+                          elevationData,
                           stepIndex++, stepCount, error))
         {
             return false;
@@ -1178,7 +1301,8 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
                     return false;
                 }
                 if (!RunGisExport(queuedExport, {category}, GisExportMode::SeparateLayers,
-                                  CategoryName(category), stepIndex++, stepCount, error))
+                                  CategoryName(category), elevationData,
+                                  stepIndex++, stepCount, error))
                 {
                     return false;
                 }
@@ -1195,6 +1319,7 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
 
 bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
     const QueuedExport& queuedExport, const SatelliteExportSource& source,
+    const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
     size_t stepIndex, size_t stepCount,
     std::string& error)
 {
@@ -1244,6 +1369,9 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
     downloader->SetPostProcessFbxEnabled(exportFbx);
     downloader->SetFbxOutputPath(PathToUtf8(fbxOutputRoot));
     downloader->SetFbxTextureSize(configuration.fbxTextureSize);
+    downloader->SetFbxTerrainSampleRateMeters(
+        configuration.fbxTerrainSampleRateMeters);
+    ConfigureFbxElevation(*downloader, elevationData);
     downloader->SetProgressCallback(
         [this, taskId = queuedExport.taskId, stepIndex, stepCount](
             const DownTool::DownToolProgress& progress)
@@ -1303,6 +1431,7 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
     const QueuedExport& queuedExport,
     const std::set<DownTool::AmapVectorRenderCategory>& categories,
     GisExportMode mode, std::string_view name,
+    const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
     size_t stepIndex, size_t stepCount, std::string& error)
 {
     const ExportConfiguration& configuration = queuedExport.configuration;
@@ -1390,6 +1519,9 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
     downloader.SetPostProcessFbxEnabled(exportFbx);
     downloader.SetFbxOutputPath(PathToUtf8(fbxOutputPath));
     downloader.SetFbxTextureSize(configuration.fbxTextureSize);
+    downloader.SetFbxTerrainSampleRateMeters(
+        configuration.fbxTerrainSampleRateMeters);
+    ConfigureFbxElevation(downloader, elevationData);
     downloader.SetMaxDownQueue(std::max(1u, std::thread::hardware_concurrency()));
     downloader.SetProgressCallback(
         [this, taskId = queuedExport.taskId, stepIndex, stepCount, groupName](

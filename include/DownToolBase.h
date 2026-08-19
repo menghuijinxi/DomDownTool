@@ -4,6 +4,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -146,6 +147,18 @@ namespace DownTool
 
 		//球面网格细分数
 		uint32_t FbxMeshSubdivision = 64;
+
+		//启用后，FBX 网格按高程采样结果生成相对地形起伏
+		bool FbxTerrainHeightEnabled = false;
+
+		//FBX 高程零面，单位米
+		double FbxElevationReferenceMeters = 0.;
+
+		//FBX 高程采样间距，单位米
+		double FbxTerrainSampleRateMeters = 30.;
+
+		//输入 WGS84 经纬度，返回相对同一垂直基准的高程米数
+		std::function<std::optional<double>(const LonLat&)> FbxElevationSampler;
 
 		//远距离贴图降级参数
 		std::vector<FbxTextureDistanceOffset> FbxTextureDistanceOffsets;
@@ -382,7 +395,7 @@ namespace DownTool
 			double pixelY,
 			LonLat& lonLat) const;
 
-        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Proxy, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTextureDistanceOffsets, TileSize, ProgressCallback)
+        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Proxy, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTerrainHeightEnabled, FbxElevationReferenceMeters, FbxTerrainSampleRateMeters, FbxElevationSampler, FbxTextureDistanceOffsets, TileSize, ProgressCallback)
 
 		const DownToolCancellationCallback& GetCancellationRequestedCallback()
 		{

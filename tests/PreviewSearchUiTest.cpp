@@ -43,7 +43,7 @@ bool runTest()
     {
         return false;
     }
-    const std::array<std::string_view, 24> exportCheckboxIds = {
+    const std::array<std::string_view, 25> exportCheckboxIds = {
         "export-provider-gaode", "export-provider-tencent",
         "export-provider-tianditu", "export-provider-baidu",
         "export-provider-google", "export-provider-bing", "export-provider-arcgis",
@@ -52,7 +52,7 @@ bool runTest()
         "export-gis-group-7", "export-gis-group-8", "export-gis-group-9",
         "export-gis-combine-overlay", "export-gis-combine-merged",
         "export-gis-combine-separate", "export-satellite-tiles",
-        "export-satellite-merged", "export-fbx", "export-geojson",
+        "export-satellite-merged", "export-fbx", "export-terrain-height", "export-geojson",
         "export-building-height-colors"};
     for (const std::string_view checkboxId : exportCheckboxIds)
     {
@@ -73,6 +73,20 @@ bool runTest()
     {
         return false;
     }
+    if (!postprocess_test::Require(
+            postprocess_test::ContainsText(documentPath, ".param-row") &&
+                postprocess_test::ContainsText(
+                    documentPath,
+                    "grid-template-columns: repeat(auto-fit, minmax(250px, 1fr))") &&
+                postprocess_test::ContainsText(
+                    documentPath,
+                    "grid-template-columns: minmax(0, 1fr)") &&
+                postprocess_test::ContainsText(documentPath, ".param-field select") &&
+                postprocess_test::ContainsText(documentPath, "min-width: 0"),
+            "导出参数行没有提供窗口变窄时的换行和收缩布局"))
+    {
+        return false;
+    }
 
     if (!postprocess_test::Require(
             runtime.setVisibleById("preview-page", true) &&
@@ -83,7 +97,8 @@ bool runTest()
             "预览、导出配置或导出任务页面结构缺失") ||
         !postprocess_test::Require(
             runtime.setValueById("export-radius", "2000") &&
-                runtime.setValueById("export-config-radius", "2000"),
+                runtime.setValueById("export-config-radius", "2000") &&
+                runtime.setValueById("export-terrain-sample-rate", "30"),
             "预览页或导出配置页缺少半径输入"))
     {
         return false;

@@ -1114,9 +1114,9 @@
         }
 
         .param-row {
-            display: flex;
-            align-items: center;
-            gap: 50px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 16px 32px;
             min-width: 0;
         }
 
@@ -1124,13 +1124,16 @@
             display: flex;
             align-items: center;
             gap: 12px;
+            min-width: 250px;
             color: #c9cfcc;
             font-size: 13px;
             white-space: nowrap;
         }
 
         .param-field select {
+            flex: 1 1 120px;
             width: 200px;
+            min-width: 0;
             height: 38px;
         }
 
@@ -1141,6 +1144,7 @@
 
         .param-check {
             gap: 12px;
+            min-width: 250px;
         }
 
         .param-check input {
@@ -1501,8 +1505,11 @@
 
             .param-row,
             .type-row {
-                flex-wrap: wrap;
                 gap: 16px 32px;
+            }
+
+            .param-row {
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
             }
 
             .task-row {
@@ -1511,6 +1518,17 @@
 
             .task-row-actions {
                 grid-column: 1 / -1;
+                min-width: 0;
+            }
+        }
+
+        @media (max-width: 700px) {
+            .param-row {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .param-field,
+            .param-check {
                 min-width: 0;
             }
         }
@@ -1932,6 +1950,10 @@
                         <input id="export-fbx" type="checkbox">
                         <span>FBX 切片与网格</span>
                     </label>
+                    <label id="export-terrain-height-item" class="check-item">
+                        <input id="export-terrain-height" type="checkbox" disabled>
+                        <span>导出高度</span>
+                    </label>
                     <label class="check-item">
                         <input id="export-geojson" type="checkbox" disabled>
                         <span>GeoJson</span>
@@ -1966,6 +1988,16 @@
                             <option value="4096" selected>4096</option>
                             <option value="8192">8192</option>
                             <option value="16384">16384</option>
+                        </select>
+                    </label>
+                    <label class="param-field">
+                        <span>高度采样率（米）</span>
+                        <select id="export-terrain-sample-rate" disabled>
+                            <option value="10">10</option>
+                            <option value="30" selected>30</option>
+                            <option value="60">60</option>
+                            <option value="100">100</option>
+                            <option value="250">250</option>
                         </select>
                     </label>
                     <label class="check-item param-check">

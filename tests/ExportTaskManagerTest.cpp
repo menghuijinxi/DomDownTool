@@ -155,6 +155,7 @@ DomDownToolPreview::ExportConfiguration makeCancelableConfiguration(
     configuration.radiusMeters = 1000.;
     configuration.outputRoot = outputRoot;
     configuration.exportTiles = true;
+    configuration.fbxTerrainSampleRateMeters = 60.;
     configuration.satelliteSources.push_back(
         {"test.satellite", "测试卫星", outputRoot / "cache"});
     return configuration;
@@ -490,7 +491,10 @@ bool runTest()
                     postprocess_test::ContainsText(conversionRecord, "XYZ 目录:") &&
                     postprocess_test::ContainsText(conversionRecord, "/XYZ") &&
                     postprocess_test::ContainsText(conversionRecord, "FBX 目录:") &&
-                    postprocess_test::ContainsText(conversionRecord, "/FBX"),
+                    postprocess_test::ContainsText(conversionRecord, "/FBX") &&
+                    postprocess_test::ContainsText(conversionRecord, "FBX 导出高度: 否") &&
+                    postprocess_test::ContainsText(
+                        conversionRecord, "FBX 高度采样率 (米): 30"),
                 "输出目录没有保存可复用的任务转换记录"))
         {
             return false;
@@ -656,6 +660,7 @@ bool runTest()
                     record->configuration.has_value() &&
                     record->configuration->zoom == configuration.zoom &&
                     record->configuration->exportTiles == configuration.exportTiles &&
+                    record->configuration->fbxTerrainSampleRateMeters == 60. &&
                     burstChangeCount.load(std::memory_order_relaxed) <= 10 &&
                     persistedHasConfiguration,
                 "任务记录没有保存可恢复的导出参数或高频进度触发了过量界面刷新"))
@@ -673,6 +678,7 @@ bool runTest()
         if (!postprocess_test::Require(
                 configuration.has_value() && configuration->radiusMeters == 1000. &&
                     configuration->zoom == 15 && configuration->exportTiles &&
+                    configuration->fbxTerrainSampleRateMeters == 60. &&
                     configuration->outputRoot == testRoot / "progress-burst-output" &&
                     configuration->satelliteSources.size() == 1 &&
                     configuration->satelliteSources.front().id == "test.satellite",

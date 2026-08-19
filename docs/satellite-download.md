@@ -106,6 +106,11 @@ PNG 保留透明度；JPG 不支持透明度。`--merged-format` 只影响合并
     --fbx-shape plane
 ```
 
+预览程序的导出配置勾选 `FBX 切片与网格` 后，可以继续勾选 `导出高度`。任务会按导出范围
+自动下载并缓存 Copernicus DEM GLO-30 高程分幅，使用范围最低高程作为 FBX 零面，把相对
+地形高差写入网格；原始高程缓存位于 `cache/Copernicus高程`，任务目录下会生成 `高度/meta.json`。
+不勾选 `导出高度` 时，FBX 仍保持原来的平面或球面网格行为。
+
 ## 缓存和输出目录
 
 默认沿用已有目录结构：
@@ -172,7 +177,8 @@ Web Mercator XYZ。
 | `--merged-format <png\|jpg>` | 合并大图格式，默认 PNG |
 | `--fbx-texture-size <像素>` | FBX 贴图边长，默认 4096 |
 | `--fbx-shape <形态>` | `plane/sphere/both` |
-| `--fbx-subdivision <数量>` | 球面网格细分数，默认 64 |
+| `--fbx-subdivision <数量>` | 无高程球面网格细分数，默认 64 |
+| `--fbx-terrain-sample-rate <米>` | 高度场采样间距，默认 30；数值越小越能保留局部地形，面数和计算量也越高 |
 | `--dry-run` | 打印最终配置但不下载 |
 | `-h`, `--help` | 显示内置帮助 |
 

@@ -160,12 +160,14 @@ class PreviewController
     std::string exportMergedFormat_ = "png";
     std::string exportMergedResolutionValue_ = "16384";
     std::string exportFbxSizeValue_ = "4096";
+    std::string exportTerrainSampleRateValue_ = "30";
     bool exportTiles_ = false;
     bool exportMergedImage_ = false;
     bool exportGisOverlayOnSatellite_ = false;
     bool exportGisLayersMerged_ = false;
     bool exportGisLayersSeparate_ = false;
     bool exportFbx_ = false;
+    bool exportTerrainHeight_ = false;
     bool exportGeoJson_ = false;
     bool exportBuildingHeightColors_ = false;
     std::string exportValidationMessage_;

@@ -614,6 +614,24 @@ std::optional<ExportConfiguration> loadLegacyTaskConfiguration(
             }
             continue;
         }
+        const std::string terrainHeightValue = conversionRecordValue(
+            line, "FBX 导出高度: ");
+        if (!terrainHeightValue.empty())
+        {
+            configuration.exportTerrainHeight = terrainHeightValue == "是";
+            continue;
+        }
+        const std::string terrainSampleRateValue = conversionRecordValue(
+            line, "FBX 高度采样率 (米): ");
+        if (!terrainSampleRateValue.empty())
+        {
+            if (const std::optional<double> sampleRate =
+                    parseFiniteDouble(terrainSampleRateValue))
+            {
+                configuration.fbxTerrainSampleRateMeters = *sampleRate;
+            }
+            continue;
+        }
         const std::string buildingValue = conversionRecordValue(line, "建筑按高度着色: ");
         if (!buildingValue.empty())
         {
@@ -1159,6 +1177,11 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                     exportFbxSizeValue_ = event.value;
                     return;
                 }
+                if (event.id == "export-terrain-sample-rate")
+                {
+                    exportTerrainSampleRateValue_ = event.value;
+                    return;
+                }
                 if (event.id == "export-satellite-tiles")
                 {
                     exportTiles_ = event.checked;
@@ -1189,8 +1212,18 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 if (event.id == "export-fbx")
                 {
                     exportFbx_ = event.checked;
+                    if (!exportFbx_)
+                    {
+                        exportTerrainHeight_ = false;
+                    }
                     UpdateExportUi(runtime);
                     requestRedraw();
+                    return;
+                }
+                if (event.id == "export-terrain-height")
+                {
+                    exportTerrainHeight_ = exportFbx_ && event.checked;
+                    UpdateExportUi(runtime);
                     return;
                 }
                 if (event.id == "export-geojson")
@@ -2731,6 +2764,8 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
     exportTiles_ = configuration ? configuration->exportTiles : false;
     exportMergedImage_ = configuration ? configuration->exportMergedImage : false;
     exportFbx_ = configuration ? configuration->exportFbx : false;
+    exportTerrainHeight_ = configuration && configuration->exportFbx ?
+        configuration->exportTerrainHeight : false;
     exportGeoJson_ = configuration ? configuration->exportGeoJson : false;
     exportBuildingHeightColors_ = configuration ? configuration->colorBuildingsByHeight : false;
     exportGisOverlayOnSatellite_ = configuration && configuration->gisModes.contains(
@@ -2744,6 +2779,8 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
         exportMergedFormat_ = configuration->mergedImageFormat;
         exportMergedResolutionValue_ = std::to_string(configuration->mergedImageResolution);
         exportFbxSizeValue_ = std::to_string(configuration->fbxTextureSize);
+        exportTerrainSampleRateValue_ = fmt::format(
+            "{:.0f}", configuration->fbxTerrainSampleRateMeters);
         exportGisColors_ = configuration->gisColors;
     }
     else
@@ -2778,6 +2815,8 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
     runtime.setValueById("export-merged-format", exportMergedFormat_);
     runtime.setValueById("export-merged-resolution", exportMergedResolutionValue_);
     runtime.setValueById("export-fbx-size", exportFbxSizeValue_);
+    runtime.setValueById(
+        "export-terrain-sample-rate", exportTerrainSampleRateValue_);
     for (const auto& [sourceId, controlId] : kExportProviderControls)
     {
         setCheckboxChecked(runtime, controlId, exportMapSourceIds_.contains(
@@ -2791,6 +2830,7 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
     setCheckboxChecked(runtime, "export-gis-combine-separate",
                        exportGisLayersSeparate_);
     setCheckboxChecked(runtime, "export-fbx", exportFbx_);
+    setCheckboxChecked(runtime, "export-terrain-height", exportTerrainHeight_);
     setCheckboxChecked(runtime, "export-geojson", exportGeoJson_);
     setCheckboxChecked(runtime, "export-building-height-colors", exportBuildingHeightColors_);
     UpdateExportUi(runtime);
@@ -2832,6 +2872,9 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
     setDisabled("export-gis-combine-overlay",
                 !hasGisData || exportMapSourceIds_.empty());
     setDisabled("export-fbx-size", !exportFbx_);
+    setDisabled("export-terrain-height", !exportFbx_);
+    setDisabled("export-terrain-sample-rate", !exportFbx_ || !exportTerrainHeight_);
+    runtime.setVisibleById("export-terrain-height-item", exportFbx_);
     setDisabled("export-merged-format", !exportMergedImage_);
     setDisabled("export-merged-resolution", !exportMergedImage_);
     setDisabled("export-building-height-colors", !hasGisData);
@@ -2843,6 +2886,7 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
                        exportGisLayersSeparate_);
     setCheckboxChecked(runtime, "export-building-height-colors",
                        exportBuildingHeightColors_);
+    setCheckboxChecked(runtime, "export-terrain-height", exportTerrainHeight_);
 }
 
 void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
@@ -3030,6 +3074,8 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
     const std::optional<uint32_t> zoom = parseUint32(exportZoomValue_);
     const std::optional<uint32_t> mergedResolution = parseUint32(exportMergedResolutionValue_);
     const std::optional<uint32_t> fbxSize = parseUint32(exportFbxSizeValue_);
+    const std::optional<double> terrainSampleRate =
+        parseFiniteDouble(exportTerrainSampleRateValue_);
     if (!lon || *lon < -180. || *lon > 180. || !lat || *lat < -85. || *lat > 85.)
     {
         error = "中心经纬度无效。";
@@ -3040,9 +3086,10 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
         error = "导出半径必须大于 0 米。";
         return std::nullopt;
     }
-    if (!zoom || *zoom > 30 || !mergedResolution || *mergedResolution == 0 || !fbxSize)
+    if (!zoom || *zoom > 30 || !mergedResolution || *mergedResolution == 0 ||
+        !fbxSize || !terrainSampleRate || *terrainSampleRate <= 0.)
     {
-        error = "层级、合并大图尺寸或 FBX 贴图尺寸无效。";
+        error = "层级、合并大图尺寸、FBX 贴图尺寸或高度采样率无效。";
         return std::nullopt;
     }
 
@@ -3088,11 +3135,18 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
     configuration.exportTiles = exportTiles_;
     configuration.exportMergedImage = exportMergedImage_;
     configuration.exportFbx = exportFbx_;
+    configuration.exportTerrainHeight = exportFbx_ && exportTerrainHeight_;
     configuration.exportGeoJson = exportGeoJson_;
     configuration.colorBuildingsByHeight = exportBuildingHeightColors_;
     configuration.mergedImageResolution = *mergedResolution;
     configuration.mergedImageFormat = exportMergedFormat_ == "jpg" ? "jpg" : "png";
     configuration.fbxTextureSize = *fbxSize;
+    configuration.fbxTerrainSampleRateMeters = *terrainSampleRate;
+    if (exportTerrainHeight_ && !exportFbx_)
+    {
+        error = "导出高度需要同时选择 FBX。";
+        return std::nullopt;
+    }
     for (const DownTool::AmapVectorRenderCategory category : kExportCategories)
     {
         const auto color = exportGisColors_.find(category);
