@@ -191,6 +191,8 @@ namespace DownTool
 
 		virtual std::filesystem::path GetTileFilePath(const Tile& tile) const;
 
+		std::filesystem::path GetFallbackTileFilePath(const Tile& tile) const;
+
 		std::filesystem::path GetPostProcessRootPath() const;
 
 		std::filesystem::path GetPostProcessTileFilePath(const Tile& tile) const;
@@ -199,12 +201,13 @@ namespace DownTool
 
 		std::filesystem::path GetFbxRootPath() const;
 
-		TileCacheState GetTileCacheState(const Tile& tile) const;
+		TileCacheState GetTileCacheState(const Tile& tile, bool includeFallbackTiles) const;
 
 		std::vector<Tile> ScanCacheAndCollectPendingTiles(
 			const std::vector<Tile>& targetTiles,
 			const std::string& phaseName,
-			bool updateProgress);
+			bool updateProgress,
+			bool includeFallbackTiles);
 
 		bool QueueTileDownload(
 			const Tile& tile,
@@ -219,17 +222,11 @@ namespace DownTool
 			const std::filesystem::path& tilePath,
 			uint32_t startParentZoom);
 
-		bool RepairTileFromExistingLowerZoom(const Tile& tile);
-
-		bool RepairTileFromExistingLowerZoom(const Tile& tile, uint32_t startParentZoom);
-
 		bool RepairTilesFromParent(const Tile& parentTile, uint32_t targetZoom);
 
 		bool IsTileDownloading(const Tile& tile) const;
 
 		bool IsCoveredByPendingLowerZoomRepair(const Tile& tile) const;
-
-		uint32_t CancelPendingChildDownloads(const Tile& parentTile, uint32_t childZoom);
 
 		void RunPostProcess();
 
@@ -286,10 +283,7 @@ namespace DownTool
 		}
 
 		virtual std::filesystem::path GetPostProcessSourceTileFilePath(
-			const Tile& tile) const
-		{
-			return GetTileFilePath(tile);
-		}
+			const Tile& tile) const;
 
 		virtual bool TryGetLonLatForTilePixel(
 			const Tile& tile, double pixelX, double pixelY, LonLat& lonLat) const

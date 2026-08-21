@@ -78,6 +78,137 @@ namespace
         uint32_t minimumRequestedZoom_ = std::numeric_limits<uint32_t>::max();
     };
 
+    class FallbackCacheDown final : public DownTool::DownToolBase
+    {
+      public:
+        FallbackCacheDown(
+            std::filesystem::path unavailableFixturePath,
+            std::filesystem::path parentFixturePath)
+            : unavailableFixturePath_(std::move(unavailableFixturePath)),
+              parentFixturePath_(std::move(parentFixturePath))
+        {
+        }
+
+        void CalculateDownRange() override
+        {
+            MinTile = TargetTile();
+            MaxTile = MinTile;
+        }
+
+        std::string MakeUri(const DownTool::Tile& tile) override
+        {
+            if (tile.Zoom == TargetTile().Zoom)
+            {
+                targetRequestCount_++;
+            }
+            const std::filesystem::path& fixturePath =
+                tile.Zoom == ParentTile().Zoom ? parentFixturePath_ : unavailableFixturePath_;
+            return "file:///" + fixturePath.generic_string();
+        }
+
+        uint32_t GetTargetRequestCount() const
+        {
+            return targetRequestCount_;
+        }
+
+        std::filesystem::path TargetTilePath() const
+        {
+            return GetTileFilePath(TargetTile());
+        }
+
+        std::filesystem::path FallbackTargetTilePath() const
+        {
+            return std::filesystem::u8path(CachePath) /
+                "fallback" /
+                std::to_string(TargetTile().Zoom) /
+                std::to_string(TargetTile().X) /
+                (std::to_string(TargetTile().Y) + ".png");
+        }
+
+        std::filesystem::path ParentTilePath() const
+        {
+            return GetTileFilePath(ParentTile());
+        }
+
+        std::filesystem::path PostProcessSourceTilePath() const
+        {
+            return GetPostProcessSourceTileFilePath(TargetTile());
+        }
+
+        static DownTool::Tile TargetTile()
+        {
+            return DownTool::Tile(2, 3, 2);
+        }
+
+        static DownTool::Tile ParentTile()
+        {
+            return DownTool::Tile(1, 1, 1);
+        }
+
+      protected:
+        bool IsUnavailableTileFile(
+            const std::filesystem::path&, const DownTool::Tile& tile) const override
+        {
+            return tile.Zoom == TargetTile().Zoom;
+        }
+
+        uint32_t GetMinFallbackZoom() const override
+        {
+            return ParentTile().Zoom;
+        }
+
+      private:
+        std::filesystem::path unavailableFixturePath_;
+        std::filesystem::path parentFixturePath_;
+        uint32_t targetRequestCount_ = 0;
+    };
+
+    bool RunFallbackCacheIsolationTest()
+    {
+        const std::filesystem::path testRoot =
+            postprocess_test::MakeTestRoot("fallback-cache-isolation");
+        if (!postprocess_test::ResetDirectory(testRoot))
+        {
+            return false;
+        }
+
+        const std::filesystem::path unavailableFixturePath = testRoot / "unavailable.png";
+        const std::filesystem::path parentFixturePath = testRoot / "parent.png";
+        if (!postprocess_test::WriteSourceTile(
+                unavailableFixturePath, 32, cv::Scalar(23, 47, 89, 255)) ||
+            !postprocess_test::WriteSourceTile(
+                parentFixturePath, 32, cv::Scalar(91, 63, 17, 255)))
+        {
+            return false;
+        }
+
+        FallbackCacheDown tool(unavailableFixturePath, parentFixturePath);
+        tool.SetZoom(FallbackCacheDown::TargetTile().Zoom);
+        tool.SetTileSize(32);
+        tool.SetCachePath(postprocess_test::PathToUtf8String(testRoot / "cache"));
+        tool.SetMaxDownQueue(1);
+        if (!postprocess_test::WriteSourceTile(
+                tool.ParentTilePath(), tool.GetTileSize(), cv::Scalar(91, 63, 17, 255)))
+        {
+            return false;
+        }
+        tool.StartDown();
+
+        std::error_code targetExistsError;
+        const bool targetExists =
+            std::filesystem::exists(tool.TargetTilePath(), targetExistsError);
+        return postprocess_test::Require(
+                   !targetExistsError && !targetExists,
+                   "降级瓦片被写入了目标层级的标准缓存目录") &&
+            postprocess_test::Require(
+                tool.GetTargetRequestCount() == 1,
+                "目标层级瓦片被已有的低级别缓存静默替代，未发起目标层级请求") &&
+            postprocess_test::RequireReadableImage(tool.FallbackTargetTilePath()) &&
+            postprocess_test::Require(
+                tool.PostProcessSourceTilePath() == tool.FallbackTargetTilePath(),
+                "导出阶段没有读取隔离的降级瓦片");
+    }
+
     bool RunFallbackRepairDepthTest()
     {
         const std::filesystem::path testRoot =
@@ -147,6 +278,11 @@ namespace
 
     bool RunTest()
     {
+        if (!RunFallbackCacheIsolationTest())
+        {
+            return false;
+        }
+
         if (!RunFallbackRepairDepthTest())
         {
             return false;

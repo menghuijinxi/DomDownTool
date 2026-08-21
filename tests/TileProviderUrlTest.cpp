@@ -66,6 +66,12 @@ namespace
         {
             return false;
         }
+        if (!Require(
+                gaode.GetCachePath() == "cache/高德地图/卫星图",
+                "GaoDe satellite tiles must use a dedicated cache"))
+        {
+            return false;
+        }
 
         gaode.SetMapType(DownTool::GaoDeMapType::Electronic);
         if (!Require(

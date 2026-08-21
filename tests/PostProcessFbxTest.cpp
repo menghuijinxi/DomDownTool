@@ -356,6 +356,65 @@ namespace
             {
                 return false;
             }
+
+            if (!postprocess_test::Require(
+                    first.HasNormals() && second.HasNormals(),
+                    "相邻地形块没有显式法线数据"))
+            {
+                return false;
+            }
+            const auto findNormal = [vertical, coordinate, overlapMin, overlapMax](
+                const aiMesh& mesh,
+                const std::pair<float, float>& point,
+                aiVector3D& normal)
+            {
+                constexpr float edgeTolerance = 128.F;
+                for (unsigned int vertexIndex = 0;
+                     vertexIndex < mesh.mNumVertices;
+                     vertexIndex++)
+                {
+                    const aiVector3D& vertex = mesh.mVertices[vertexIndex];
+                    const float edgeCoordinate = vertical ? vertex.x : vertex.y;
+                    const float alongCoordinate = vertical ? vertex.y : vertex.x;
+                    if (std::abs(edgeCoordinate - coordinate) <= edgeTolerance &&
+                        alongCoordinate >= overlapMin - edgeTolerance &&
+                        alongCoordinate <= overlapMax + edgeTolerance &&
+                        std::abs(alongCoordinate - point.first) <= edgeTolerance &&
+                        std::abs(vertex.z - point.second) <= edgeTolerance)
+                    {
+                        normal = mesh.mNormals[vertexIndex];
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            aiVector3D firstNormal;
+            aiVector3D secondNormal;
+            if (!postprocess_test::Require(
+                    findNormal(first, firstPoints[index], firstNormal) &&
+                        findNormal(second, secondPoints[index], secondNormal),
+                    "相邻地形块共享边缺少对应法线"))
+            {
+                return false;
+            }
+            const float firstLength = firstNormal.Length();
+            const float secondLength = secondNormal.Length();
+            const float normalDot = firstLength > 0.F && secondLength > 0.F ?
+                (firstNormal.x * secondNormal.x +
+                    firstNormal.y * secondNormal.y +
+                    firstNormal.z * secondNormal.z) /
+                    (firstLength * secondLength) :
+                -1.F;
+            if (!postprocess_test::Require(
+                    normalDot >= 0.999F,
+                    fmt::format(
+                        "相邻地形块共享边法线不一致，点序号 {}，点积 {}",
+                        index,
+                        normalDot)))
+            {
+                return false;
+            }
         }
         return true;
     }
@@ -374,7 +433,10 @@ namespace
         for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; meshIndex++)
         {
             const aiMesh* mesh = scene->mMeshes[meshIndex];
-            if (mesh == nullptr ||
+            if (!postprocess_test::Require(mesh != nullptr, "地形 FBX 包含空网格") ||
+                !postprocess_test::Require(
+                    mesh->HasNormals(),
+                    "地形 FBX 网格没有显式法线") ||
                 !RequireTerrainMeshHasNoInternalOpenEdges(*mesh))
             {
                 return false;

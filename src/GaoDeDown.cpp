@@ -95,5 +95,5 @@ void DownTool::GaoDeDown::SetMapType(GaoDeMapType mapType)
     SetUrlTemplate(
         "http://webst0{s}.is.autonavi.com/appmaptile?x={x}&y={y}&z={z}&"
         "lang=zh_cn&size=1&scale=1&style=6");
-    SetCachePath("cache/高德地图");
+    SetCachePath("cache/高德地图/卫星图");
 }

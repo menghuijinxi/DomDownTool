@@ -14,6 +14,7 @@
 #include <functional>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <numbers>
@@ -132,6 +133,7 @@ namespace
 		double z = 0.;
 		double u = 0.;
 		double v = 0.;
+		std::array<double, 3> normal = { 0., 0., 1. };
 	};
 
 	struct FbxMeshData
@@ -1184,77 +1186,6 @@ namespace
 		return selectedOffset;
 	}
 
-	void FillFbxTextureFromTile(
-		cv::Mat& textureImage,
-		const cv::Mat& sourceTileImage,
-		const FbxGlobalPixelBounds& textureBounds,
-		const FbxGlobalPixelBounds& sourceTileBounds,
-		const FbxGlobalPixelBounds& requestBounds,
-		uint32_t tileSize)
-	{
-		const double overlapMinX = std::max({
-			textureBounds.minX, sourceTileBounds.minX, requestBounds.minX });
-		const double overlapMinY = std::max({
-			textureBounds.minY, sourceTileBounds.minY, requestBounds.minY });
-		const double overlapMaxX = std::min({
-			textureBounds.maxX, sourceTileBounds.maxX, requestBounds.maxX });
-		const double overlapMaxY = std::min({
-			textureBounds.maxY, sourceTileBounds.maxY, requestBounds.maxY });
-		if (overlapMaxX <= overlapMinX || overlapMaxY <= overlapMinY)
-		{
-			return;
-		}
-
-		const int destX0 = std::clamp(
-			static_cast<int>(std::floor(overlapMinX - textureBounds.minX)),
-			0,
-			textureImage.cols - 1);
-		const int destY0 = std::clamp(
-			static_cast<int>(std::floor(overlapMinY - textureBounds.minY)),
-			0,
-			textureImage.rows - 1);
-		const int destX1 = std::clamp(
-			static_cast<int>(std::ceil(overlapMaxX - textureBounds.minX)),
-			destX0 + 1,
-			textureImage.cols);
-		const int destY1 = std::clamp(
-			static_cast<int>(std::ceil(overlapMaxY - textureBounds.minY)),
-			destY0 + 1,
-			textureImage.rows);
-
-		const int sourceX0 = std::clamp(
-			static_cast<int>(std::floor(overlapMinX - sourceTileBounds.minX)),
-			0,
-			static_cast<int>(tileSize) - 1);
-		const int sourceY0 = std::clamp(
-			static_cast<int>(std::floor(overlapMinY - sourceTileBounds.minY)),
-			0,
-			static_cast<int>(tileSize) - 1);
-		const int sourceX1 = std::clamp(
-			static_cast<int>(std::ceil(overlapMaxX - sourceTileBounds.minX)),
-			sourceX0 + 1,
-			static_cast<int>(tileSize));
-		const int sourceY1 = std::clamp(
-			static_cast<int>(std::ceil(overlapMaxY - sourceTileBounds.minY)),
-			sourceY0 + 1,
-			static_cast<int>(tileSize));
-
-		const cv::Mat sourceRoi = sourceTileImage(cv::Rect(
-			sourceX0,
-			sourceY0,
-			sourceX1 - sourceX0,
-			sourceY1 - sourceY0));
-		cv::Mat targetRoi = textureImage(cv::Rect(
-			destX0,
-			destY0,
-			destX1 - destX0,
-			destY1 - destY0));
-		const cv::InterpolationFlags interpolation =
-			(sourceRoi.cols > targetRoi.cols || sourceRoi.rows > targetRoi.rows) ?
-			cv::INTER_AREA : cv::INTER_LINEAR;
-		cv::resize(sourceRoi, targetRoi, targetRoi.size(), 0., 0., interpolation);
-	}
-
 	bool WriteFbxTextureImage(
 		const FbxTextureOutputInfo& textureInfo,
 		const FbxGlobalPixelBounds& requestBounds,
@@ -1262,7 +1193,29 @@ namespace
 		const std::function<cv::Mat(const DownTool::Tile&)>& readTileImage)
 	{
 		const int textureSize = static_cast<int>(textureInfo.sourceTextureSize);
-		cv::Mat textureImage(textureSize, textureSize, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+		const uint64_t sourceTileXCount = TileRangeCount(
+			textureInfo.tileRange.MinTile.X,
+			textureInfo.tileRange.MaxTile.X);
+		const uint64_t sourceTileYCount = TileRangeCount(
+			textureInfo.tileRange.MinTile.Y,
+			textureInfo.tileRange.MaxTile.Y);
+		if (textureSize <= 0 || tileSize == 0 || sourceTileXCount == 0 ||
+			sourceTileYCount == 0 ||
+			sourceTileXCount >
+				static_cast<uint64_t>(std::numeric_limits<int>::max()) / tileSize ||
+			sourceTileYCount >
+				static_cast<uint64_t>(std::numeric_limits<int>::max()) / tileSize)
+		{
+			return false;
+		}
+
+		const int sourceWidth = static_cast<int>(sourceTileXCount * tileSize);
+		const int sourceHeight = static_cast<int>(sourceTileYCount * tileSize);
+		cv::Mat sourceCanvas(
+			sourceHeight,
+			sourceWidth,
+			CV_8UC4,
+			cv::Scalar(0, 0, 0, 0));
 		bool hasPixel = false;
 
 		for (int32_t x = textureInfo.tileRange.MinTile.X;
@@ -1277,22 +1230,15 @@ namespace
 				{
 					return false;
 				}
-
-				const double tileMinX = static_cast<double>(x) * tileSize;
-				const double tileMinY = static_cast<double>(y) * tileSize;
-				const FbxGlobalPixelBounds sourceTileBounds{
-					tileMinX,
-					tileMinY,
-					tileMinX + tileSize,
-					tileMinY + tileSize
-				};
-				FillFbxTextureFromTile(
-					textureImage,
-					sourceTileImage,
-					textureInfo.pixelBounds,
-					sourceTileBounds,
-					requestBounds,
-					tileSize);
+				const int canvasX = (x - textureInfo.tileRange.MinTile.X) *
+					static_cast<int>(tileSize);
+				const int canvasY = (y - textureInfo.tileRange.MinTile.Y) *
+					static_cast<int>(tileSize);
+				sourceTileImage.copyTo(sourceCanvas(cv::Rect(
+					canvasX,
+					canvasY,
+					static_cast<int>(tileSize),
+					static_cast<int>(tileSize))));
 				hasPixel = true;
 			}
 		}
@@ -1300,6 +1246,85 @@ namespace
 		if (!hasPixel)
 		{
 			return false;
+		}
+
+		cv::Mat textureImage(
+			textureSize,
+			textureSize,
+			CV_8UC4,
+			cv::Scalar(0, 0, 0, 0));
+		const cv::Mat transform = (cv::Mat_<double>(2, 3) <<
+			1., 0.,
+			static_cast<double>(textureInfo.tileRange.MinTile.X) * tileSize -
+				textureInfo.pixelBounds.minX,
+			0., 1.,
+			static_cast<double>(textureInfo.tileRange.MinTile.Y) * tileSize -
+				textureInfo.pixelBounds.minY);
+		try
+		{
+			cv::warpAffine(
+				sourceCanvas,
+				textureImage,
+				transform,
+				textureImage.size(),
+				cv::INTER_LINEAR,
+				cv::BORDER_CONSTANT,
+				cv::Scalar(0, 0, 0, 0));
+		}
+		catch (const cv::Exception&)
+		{
+			return false;
+		}
+
+		const double validMinX = std::max(
+			textureInfo.pixelBounds.minX,
+			requestBounds.minX);
+		const double validMinY = std::max(
+			textureInfo.pixelBounds.minY,
+			requestBounds.minY);
+		const double validMaxX = std::min(
+			textureInfo.pixelBounds.maxX,
+			requestBounds.maxX);
+		const double validMaxY = std::min(
+			textureInfo.pixelBounds.maxY,
+			requestBounds.maxY);
+		if (validMaxX > validMinX && validMaxY > validMinY)
+		{
+			cv::Mat validMask(textureSize, textureSize, CV_8UC1, cv::Scalar(0));
+			const int validX0 = std::clamp(
+				static_cast<int>(std::floor(validMinX - textureInfo.pixelBounds.minX)),
+				0,
+				textureSize);
+			const int validY0 = std::clamp(
+				static_cast<int>(std::floor(validMinY - textureInfo.pixelBounds.minY)),
+				0,
+				textureSize);
+			const int validX1 = std::clamp(
+				static_cast<int>(std::ceil(validMaxX - textureInfo.pixelBounds.minX)),
+				validX0,
+				textureSize);
+			const int validY1 = std::clamp(
+				static_cast<int>(std::ceil(validMaxY - textureInfo.pixelBounds.minY)),
+				validY0,
+				textureSize);
+			if (validX1 > validX0 && validY1 > validY0)
+			{
+				cv::rectangle(
+					validMask,
+					cv::Rect(validX0, validY0, validX1 - validX0, validY1 - validY0),
+					cv::Scalar(255),
+					cv::FILLED);
+			}
+			cv::Mat invalidMask;
+			cv::bitwise_not(validMask, invalidMask);
+			std::vector<cv::Mat> channels;
+			cv::split(textureImage, channels);
+			channels[3].setTo(0, invalidMask);
+			cv::merge(channels, textureImage);
+		}
+		else
+		{
+			textureImage.setTo(cv::Scalar(0, 0, 0, 0));
 		}
 
 		const cv::Mat outputImage =
@@ -1853,6 +1878,94 @@ namespace
 		return indices;
 	}
 
+	using FbxNormalKey = std::array<int64_t, 2>;
+
+	FbxNormalKey MakeFbxNormalKey(const FbxMeshVertex& vertex)
+	{
+		// 网格边界由相邻瓦片分别计算，浮点坐标可能存在极小误差。
+		// 只按平面位置归并，确保同一地形位置跨瓦片共享法线。
+		constexpr double keyScale = 1000.;
+		return {
+			static_cast<int64_t>(std::llround(vertex.x * keyScale)),
+			static_cast<int64_t>(std::llround(vertex.y * keyScale))};
+	}
+
+	void AssignFbxMeshNormals(std::vector<FbxMeshData>& meshDatas)
+	{
+		std::map<FbxNormalKey, std::array<double, 3>> accumulatedNormals;
+		const auto addFaceNormal = [&](const FbxMeshVertex& first,
+			const FbxMeshVertex& second, const FbxMeshVertex& third)
+		{
+			const std::array<double, 3> firstEdge{
+				second.x - first.x,
+				second.y - first.y,
+				second.z - first.z};
+			const std::array<double, 3> secondEdge{
+				third.x - first.x,
+				third.y - first.y,
+				third.z - first.z};
+			const std::array<double, 3> faceNormal{
+				firstEdge[1] * secondEdge[2] - firstEdge[2] * secondEdge[1],
+				firstEdge[2] * secondEdge[0] - firstEdge[0] * secondEdge[2],
+				firstEdge[0] * secondEdge[1] - firstEdge[1] * secondEdge[0]};
+			const double length = std::sqrt(
+				faceNormal[0] * faceNormal[0] +
+				faceNormal[1] * faceNormal[1] +
+				faceNormal[2] * faceNormal[2]);
+			if (length <= std::numeric_limits<double>::epsilon())
+			{
+				return;
+			}
+
+			for (const FbxMeshVertex* vertex : { &first, &second, &third })
+			{
+				std::array<double, 3>& accumulated =
+					accumulatedNormals[MakeFbxNormalKey(*vertex)];
+				accumulated[0] += faceNormal[0];
+				accumulated[1] += faceNormal[1];
+				accumulated[2] += faceNormal[2];
+			}
+		};
+
+		for (const FbxMeshData& meshData : meshDatas)
+		{
+			for (size_t index = 0; index + 2 < meshData.indices.size(); index += 3)
+			{
+				addFaceNormal(
+					meshData.vertices[meshData.indices[index]],
+					meshData.vertices[meshData.indices[index + 1]],
+					meshData.vertices[meshData.indices[index + 2]]);
+			}
+		}
+
+		for (FbxMeshData& meshData : meshDatas)
+		{
+			for (FbxMeshVertex& vertex : meshData.vertices)
+			{
+				const auto normal = accumulatedNormals.find(MakeFbxNormalKey(vertex));
+				if (normal == accumulatedNormals.end())
+				{
+					vertex.normal = { 0., 0., 1. };
+					continue;
+				}
+
+				const double length = std::sqrt(
+					normal->second[0] * normal->second[0] +
+					normal->second[1] * normal->second[1] +
+					normal->second[2] * normal->second[2]);
+				if (length <= std::numeric_limits<double>::epsilon())
+				{
+					vertex.normal = { 0., 0., 1. };
+					continue;
+				}
+				vertex.normal = {
+					normal->second[0] / length,
+					normal->second[1] / length,
+					normal->second[2] / length};
+			}
+		}
+	}
+
 	aiMesh* CreateAssimpMesh(const FbxMeshData& meshData, uint32_t materialIndex)
 	{
 		aiMesh* mesh = new aiMesh();
@@ -1861,6 +1974,7 @@ namespace
 		mesh->mMaterialIndex = materialIndex;
 		mesh->mNumVertices = static_cast<unsigned int>(meshData.vertices.size());
 		mesh->mVertices = new aiVector3D[mesh->mNumVertices];
+		mesh->mNormals = new aiVector3D[mesh->mNumVertices];
 		mesh->mTextureCoords[0] = new aiVector3D[mesh->mNumVertices];
 		mesh->mNumUVComponents[0] = 2;
 
@@ -1871,6 +1985,10 @@ namespace
 				static_cast<float>(vertex.x),
 				static_cast<float>(vertex.y),
 				static_cast<float>(vertex.z));
+			mesh->mNormals[index] = aiVector3D(
+				static_cast<float>(vertex.normal[0]),
+				static_cast<float>(vertex.normal[1]),
+				static_cast<float>(vertex.normal[2]));
 			mesh->mTextureCoords[0][index] = aiVector3D(
 				static_cast<float>(vertex.u),
 				static_cast<float>(vertex.v),
@@ -2313,10 +2431,7 @@ void DownTool::DownToolBase::WaitDown()
 				if (msg->data.result == CURLE_OK &&
 					(responseHeaderUnavailable || IsUnavailableTileFile(tilePath, tile)))
 				{
-					if (responseHeaderUnavailable)
-					{
-						RemoveFileIfExists(tilePath);
-					}
+					RemoveFileIfExists(tilePath);
 					if (!RepairTileFromLowerZoom(tile, tilePath))
 					{
 						fmt::print("\n无法从低级别瓦片修复占位图: {}\n", PathToUtf8String(tilePath));
@@ -2442,7 +2557,8 @@ void DownTool::DownToolBase::StartDown()
 		MinTile.X, MinTile.Y, MaxTile.X, MaxTile.Y, CachePath, TotalDownCount);
 
 	const std::vector<Tile> pendingTiles =
-		ScanCacheAndCollectPendingTiles(targetTiles, "下载前缓存检测", true);
+		ScanCacheAndCollectPendingTiles(
+			targetTiles, "下载前缓存检测", true, false);
 
 	for (const Tile& tile : pendingTiles)
 	{
@@ -2468,7 +2584,8 @@ void DownTool::DownToolBase::StartDown()
 	if (!IsStopRequested())
 	{
 		failedTiles =
-			ScanCacheAndCollectPendingTiles(targetTiles, "下载后缓存检测", false);
+			ScanCacheAndCollectPendingTiles(
+				targetTiles, "下载后缓存检测", false, true);
 	}
 	if (!failedTiles.empty())
 	{
@@ -2638,7 +2755,7 @@ void DownTool::DownToolBase::BuildRequestedTilesAtZoom(
 }
 
 DownTool::TileCacheState DownTool::DownToolBase::GetTileCacheState(
-	const Tile& tile) const
+	const Tile& tile, bool includeFallbackTiles) const
 {
 	const std::filesystem::path tilePath = GetTileFilePath(tile);
 	std::error_code existsError;
@@ -2646,6 +2763,16 @@ DownTool::TileCacheState DownTool::DownToolBase::GetTileCacheState(
 	if (existsError)
 	{
 		return TileCacheState::Invalid;
+	}
+
+	if (tileExists && !IsUnavailableTileFile(tilePath, tile) && IsValidImageFile(tilePath))
+	{
+		return TileCacheState::Ready;
+	}
+
+	if (includeFallbackTiles && IsValidImageFile(GetFallbackTileFilePath(tile)))
+	{
+		return TileCacheState::Ready;
 	}
 
 	if (!tileExists)
@@ -2658,18 +2785,14 @@ DownTool::TileCacheState DownTool::DownToolBase::GetTileCacheState(
 		return TileCacheState::Unavailable;
 	}
 
-	if (IsValidImageFile(tilePath))
-	{
-		return TileCacheState::Ready;
-	}
-
 	return TileCacheState::Invalid;
 }
 
 std::vector<DownTool::Tile> DownTool::DownToolBase::ScanCacheAndCollectPendingTiles(
 	const std::vector<Tile>& targetTiles,
 	const std::string& phaseName,
-	bool updateProgress)
+	bool updateProgress,
+	bool includeFallbackTiles)
 {
 	if (IsStopRequested())
 	{
@@ -2706,7 +2829,7 @@ std::vector<DownTool::Tile> DownTool::DownToolBase::ScanCacheAndCollectPendingTi
 	{
 		try
 		{
-			states[index] = GetTileCacheState(targetTiles[index]);
+			states[index] = GetTileCacheState(targetTiles[index], includeFallbackTiles);
 		}
 		catch (const std::exception& exception)
 		{
@@ -2942,6 +3065,7 @@ void DownTool::DownToolBase::DownloadTile(int32_t x, int32_t y)
 	{
 		if (IsUnavailableTileFile(nativePath, tile))
 		{
+			RemoveFileIfExists(nativePath);
 			if (!RepairTileFromLowerZoom(tile, nativePath))
 			{
 				fmt::print("\n无法从低级别瓦片修复占位图: {}\n", PathToUtf8String(nativePath));
@@ -2961,14 +3085,6 @@ void DownTool::DownToolBase::DownloadTile(int32_t x, int32_t y)
 		}
 	}
 
-	if (RepairTileFromExistingLowerZoom(tile))
-	{
-		DowningCount++;
-		fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
-		ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
-		return;
-	}
-
 	if (!QueueTileDownload(tile, nativePath, CurlRequestType::Tile, tile.Zoom))
 	{
 		DowningCount++;
@@ -2981,6 +3097,25 @@ std::filesystem::path DownTool::DownToolBase::GetTileFilePath(const Tile& tile) 
 {
 	std::string filePath = fmt::format("{}/{}/{}/{}.png", CachePath, tile.Zoom, tile.X, tile.Y);
 	return std::filesystem::u8path(filePath);
+}
+
+std::filesystem::path DownTool::DownToolBase::GetFallbackTileFilePath(const Tile& tile) const
+{
+	std::string filePath = fmt::format(
+		"{}/fallback/{}/{}/{}.png", CachePath, tile.Zoom, tile.X, tile.Y);
+	return std::filesystem::u8path(filePath);
+}
+
+std::filesystem::path DownTool::DownToolBase::GetPostProcessSourceTileFilePath(
+	const Tile& tile) const
+{
+	const std::filesystem::path tilePath = GetTileFilePath(tile);
+	if (IsValidImageFile(tilePath) && !IsUnavailableTileFile(tilePath, tile))
+	{
+		return tilePath;
+	}
+
+	return GetFallbackTileFilePath(tile);
 }
 
 std::filesystem::path DownTool::DownToolBase::GetPostProcessRootPath() const
@@ -3144,48 +3279,6 @@ bool DownTool::DownToolBase::IsCoveredByPendingLowerZoomRepair(const Tile& tile)
 	return false;
 }
 
-uint32_t DownTool::DownToolBase::CancelPendingChildDownloads(
-	const Tile& parentTile, uint32_t childZoom)
-{
-	if (childZoom <= parentTile.Zoom)
-	{
-		return 0;
-	}
-
-	const uint32_t zoomOffset = childZoom - parentTile.Zoom;
-	if (zoomOffset >= 31)
-	{
-		return 0;
-	}
-
-	std::vector<CURL*> handlesToCancel;
-	for (const auto& [easy, context] : curlEasyHandles)
-	{
-		if (context.requestType == CurlRequestType::Tile &&
-			TileInParentRange(parentTile, context.tile, childZoom))
-		{
-			handlesToCancel.push_back(easy);
-		}
-	}
-
-	uint32_t canceledCount = 0;
-	for (CURL* easy : handlesToCancel)
-	{
-		auto handleIt = curlEasyHandles.find(easy);
-		if (handleIt == curlEasyHandles.end())
-		{
-			continue;
-		}
-
-		curl_multi_remove_handle(curlMulti, easy);
-		ReleaseCurlContext(easy, handleIt->second);
-		curlEasyHandles.erase(handleIt);
-		canceledCount++;
-	}
-
-	return canceledCount;
-}
-
 bool DownTool::DownToolBase::RepairTileFromLowerZoom(
 	const Tile& tile, const std::filesystem::path& tilePath)
 {
@@ -3275,63 +3368,6 @@ bool DownTool::DownToolBase::RepairTileFromLowerZoom(
 	return false;
 }
 
-bool DownTool::DownToolBase::RepairTileFromExistingLowerZoom(const Tile& tile)
-{
-	if (tile.Zoom == 0)
-	{
-		return false;
-	}
-
-	return RepairTileFromExistingLowerZoom(tile, tile.Zoom - 1);
-}
-
-bool DownTool::DownToolBase::RepairTileFromExistingLowerZoom(
-	const Tile& tile,
-	uint32_t startParentZoom)
-{
-	if (tile.Zoom == 0 || startParentZoom >= tile.Zoom)
-	{
-		return false;
-	}
-
-	if (startParentZoom < GetMinFallbackZoom())
-	{
-		return false;
-	}
-
-	for (uint32_t parentZoom = startParentZoom;; parentZoom--)
-	{
-		if (!CanBatchRepairFromParentZoom(parentZoom, tile.Zoom))
-		{
-			break;
-		}
-		const uint32_t zoomOffset = tile.Zoom - parentZoom;
-		const int32_t scale = static_cast<int32_t>(1u << zoomOffset);
-		const Tile parentTile(
-			FloorDiv(tile.X, scale),
-			FloorDiv(tile.Y, scale),
-			parentZoom);
-		const std::filesystem::path parentPath = GetTileFilePath(parentTile);
-		std::error_code parentExistsError;
-		const bool parentExists = std::filesystem::exists(parentPath, parentExistsError);
-		if (!parentExistsError &&
-			parentExists &&
-			IsValidImageFile(parentPath) &&
-			!IsUnavailableTileFile(parentPath, parentTile) &&
-			RepairTilesFromParent(parentTile, tile.Zoom))
-		{
-			return true;
-		}
-
-		if (parentZoom == GetMinFallbackZoom())
-		{
-			break;
-		}
-	}
-
-	return false;
-}
-
 bool DownTool::DownToolBase::RepairTilesFromParent(
 	const Tile& parentTile, uint32_t targetZoom)
 {
@@ -3367,11 +3403,12 @@ bool DownTool::DownToolBase::RepairTilesFromParent(
 		-> TileRepairWriteResult
 	{
 		const std::filesystem::path childPath = GetTileFilePath(childTile);
-		std::error_code childExistsError;
-		const bool childExists = std::filesystem::exists(childPath, childExistsError);
-		if (!childExistsError && childExists &&
-			IsValidImageFile(childPath) &&
-			!IsUnavailableTileFile(childPath, childTile))
+		if (IsValidImageFile(childPath) && !IsUnavailableTileFile(childPath, childTile))
+		{
+			return TileRepairWriteResult::Existing;
+		}
+		const std::filesystem::path fallbackChildPath = GetFallbackTileFilePath(childTile);
+		if (IsValidImageFile(fallbackChildPath))
 		{
 			return TileRepairWriteResult::Existing;
 		}
@@ -3386,16 +3423,13 @@ bool DownTool::DownToolBase::RepairTilesFromParent(
 		cv::Mat cropped = parentImage(cv::Rect(cropX, cropY, cropWidth, cropHeight));
 		cv::Mat resized;
 		cv::resize(cropped, resized, parentImage.size(), 0., 0., cv::INTER_CUBIC);
-		if (!WriteImage(childPath, resized))
+		if (!WriteImage(fallbackChildPath, resized))
 		{
 			return TileRepairWriteResult::Failed;
 		}
 
 		return TileRepairWriteResult::Written;
 	};
-
-	const uint32_t canceledTileCount = CancelPendingChildDownloads(parentTile, targetZoom);
-	DowningCount += canceledTileCount;
 
 	std::vector<TileRepairTask> repairTasks;
 	repairTasks.reserve(static_cast<size_t>(batchTileCount));
@@ -4084,16 +4118,62 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 
 	const int outputWidth = static_cast<int>(outputSize.width);
 	const int outputHeight = static_cast<int>(outputSize.height);
-	const double imageMemoryMb =
+	int32_t sampleTileMinX = sampleTiles.front().X;
+	int32_t sampleTileMaxX = sampleTiles.front().X;
+	int32_t sampleTileMinY = sampleTiles.front().Y;
+	int32_t sampleTileMaxY = sampleTiles.front().Y;
+	for (const Tile& tile : sampleTiles)
+	{
+		sampleTileMinX = std::min(sampleTileMinX, tile.X);
+		sampleTileMaxX = std::max(sampleTileMaxX, tile.X);
+		sampleTileMinY = std::min(sampleTileMinY, tile.Y);
+		sampleTileMaxY = std::max(sampleTileMaxY, tile.Y);
+	}
+	const uint64_t sampleTileXCount = TileRangeCount(sampleTileMinX, sampleTileMaxX);
+	const uint64_t sampleTileYCount = TileRangeCount(sampleTileMinY, sampleTileMaxY);
+	if (TileSize == 0 || sampleTileXCount == 0 || sampleTileYCount == 0 ||
+		sampleTileXCount >
+			static_cast<uint64_t>(std::numeric_limits<int>::max()) / TileSize ||
+		sampleTileYCount >
+			static_cast<uint64_t>(std::numeric_limits<int>::max()) / TileSize)
+	{
+		fmt::print("合并大图失败：采样画布尺寸过大。\n");
+		return false;
+	}
+	const int sampleCanvasWidth = static_cast<int>(sampleTileXCount * TileSize);
+	const int sampleCanvasHeight = static_cast<int>(sampleTileYCount * TileSize);
+	const double outputImageMemoryMb =
 		static_cast<double>(outputSize.width) * outputSize.height * 4. / 1024. / 1024.;
-	fmt::print("合并大图内存估算：{:.1f} MB\n", imageMemoryMb);
+	const double sampleCanvasMemoryMb =
+		static_cast<double>(sampleCanvasWidth) * sampleCanvasHeight * 4. /
+		1024. / 1024.;
+	fmt::print("合并大图内存估算：采样画布 {:.1f} MB，输出 {:.1f} MB\n",
+		sampleCanvasMemoryMb,
+		outputImageMemoryMb);
 	phaseStartTime = std::chrono::steady_clock::now();
-	cv::Mat mergedImage(
-		outputHeight, outputWidth, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+	cv::Mat sampleCanvas(
+		sampleCanvasHeight,
+		sampleCanvasWidth,
+		CV_8UC4,
+		cv::Scalar(0, 0, 0, 0));
 	fmt::print("合并大图内存分配耗时：{:.2f}s\n", SecondsSince(phaseStartTime));
 
 	std::atomic_uint32_t processedCount = 0;
 	std::atomic_uint32_t failedCount = 0;
+	const auto reportSampleProgress = [&](uint32_t currentCount)
+	{
+		if (currentCount % 1024 == 0 || currentCount == sampleTiles.size())
+		{
+			fmt::print("\r大图合并: {}/{}",
+				currentCount,
+				sampleTiles.size());
+		}
+		if (currentCount % 64 == 0 || currentCount == sampleTiles.size())
+		{
+			ReportProgress("合并大图", currentCount, sampleTiles.size(),
+				failedCount.load(std::memory_order_relaxed));
+		}
+	};
 
 	phaseStartTime = std::chrono::steady_clock::now();
 	ParallelForIndex(
@@ -4102,48 +4182,6 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 		[&](size_t index)
 		{
 			const Tile& tile = sampleTiles[index];
-			const int64_t sampleMinX = static_cast<int64_t>(tile.X) * sampleScale;
-			const int64_t sampleMinY = static_cast<int64_t>(tile.Y) * sampleScale;
-			const int64_t sampleMaxX = sampleMinX + sampleScale;
-			const int64_t sampleMaxY = sampleMinY + sampleScale;
-			const int64_t overlapMinX = std::max(sampleMinX, requestMinX);
-			const int64_t overlapMinY = std::max(sampleMinY, requestMinY);
-			const int64_t overlapMaxX = std::min(sampleMaxX, requestMaxX);
-			const int64_t overlapMaxY = std::min(sampleMaxY, requestMaxY);
-
-			if (overlapMaxX <= overlapMinX || overlapMaxY <= overlapMinY)
-			{
-				const uint32_t currentCount =
-					processedCount.fetch_add(1, std::memory_order_relaxed) + 1;
-				if (currentCount % 1024 == 0 || currentCount == sampleTiles.size())
-				{
-					fmt::print("\r大图合并: {}/{}",
-						currentCount, sampleTiles.size());
-				}
-				return;
-			}
-
-			const int x0 = static_cast<int>(
-				((overlapMinX - requestMinX) * outputSize.width) / xCount);
-			const int x1 = static_cast<int>(
-				((overlapMaxX - requestMinX) * outputSize.width) / xCount);
-			const int y0 = static_cast<int>(
-				((overlapMinY - requestMinY) * outputSize.height) / yCount);
-			const int y1 = static_cast<int>(
-				((overlapMaxY - requestMinY) * outputSize.height) / yCount);
-
-			if (x1 <= x0 || y1 <= y0)
-			{
-				const uint32_t currentCount =
-					processedCount.fetch_add(1, std::memory_order_relaxed) + 1;
-				if (currentCount % 1024 == 0 || currentCount == sampleTiles.size())
-				{
-					fmt::print("\r大图合并: {}/{}",
-						currentCount, sampleTiles.size());
-				}
-				return;
-			}
-
 			const bool useGeneratedTile =
 				postProcessTilesAvailable || isSampleTileFullyCovered(tile);
 			const cv::Mat tileImage = useGeneratedTile ?
@@ -4154,57 +4192,18 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 				failedCount.fetch_add(1, std::memory_order_relaxed);
 				const uint32_t currentCount =
 					processedCount.fetch_add(1, std::memory_order_relaxed) + 1;
-				if (currentCount % 1024 == 0 || currentCount == sampleTiles.size())
-				{
-					fmt::print("\r大图合并: {}/{}",
-						currentCount, sampleTiles.size());
-				}
+				reportSampleProgress(currentCount);
 				return;
 			}
 
-			const double cropX0 =
-				static_cast<double>(overlapMinX - sampleMinX) *
-				tileSize / static_cast<double>(sampleScale);
-			const double cropY0 =
-				static_cast<double>(overlapMinY - sampleMinY) *
-				tileSize / static_cast<double>(sampleScale);
-			const double cropX1 =
-				static_cast<double>(overlapMaxX - sampleMinX) *
-				tileSize / static_cast<double>(sampleScale);
-			const double cropY1 =
-				static_cast<double>(overlapMaxY - sampleMinY) *
-				tileSize / static_cast<double>(sampleScale);
-			const int cropLeft =
-				std::clamp(static_cast<int>(std::floor(cropX0)), 0, tileSize - 1);
-			const int cropTop =
-				std::clamp(static_cast<int>(std::floor(cropY0)), 0, tileSize - 1);
-			const int cropRight =
-				std::clamp(static_cast<int>(std::ceil(cropX1)), cropLeft + 1, tileSize);
-			const int cropBottom =
-				std::clamp(static_cast<int>(std::ceil(cropY1)), cropTop + 1, tileSize);
-			const cv::Mat croppedTile = tileImage(cv::Rect(
-				cropLeft,
-				cropTop,
-				cropRight - cropLeft,
-				cropBottom - cropTop));
-			cv::Mat targetRoi = mergedImage(cv::Rect(x0, y0, x1 - x0, y1 - y0));
-			const cv::InterpolationFlags interpolation =
-				(croppedTile.cols > targetRoi.cols || croppedTile.rows > targetRoi.rows) ?
-				cv::INTER_AREA : cv::INTER_LINEAR;
-			cv::resize(croppedTile, targetRoi, targetRoi.size(), 0., 0., interpolation);
+			const int canvasX = (tile.X - sampleTileMinX) * tileSize;
+			const int canvasY = (tile.Y - sampleTileMinY) * tileSize;
+			tileImage.copyTo(sampleCanvas(cv::Rect(
+				canvasX, canvasY, tileSize, tileSize)));
 
 			const uint32_t currentCount =
 				processedCount.fetch_add(1, std::memory_order_relaxed) + 1;
-			if (currentCount % 1024 == 0 || currentCount == sampleTiles.size())
-			{
-				fmt::print("\r大图合并: {}/{}",
-					currentCount, sampleTiles.size());
-			}
-			if (currentCount % 64 == 0 || currentCount == sampleTiles.size())
-			{
-				ReportProgress("合并大图", currentCount, sampleTiles.size(),
-					failedCount.load(std::memory_order_relaxed));
-			}
+			reportSampleProgress(currentCount);
 		},
 		[this] { return IsStopRequested(); });
 
@@ -4221,6 +4220,70 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 	{
 		return false;
 	}
+
+	phaseStartTime = std::chrono::steady_clock::now();
+	const double requestMinSamplePixelX =
+		static_cast<double>(requestMinX) * tileSize / sampleScale;
+	const double requestMinSamplePixelY =
+		static_cast<double>(requestMinY) * tileSize / sampleScale;
+	const double requestMaxSamplePixelX =
+		static_cast<double>(requestMaxX) * tileSize / sampleScale;
+	const double requestMaxSamplePixelY =
+		static_cast<double>(requestMaxY) * tileSize / sampleScale;
+	const double canvasOriginX = static_cast<double>(sampleTileMinX) * tileSize;
+	const double canvasOriginY = static_cast<double>(sampleTileMinY) * tileSize;
+	const double cropX0 = requestMinSamplePixelX - canvasOriginX;
+	const double cropY0 = requestMinSamplePixelY - canvasOriginY;
+	const double cropWidth = requestMaxSamplePixelX - requestMinSamplePixelX;
+	const double cropHeight = requestMaxSamplePixelY - requestMinSamplePixelY;
+	if (cropX0 < 0. || cropY0 < 0. || cropWidth <= 0. || cropHeight <= 0. ||
+		cropX0 + cropWidth > sampleCanvas.cols ||
+		cropY0 + cropHeight > sampleCanvas.rows)
+	{
+		fmt::print("合并大图失败：请求范围超出采样画布。\n");
+		return false;
+	}
+
+	const double scaleX = static_cast<double>(outputWidth) / cropWidth;
+	const double scaleY = static_cast<double>(outputHeight) / cropHeight;
+	const bool canUseSourceCropDirectly =
+		std::abs(scaleX - 1.) <= 1.e-9 && std::abs(scaleY - 1.) <= 1.e-9 &&
+		std::abs(cropX0 - std::round(cropX0)) <= 1.e-9 &&
+		std::abs(cropY0 - std::round(cropY0)) <= 1.e-9;
+	cv::Mat mergedImage;
+	if (canUseSourceCropDirectly)
+	{
+		mergedImage = sampleCanvas(cv::Rect(
+			static_cast<int>(std::round(cropX0)),
+			static_cast<int>(std::round(cropY0)),
+			outputWidth,
+			outputHeight));
+	}
+	else
+	{
+		mergedImage = cv::Mat(
+			outputHeight, outputWidth, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+		const cv::Mat transform = (cv::Mat_<double>(2, 3) <<
+			scaleX, 0., -cropX0 * scaleX,
+			0., scaleY, -cropY0 * scaleY);
+		try
+		{
+			cv::warpAffine(
+				sampleCanvas,
+				mergedImage,
+				transform,
+				mergedImage.size(),
+				cv::INTER_LINEAR,
+				cv::BORDER_REPLICATE);
+		}
+		catch (const cv::Exception& exception)
+		{
+			fmt::print("合并大图失败：采样画布缩放失败：{}\n", exception.what());
+			return false;
+		}
+	}
+	fmt::print("大图采样画布拼接与缩放耗时：{:.2f}s\n",
+		SecondsSince(phaseStartTime));
 
 	if (IsStopRequested())
 	{
@@ -4628,6 +4691,7 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 			}
 			meshDatas.push_back(std::move(meshData));
 		}
+		AssignFbxMeshNormals(meshDatas);
 		return meshDatas;
 	};
 
