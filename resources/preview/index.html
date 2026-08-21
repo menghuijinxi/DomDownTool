@@ -951,6 +951,76 @@
             overflow-y: auto;
         }
 
+        #fbx-page {
+            background: transparent;
+            pointer-events: none;
+        }
+
+        #fbx-page .page-header,
+        #fbx-page .fbx-preview-footer {
+            pointer-events: auto;
+        }
+
+        #fbx-page .page-header {
+            background: rgba(37, 39, 41, 0.94);
+        }
+
+        .fbx-preview-mode-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-right: 8px;
+        }
+
+        .fbx-preview-mode-button {
+            min-width: 66px;
+            height: 30px;
+            padding: 0 10px;
+            border: 1px solid #454b48;
+            border-radius: 4px;
+            background: transparent;
+            color: #aeb7b2;
+            font-size: 12px;
+        }
+
+        .fbx-preview-mode-button[aria-pressed="true"] {
+            border-color: #16a69b;
+            background: rgba(22, 166, 155, 0.18);
+            color: #e2fffa;
+        }
+
+        .fbx-preview-footer {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            flex: 0 0 42px;
+            min-height: 42px;
+            padding: 0 18px;
+            border-top: 1px solid rgba(58, 62, 60, 0.9);
+            background: rgba(37, 39, 41, 0.94);
+            color: #aeb7b2;
+            font-size: 12px;
+        }
+
+        #fbx-preview-directory {
+            min-width: 0;
+            overflow: hidden;
+            color: #7f8984;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        #fbx-preview-stats {
+            margin-left: auto;
+            color: #c9cfcc;
+            white-space: nowrap;
+        }
+
+        #fbx-preview-back {
+            width: 96px;
+            min-width: 96px;
+        }
+
         #export-page-header {
             height: 72px;
             padding: 0 50px;
@@ -2099,6 +2169,29 @@
                 </div>
             </div>
         </div>
+    </section>
+
+    <section id="fbx-page" class="workspace-page" style="display: none">
+        <header class="page-header">
+            <h1>FBX 网格预览</h1>
+            <span id="fbx-preview-title" class="page-header-summary"></span>
+            <div class="page-header-spacer"></div>
+            <div class="fbx-preview-mode-group" role="group" aria-label="预览显示模式">
+                <button id="fbx-preview-mode-textured" class="fbx-preview-mode-button"
+                        type="button" data-action="set-fbx-preview-mode" aria-pressed="false">贴图</button>
+                <button id="fbx-preview-mode-wireframe" class="fbx-preview-mode-button"
+                        type="button" data-action="set-fbx-preview-mode" aria-pressed="false">线框</button>
+                <button id="fbx-preview-mode-both" class="fbx-preview-mode-button"
+                        type="button" data-action="set-fbx-preview-mode" aria-pressed="false">贴图+线框</button>
+            </div>
+            <button id="fbx-preview-back" class="secondary-command" type="button"
+                    data-action="back-to-tasks">返回任务</button>
+        </header>
+        <footer class="fbx-preview-footer">
+            <span>FBX</span>
+            <span id="fbx-preview-directory"></span>
+            <span id="fbx-preview-stats"></span>
+        </footer>
     </section>
 </body>
 </html>

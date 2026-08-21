@@ -156,6 +156,7 @@ protobuf_generate(
     PROTOC_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_include_directories(DomDownToolCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/CDT/include
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>)
 target_link_libraries(DomDownToolCore PUBLIC ${DOMDOWNTOOL_LIBRARIES})
 
@@ -211,8 +212,10 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapPlaceSearch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapWebViewSearch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/Dx12GisRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/Dx12FbxRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportImageComposer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportTaskManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/FbxPreviewRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GuiStandardStreams.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisOverlayRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisMeshBuilder.cpp
@@ -292,6 +295,8 @@ add_domdown_test(PostProcessMergedImageTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/PostProcessMergedImageTest.cpp)
 add_domdown_test(PostProcessFbxTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/PostProcessFbxTest.cpp)
+add_domdown_test(FbxTerrainTriangulatorTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/FbxTerrainTriangulatorTest.cpp)
 add_domdown_test(CopernicusDemTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/CopernicusDemTest.cpp)
 add_domdown_test(BaiduProjectionTest
@@ -382,6 +387,24 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     target_compile_options(PreviewSearchUiTest PRIVATE /EHsc /permissive-)
   endif()
   add_test(NAME PreviewSearchUiTest COMMAND PreviewSearchUiTest)
+
+  add_executable(FbxPreviewRendererTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/FbxPreviewRendererTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/FbxPreviewRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SkiaImageCodecs.cpp)
+  target_link_libraries(FbxPreviewRendererTest PRIVATE
+    DomDownToolCore
+    SkiaUI::SkuiWin32Dx12)
+  target_compile_definitions(FbxPreviewRendererTest PRIVATE
+    DOMDOWNTOOL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN)
+  set_property(TARGET FbxPreviewRendererTest PROPERTY CXX_STANDARD 23)
+  set_property(TARGET FbxPreviewRendererTest PROPERTY CXX_STANDARD_REQUIRED ON)
+  if(MSVC)
+    target_compile_options(FbxPreviewRendererTest PRIVATE /EHsc /permissive-)
+  endif()
+  add_test(NAME FbxPreviewRendererTest COMMAND FbxPreviewRendererTest)
 
   add_executable(ExportTaskManagerTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/ExportTaskManagerTest.cpp

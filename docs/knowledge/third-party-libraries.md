@@ -1,5 +1,40 @@
 # 第三方库与服务接入
 
+## CDT 约束 Delaunay 三角剖分用于 FBX 地形 TIN
+
+### 选型与约束
+
+FBX 高度地形采用 HERE `tin-terrain` 的误差驱动细化思路：从已同步的块边界开始，按高度插值误差
+逐步加入内部采样点，再重建三角网。二维约束 Delaunay 三角剖分使用
+[artem-ogre/CDT](https://github.com/artem-ogre/CDT) 的头文件实现；该库为 MPL-2.0，完整许可证位于
+`third_party/CDT/LICENSE`。CDT 只负责二维拓扑，第三维高度仍由本项目的 DEM 样本提供。
+
+第三方头文件必须作为完整集合引入。`CDT.h` 会间接依赖 `KDTree.h` 与
+`portable_nth_element.hpp`；缺少其中任一文件时，默认 `LocatorKDTree` 模板无法编译。当前目录保留了
+这两个依赖以及原始许可证，更新 CDT 时应同时更新其全部 `CDT/include` 头文件，不能只复制四个主头文件。
+
+### 运行与验证
+
+- `BuildFbxTerrainTin` 只接收有限且非负的几何误差；三角形预算是硬上限。预算不足以容纳边界网格时返回空结果，FBX 导出会回退到原有四叉树简化路径。
+- 预算按每加入一个内部点最多增加两个三角形计算，并在每轮重建后用 CDT 的实际三角数确认，避免细化过程中超限。
+- 运行 `FbxTerrainTriangulatorTest` 覆盖平面、孤立峰值、非法输入和三角预算；运行 `PostProcessFbxTest` 验证最终 FBX 的地形网格与接缝。
+
+## Assimp 与 Skia 的本地 FBX 预览
+
+导出任务预览通过 Assimp 读取 FBX 的节点变换、三角面、UV 和 diffuse 贴图路径，再由 Skia 在本地
+画布中绘制贴图、线框或两者叠加。项目导出的 FBX 将 PNG 贴图与模型放在同一目录，且材质使用相对
+diffuse 路径，因此预览必须从 FBX 所在目录解析贴图，不能假定当前工作目录。
+
+预览的主路径是原生 DX12：Assimp 读取网格和材质，Skia 解码 PNG 后在 CPU 侧编码为 BC1/DXT1，
+再通过 D3D12 上传到 GPU；每张纹理限制为 4096 像素边长，描述符预算为 1024 张。这样 9 张
+4096 贴图的预览显存约为 48 MiB，正常不会再因为“只取前四张”而出现大面积无贴图区域。当前
+BC1 编码器使用 4 色块端点和最近颜色索引，属于预览用途的轻量实现；若后续需要更高质量或法线/
+透明通道，再接入 DirectXTex 等成熟编码库。Skia 路径仅作为 DX12 初始化失败时的回退，最多加载
+16 张纹理。渲染 UV 时需将 `v` 反转，因为导出器已按 FBX 坐标约定调用 `ConvertImageVToFbxV`。
+
+验证时应使用 `PostProcessFbxTest` 生成的含外部 PNG 的 FBX，并确认任务列表入口、贴图、线框和
+贴图加线框三种模式均可用；拖动旋转、滚轮缩放不应改变导出文件。
+
 ## WebView2 同会话访问高德网页搜索
 
 ### 现象与影响

@@ -1,4 +1,5 @@
 ﻿#include "DownToolBase.h"
+#include "FbxTerrainTriangulator.h"
 
 #include <algorithm>
 #include <array>
@@ -166,6 +167,7 @@ namespace
 		double longitudeSpan = 0.;
 		uint32_t gridWidth = 1;
 		uint32_t gridHeight = 1;
+		double geometricErrorMeters = 1.;
 		std::vector<double> heights;
 		std::vector<FbxTerrainCell> leaves;
 		std::unordered_map<uint32_t, std::vector<uint32_t>> horizontalPoints;
@@ -1550,6 +1552,7 @@ namespace
 		const double geometricErrorMeters = std::max(
 			kMinimumFbxTerrainGeometricErrorMeters,
 			std::max(1., sampleRateMeters) * 0.1);
+		plan.geometricErrorMeters = geometricErrorMeters;
 		const auto calculateCellError = [&plan](const FbxTerrainCell& cell)
 		{
 			const uint32_t maxX = cell.minX + cell.width;
@@ -1704,9 +1707,135 @@ namespace
 			GetFbxTerrainHeight(plan, maxX, maxY) * u * v;
 	}
 
+	std::vector<FbxMeshVertex> BuildAdaptiveFbxTerrainVerticesLegacy(
+		const FbxTerrainMeshPlan& plan,
+		const FbxCoordinateContext& coordinateContext,
+		DownTool::FbxPlanetShape shape,
+		std::vector<uint32_t>& indices);
+
 	// 先完整采样高度场并生成叶节点，再统一相邻块边界的分割点。
 	// 这样既不会漏掉窄山脊，也不会在块间留下 T 型接缝。
 	std::vector<FbxMeshVertex> BuildAdaptiveFbxTerrainVertices(
+		const FbxTerrainMeshPlan& plan,
+		const FbxCoordinateContext& coordinateContext,
+		DownTool::FbxPlanetShape shape,
+		std::vector<uint32_t>& indices)
+	{
+		const FbxTextureOutputInfo& textureInfo = *plan.textureInfo;
+		std::vector<DownTool::FbxTerrainGridPoint> boundary;
+		const auto appendBoundaryPoint = [&boundary](uint32_t x, uint32_t y)
+		{
+			const DownTool::FbxTerrainGridPoint point{x, y};
+			if (boundary.empty() || boundary.back().x != x || boundary.back().y != y)
+			{
+				boundary.push_back(point);
+			}
+		};
+		const auto appendHorizontal = [&](uint32_t y, bool reverse)
+		{
+			const auto found = plan.horizontalPoints.find(y);
+			if (found == plan.horizontalPoints.end())
+			{
+				return;
+			}
+			if (reverse)
+			{
+				for (auto point = found->second.rbegin(); point != found->second.rend(); ++point)
+				{
+					appendBoundaryPoint(*point, y);
+				}
+			}
+			else
+			{
+				for (uint32_t x : found->second)
+				{
+					appendBoundaryPoint(x, y);
+				}
+			}
+		};
+		const auto appendVertical = [&](uint32_t x, bool reverse)
+		{
+			const auto found = plan.verticalPoints.find(x);
+			if (found == plan.verticalPoints.end())
+			{
+				return;
+			}
+			if (reverse)
+			{
+				for (auto point = found->second.rbegin(); point != found->second.rend(); ++point)
+				{
+					appendBoundaryPoint(x, *point);
+				}
+			}
+			else
+			{
+				for (uint32_t y : found->second)
+				{
+					appendBoundaryPoint(x, y);
+				}
+			}
+		};
+		appendHorizontal(0, false);
+		appendVertical(plan.gridWidth, false);
+		appendHorizontal(plan.gridHeight, true);
+		appendVertical(0, true);
+		if (boundary.size() > 1 && boundary.front().x == boundary.back().x &&
+			boundary.front().y == boundary.back().y)
+		{
+			boundary.pop_back();
+		}
+		if (boundary.size() < 3)
+		{
+			return {};
+		}
+
+		const std::size_t maximumTriangleCount = std::clamp<std::size_t>(
+			static_cast<std::size_t>(plan.gridWidth) * plan.gridHeight / 8,
+			256, 16384);
+		const DownTool::FbxTerrainTinResult tin = DownTool::BuildFbxTerrainTin(
+			plan.gridWidth,
+			plan.gridHeight,
+			plan.heights,
+			boundary,
+			plan.geometricErrorMeters,
+			maximumTriangleCount);
+		if (tin.points.empty() || tin.triangles.empty())
+		{
+			return BuildAdaptiveFbxTerrainVerticesLegacy(
+				plan, coordinateContext, shape, indices);
+		}
+
+		std::vector<FbxMeshVertex> vertices;
+		vertices.reserve(tin.points.size());
+		for (const DownTool::FbxTerrainGridPoint& point : tin.points)
+		{
+			const double normalizedU = static_cast<double>(point.x) / plan.gridWidth;
+			const double normalizedV = static_cast<double>(point.y) / plan.gridHeight;
+			const double imageU = (plan.clippedMinX +
+				(plan.clippedMaxX - plan.clippedMinX) * normalizedU -
+				textureInfo.pixelBounds.minX) / plan.pixelWidth;
+			const double imageV = (plan.clippedMinY +
+				(plan.clippedMaxY - plan.clippedMinY) * normalizedV -
+				textureInfo.pixelBounds.minY) / plan.pixelHeight;
+			const DownTool::LonLat lonLat = FbxTerrainGridToLonLat(
+				plan, point.x, point.y);
+			const double height = GetFbxTerrainHeight(plan, point.x, point.y);
+			vertices.push_back(shape == DownTool::FbxPlanetShape::Sphere ?
+				MakeSphereVertex(lonLat, coordinateContext, imageU,
+					ConvertImageVToFbxV(imageV), height) :
+				MakePlaneVertex(lonLat, coordinateContext, imageU,
+					ConvertImageVToFbxV(imageV), height));
+		}
+		for (const DownTool::FbxTerrainTriangle& triangle : tin.triangles)
+		{
+			// 网格坐标的 Y 轴向南，反转 CDT 的二维逆时针顺序以保持 FBX 法线朝上。
+			indices.insert(indices.end(), {
+				triangle.first, triangle.third, triangle.second});
+		}
+		return vertices;
+	}
+
+	std::vector<FbxMeshVertex> BuildAdaptiveFbxTerrainVerticesLegacy(
 		const FbxTerrainMeshPlan& plan,
 		const FbxCoordinateContext& coordinateContext,
 		DownTool::FbxPlanetShape shape,

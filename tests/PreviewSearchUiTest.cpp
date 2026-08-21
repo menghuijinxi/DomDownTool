@@ -92,6 +92,7 @@ bool runTest()
             runtime.setVisibleById("preview-page", true) &&
                 runtime.setVisibleById("export-page", false) &&
                 runtime.setVisibleById("task-page", false) &&
+                runtime.setVisibleById("fbx-page", false) &&
                 runtime.setVisibleById("task-clear-confirm", false) &&
                 runtime.setVisibleById("task-delete-confirm", false),
             "预览、导出配置或导出任务页面结构缺失") ||
@@ -100,6 +101,26 @@ bool runTest()
                 runtime.setValueById("export-config-radius", "2000") &&
                 runtime.setValueById("export-terrain-sample-rate", "30"),
             "预览页或导出配置页缺少半径输入"))
+    {
+        return false;
+    }
+    if (!postprocess_test::Require(
+            postprocess_test::ContainsText(documentPath, "id=\"fbx-page\"") &&
+                postprocess_test::ContainsText(documentPath, "id=\"fbx-preview-back\"") &&
+                postprocess_test::ContainsText(
+                    documentPath, "id=\"fbx-preview-mode-textured\" class=\"fbx-preview-mode-button\"") &&
+                postprocess_test::ContainsText(
+                    documentPath, "id=\"fbx-preview-mode-wireframe\" class=\"fbx-preview-mode-button\"") &&
+                postprocess_test::ContainsText(
+                    documentPath, "id=\"fbx-preview-mode-both\" class=\"fbx-preview-mode-button\"") &&
+                postprocess_test::ContainsText(documentPath, "aria-label=\"预览显示模式\"") &&
+                postprocess_test::ContainsText(
+                    documentPath, "data-action=\"set-fbx-preview-mode\"") &&
+                runtime.setTextsById({
+                    {"fbx-preview-title", "测试 FBX"},
+                    {"fbx-preview-directory", "tmp/export"},
+                    {"fbx-preview-stats", "4 个顶点 · 2 个三角形"}}),
+            "FBX 网格预览页缺少页面结构或动态状态字段"))
     {
         return false;
     }
@@ -155,6 +176,9 @@ bool runTest()
                                                "open-export-task-config") &&
                 postprocess_test::ContainsText(controllerPath, "task-resume-") &&
                 postprocess_test::ContainsText(controllerPath, "resume-export-task") &&
+                postprocess_test::ContainsText(controllerPath, "taskDeclaresFbxOutput") &&
+                postprocess_test::ContainsText(controllerPath,
+                                               "record.detail.find(\"FBX\")") &&
                 postprocess_test::ContainsText(documentPath, "task-reopen-config") &&
                 postprocess_test::ContainsText(
                     documentPath,

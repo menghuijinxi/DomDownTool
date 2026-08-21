@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <exception>
@@ -314,6 +315,16 @@ std::optional<std::string> taskIdFromOpenButton(std::string_view id)
     return std::string(id.substr(kPrefix.size()));
 }
 
+std::optional<std::string> taskIdFromPreviewButton(std::string_view id)
+{
+    constexpr std::string_view kPrefix = "task-preview-";
+    if (!id.starts_with(kPrefix) || id.size() == kPrefix.size())
+    {
+        return std::nullopt;
+    }
+    return std::string(id.substr(kPrefix.size()));
+}
+
 std::optional<std::string> taskIdFromConfigButton(std::string_view id)
 {
     constexpr std::string_view kPrefix = "task-config-";
@@ -366,6 +377,70 @@ std::optional<std::filesystem::path> existingTaskOutputPath(std::string_view out
     }
     const std::filesystem::path absolutePath = std::filesystem::absolute(path, pathError);
     return pathError ? std::optional<std::filesystem::path>(path) : absolutePath;
+}
+
+std::vector<std::filesystem::path> findTaskFbxFiles(const ExportTaskRecord& record)
+{
+    std::vector<std::filesystem::path> files;
+    size_t start = 0;
+    while (start <= record.outputPath.size())
+    {
+        const size_t separator = record.outputPath.find("；", start);
+        const std::string_view pathText = std::string_view(record.outputPath).substr(
+            start, separator == std::string_view::npos ? std::string_view::npos :
+                                                          separator - start);
+        if (!pathText.empty())
+        {
+            const std::filesystem::path root = std::filesystem::u8path(std::string(pathText));
+            std::error_code iteratorError;
+            if (std::filesystem::is_directory(root, iteratorError) && !iteratorError)
+            {
+                std::filesystem::recursive_directory_iterator iterator(
+                    root, std::filesystem::directory_options::skip_permission_denied,
+                    iteratorError);
+                const std::filesystem::recursive_directory_iterator end;
+                for (; iterator != end && files.size() < 32; iterator.increment(iteratorError))
+                {
+                    if (iteratorError)
+                    {
+                        iteratorError.clear();
+                        continue;
+                    }
+                    if (!iterator->is_regular_file(iteratorError) || iteratorError)
+                    {
+                        iteratorError.clear();
+                        continue;
+                    }
+                    std::string extension = iterator->path().extension().string();
+                    std::ranges::transform(extension, extension.begin(),
+                                           [](unsigned char character)
+                                           { return static_cast<char>(std::tolower(character)); });
+                    if (extension == ".fbx")
+                    {
+                        files.push_back(iterator->path());
+                    }
+                }
+            }
+        }
+        if (separator == std::string_view::npos)
+        {
+            break;
+        }
+        start = separator + std::string_view("；").size();
+    }
+    std::ranges::sort(files);
+    return files;
+}
+
+bool taskDeclaresFbxOutput(const ExportTaskRecord& record)
+{
+    if (record.configuration.has_value() && record.configuration->exportFbx)
+    {
+        return true;
+    }
+
+    // 旧任务记录可能没有保存配置，但详情文本仍能识别 FBX 导出，保留预览入口。
+    return record.detail.find("FBX") != std::string::npos;
 }
 
 bool openTaskOutputDirectory(HWND owner, const std::filesystem::path& path)
@@ -1080,7 +1155,8 @@ DomDownToolPreview::PreviewController::PreviewController()
       placeSearch_([this] { scheduleSearchRefresh(); },
                    [this](const std::string& url) { return webViewSearch_.get(url); },
                    [this] { webViewSearch_.cancelCurrent(); }),
-      exportTaskManager_([this] { scheduleExportTaskRefresh(); })
+      exportTaskManager_([this] { scheduleExportTaskRefresh(); }),
+      dx12FbxRenderer_([this] { requestRedraw(); })
 {
 }
 
@@ -1450,6 +1526,31 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 return;
             }
 
+            if (page_ == Page::FbxPreview &&
+                (event.id == "fbx-preview-mode-textured" ||
+                 event.id == "fbx-preview-mode-wireframe" ||
+                 event.id == "fbx-preview-mode-both"))
+            {
+                if (event.id == "fbx-preview-mode-textured")
+                {
+                    fbxPreviewRenderer_.setMode(FbxPreviewMode::Textured);
+                    dx12FbxRenderer_.setMode(FbxPreviewMode::Textured);
+                }
+                else if (event.id == "fbx-preview-mode-wireframe")
+                {
+                    fbxPreviewRenderer_.setMode(FbxPreviewMode::Wireframe);
+                    dx12FbxRenderer_.setMode(FbxPreviewMode::Wireframe);
+                }
+                else if (event.id == "fbx-preview-mode-both")
+                {
+                    fbxPreviewRenderer_.setMode(FbxPreviewMode::TexturedWireframe);
+                    dx12FbxRenderer_.setMode(FbxPreviewMode::TexturedWireframe);
+                }
+                updateUi(runtime);
+                requestRedraw();
+                return;
+            }
+
             if (event.id == "open-export-page" || event.id == "tasks-new-export")
             {
                 schedulePageChange(Page::Export, runtime);
@@ -1461,9 +1562,10 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 return;
             }
             if (event.id == "export-back-preview" || event.id == "export-cancel" ||
-                event.id == "tasks-back-preview")
+                event.id == "tasks-back-preview" || event.id == "fbx-preview-back")
             {
-                schedulePageChange(Page::Preview, runtime);
+                schedulePageChange(event.id == "fbx-preview-back" ? Page::Tasks : Page::Preview,
+                                   runtime);
                 return;
             }
             if (event.id == "export-submit")
@@ -1571,6 +1673,42 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                                 L"导出目录不存在或无法打开。", L"DomDownTool",
                                 MB_OK | MB_ICONWARNING);
                 }
+                return;
+            }
+            if (const std::optional<std::string> taskId =
+                    taskIdFromPreviewButton(event.id))
+            {
+                const std::vector<ExportTaskRecord> records = exportTaskManager_.GetRecords();
+                const auto record = std::find_if(
+                    records.begin(), records.end(),
+                    [&taskId](const ExportTaskRecord& item) { return item.id == *taskId; });
+                if (record == records.end() ||
+                    record->state != ExportTaskState::Succeeded)
+                {
+                    MessageBoxW(window_.load(std::memory_order_relaxed),
+                                L"只有已完成的任务可以预览 FBX 网格。", L"DomDownTool",
+                                MB_OK | MB_ICONINFORMATION);
+                    return;
+                }
+                const std::vector<std::filesystem::path> fbxFiles = findTaskFbxFiles(*record);
+                if (fbxFiles.empty())
+                {
+                    MessageBoxW(window_.load(std::memory_order_relaxed),
+                                L"该任务没有找到可预览的 FBX 文件。", L"DomDownTool",
+                                MB_OK | MB_ICONWARNING);
+                    return;
+                }
+                std::string loadError;
+                if (!fbxPreviewRenderer_.load(fbxFiles, loadError))
+                {
+                    MessageBoxW(window_.load(std::memory_order_relaxed),
+                                utf8ToWide(loadError).c_str(), L"DomDownTool",
+                                MB_OK | MB_ICONWARNING);
+                    return;
+                }
+                std::string dx12LoadError;
+                dx12FbxRenderer_.load(fbxFiles, dx12LoadError);
+                OpenFbxPreviewPage(runtime, fbxFiles.front().parent_path(), record->title);
                 return;
             }
             if (const std::optional<std::string> taskId =
@@ -1827,6 +1965,14 @@ void DomDownToolPreview::PreviewController::draw(SkCanvas& canvas, int width, in
     {
         renderer_.draw(canvas, width, height, dpiScale);
     }
+    else if (page_ == Page::FbxPreview)
+    {
+        canvas.clear(SkColorSetRGB(22, 27, 26));
+        if (!dx12FbxRenderer_.draw(canvas, width, height, dpiScale))
+        {
+            fbxPreviewRenderer_.draw(canvas, width, height, dpiScale);
+        }
+    }
     else
     {
         canvas.clear(SkColorSetRGB(25, 29, 28));
@@ -1905,6 +2051,9 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         case Page::Tasks:
             OpenTaskPage(runtime);
             break;
+        case Page::FbxPreview:
+            OpenTaskPage(runtime);
+            break;
         }
         return true;
     }
@@ -1940,6 +2089,62 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         updateUi(runtime);
         requestRedraw();
         return true;
+    }
+
+    if (page_ == Page::FbxPreview)
+    {
+        if (message == WM_KEYDOWN && wParam == VK_ESCAPE)
+        {
+            OpenTaskPage(runtime);
+            return true;
+        }
+        if (message == WM_LBUTTONUP && dragging_)
+        {
+            dragging_ = false;
+            if (GetCapture() == window)
+            {
+                ReleaseCapture();
+            }
+            return true;
+        }
+        if (message == WM_LBUTTONDOWN)
+        {
+            const POINT point = clientPoint(lParam);
+            RECT client{};
+            GetClientRect(window, &client);
+            if (point.y < 56 || point.x < 0 || point.x >= client.right ||
+                point.y >= client.bottom)
+            {
+                return false;
+            }
+            dragging_ = true;
+            lastDragPoint_ = point;
+            SetCapture(window);
+            return true;
+        }
+        if (message == WM_MOUSEMOVE && dragging_)
+        {
+            const POINT point = clientPoint(lParam);
+            fbxPreviewRenderer_.rotateBy(
+                static_cast<double>(point.x - lastDragPoint_.x),
+                static_cast<double>(point.y - lastDragPoint_.y));
+            dx12FbxRenderer_.rotateBy(
+                static_cast<double>(point.x - lastDragPoint_.x),
+                static_cast<double>(point.y - lastDragPoint_.y));
+            lastDragPoint_ = point;
+            requestRedraw();
+            return true;
+        }
+        if (message == WM_MOUSEWHEEL)
+        {
+            fbxPreviewRenderer_.zoomBy(
+                static_cast<double>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA);
+            dx12FbxRenderer_.zoomBy(
+                static_cast<double>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA);
+            requestRedraw();
+            return true;
+        }
+        return false;
     }
 
     if (page_ != Page::Preview)
@@ -2538,6 +2743,7 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
     runtime.setVisibleById("preview-page", page_ == Page::Preview);
     runtime.setVisibleById("export-page", page_ == Page::Export);
     runtime.setVisibleById("task-page", page_ == Page::Tasks);
+    runtime.setVisibleById("fbx-page", page_ == Page::FbxPreview);
     runtime.setVisibleById("task-clear-confirm",
                            page_ == Page::Tasks && taskClearConfirmOpen_);
     runtime.setVisibleById("task-delete-confirm",
@@ -2553,6 +2759,25 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
     if (page_ == Page::Tasks)
     {
         UpdateTaskUi(runtime);
+        return;
+    }
+    if (page_ == Page::FbxPreview)
+    {
+        runtime.setTextsById({
+            {"fbx-preview-title", fbxPreviewTitle_},
+            {"fbx-preview-directory", pathToUtf8(fbxPreviewTaskRoot_)},
+            {"fbx-preview-stats", fmt::format("{} 个顶点 · {} 个三角形",
+                                                 fbxPreviewRenderer_.vertexCount(),
+                                                 fbxPreviewRenderer_.triangleCount())}});
+        const std::array<std::pair<const char*, bool>, 3> modeButtons = {{
+            {"fbx-preview-mode-textured", fbxPreviewRenderer_.mode() == FbxPreviewMode::Textured},
+            {"fbx-preview-mode-wireframe", fbxPreviewRenderer_.mode() == FbxPreviewMode::Wireframe},
+            {"fbx-preview-mode-both",
+             fbxPreviewRenderer_.mode() == FbxPreviewMode::TexturedWireframe}}};
+        for (const auto& [id, active] : modeButtons)
+        {
+            runtime.setAttributeById(id, "aria-pressed", active ? "true" : "false");
+        }
         return;
     }
 
@@ -2695,6 +2920,9 @@ void DomDownToolPreview::PreviewController::schedulePageChange(Page page,
     case Page::Tasks:
         OpenTaskPage(runtime);
         break;
+    case Page::FbxPreview:
+        OpenTaskPage(runtime);
+        break;
     }
 }
 
@@ -2728,6 +2956,18 @@ void DomDownToolPreview::PreviewController::OpenPreviewPage(skui::Runtime& runti
     taskDeleteTargetId_.reset();
     pendingExportConfiguration_.reset();
     page_ = Page::Preview;
+    updateUi(runtime);
+    requestRedraw();
+}
+
+void DomDownToolPreview::PreviewController::OpenFbxPreviewPage(
+    skui::Runtime& runtime, const std::filesystem::path& taskRoot, std::string title)
+{
+    taskClearConfirmOpen_ = false;
+    taskDeleteTargetId_.reset();
+    fbxPreviewTaskRoot_ = taskRoot;
+    fbxPreviewTitle_ = std::move(title);
+    page_ = Page::FbxPreview;
     updateUi(runtime);
     requestRedraw();
 }
@@ -2990,7 +3230,21 @@ void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
             "M10 11v5M14 11v5\" fill=\"none\" stroke=\"#ffaaa2\" "
             "stroke-width=\"1.6\" stroke-linecap=\"round\" "
             "stroke-linejoin=\"round\"/></svg></button>",
-            escapeHtml(record.id), escapeHtml(record.id)) : "";
+             escapeHtml(record.id), escapeHtml(record.id)) : "";
+        const bool canPreviewFbx = record.state == ExportTaskState::Succeeded &&
+            taskDeclaresFbxOutput(record);
+        const std::string fbxPreviewAction = canPreviewFbx ?
+            fmt::format(
+                "<button id=\"task-preview-{}\" class=\"task-icon-button task-preview\" "
+                "type=\"button\" data-action=\"preview-export-task-fbx\" "
+                "title=\"预览 FBX 网格\" aria-label=\"预览 FBX 网格\">"
+                "<svg viewBox=\"0 0 24 24\" width=\"17\" height=\"17\" "
+                "pointer-events=\"none\" aria-hidden=\"true\"><path d=\"M3 12 12 4l9 8-9 8z\" "
+                "fill=\"none\" stroke=\"#8bd6c2\" stroke-width=\"1.6\" "
+                "stroke-linejoin=\"round\"/><path d=\"M7 10v6l5 3 5-3v-6M12 4v7m-5-1 5 3 5-3\" "
+                "fill=\"none\" stroke=\"#8bd6c2\" stroke-width=\"1.6\" "
+                "stroke-linejoin=\"round\" stroke-linecap=\"round\"/></svg></button>",
+                escapeHtml(record.id)) : "";
         const std::string errorHtml = record.error.empty() ? "" :
             fmt::format("<div class=\"task-error\" title=\"{}\">失败原因：{}</div>",
                         escapeHtml(record.error), escapeHtml(record.error));
@@ -3006,7 +3260,8 @@ void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
             escapeHtml(record.outputPath), errorHtml, escapeHtml(record.stage),
             progressText, record.progress * 100., stateValue,
             ExportTaskStateName(record.state), escapeHtml(record.finishedAt),
-            openOutput + openConfiguration + resumeAction + action + finishedActions);
+             fbxPreviewAction + openOutput + openConfiguration + resumeAction + action +
+                 finishedActions);
     }
     if (records.empty())
     {

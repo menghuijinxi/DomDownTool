@@ -13,7 +13,9 @@
 
 #include "preview/AmapPlaceSearch.h"
 #include "preview/AmapWebViewSearch.h"
+#include "preview/Dx12FbxRenderer.h"
 #include "preview/ExportTaskManager.h"
+#include "preview/FbxPreviewRenderer.h"
 #include "preview/MapHoverRefreshThrottle.h"
 #include "preview/MapRenderer.h"
 
@@ -45,7 +47,8 @@ class PreviewController
     {
         Preview,
         Export,
-        Tasks
+        Tasks,
+        FbxPreview
     };
 
     enum class SearchState
@@ -102,6 +105,10 @@ class PreviewController
     void OpenTaskPage(skui::Runtime& runtime);
 
     void OpenPreviewPage(skui::Runtime& runtime);
+
+    void OpenFbxPreviewPage(skui::Runtime& runtime,
+                            const std::filesystem::path& taskRoot,
+                            std::string title);
 
     void InitializeExportDraft(
         skui::Runtime& runtime, const ExportConfiguration* configuration = nullptr);
@@ -209,5 +216,9 @@ class PreviewController
     std::atomic_bool exportTaskRefreshPosted_ = false;
     // 必须先于任务状态回调所访问的成员析构。
     ExportTaskManager exportTaskManager_;
+    FbxPreviewRenderer fbxPreviewRenderer_;
+    Dx12FbxRenderer dx12FbxRenderer_;
+    std::string fbxPreviewTitle_;
+    std::filesystem::path fbxPreviewTaskRoot_;
 };
 } // namespace DomDownToolPreview
