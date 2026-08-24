@@ -957,7 +957,8 @@
         }
 
         #fbx-page .page-header,
-        #fbx-page .fbx-preview-footer {
+        #fbx-page .fbx-preview-footer,
+        #fbx-page .fbx-speed-panel {
             pointer-events: auto;
         }
 
@@ -1019,6 +1020,64 @@
         #fbx-preview-back {
             width: 96px;
             min-width: 96px;
+        }
+
+        .fbx-speed-panel {
+            position: absolute;
+            right: 18px;
+            bottom: 60px;
+            width: 232px;
+            padding: 10px 12px;
+            border: 1px solid rgba(69, 75, 72, 0.92);
+            border-radius: 6px;
+            background: rgba(29, 33, 32, 0.88);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+            color: #c4ccc8;
+            font-size: 12px;
+        }
+
+        .fbx-speed-panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            min-height: 28px;
+            margin-bottom: 4px;
+            color: #9ea8a3;
+        }
+
+        .fbx-reset-view-button {
+            min-width: 58px;
+            height: 26px;
+            padding: 0 10px;
+            border: 1px solid #454b48;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.02);
+            color: #dce6e2;
+            font-size: 12px;
+        }
+
+        .fbx-reset-view-button:hover {
+            border-color: #16a69b;
+            color: #e2fffa;
+        }
+
+        .fbx-speed-row {
+            display: grid;
+            grid-template-columns: 42px 1fr 38px;
+            align-items: center;
+            gap: 8px;
+            min-height: 28px;
+        }
+
+        .fbx-speed-row input {
+            width: 100%;
+            accent-color: #16a69b;
+        }
+
+        .fbx-speed-value {
+            color: #e1e8e5;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
         }
 
         #export-page-header {
@@ -2187,6 +2246,31 @@
             <button id="fbx-preview-back" class="secondary-command" type="button"
                     data-action="back-to-tasks">返回任务</button>
         </header>
+        <div class="fbx-speed-panel" aria-label="FBX 预览速度">
+            <div class="fbx-speed-panel-header">
+                <span>视角速度</span>
+                <button id="fbx-reset-view" class="fbx-reset-view-button" type="button"
+                        data-action="reset-fbx-view">归零</button>
+            </div>
+            <label class="fbx-speed-row" for="fbx-rotate-speed">
+                <span>旋转</span>
+                <input id="fbx-rotate-speed" type="range" min="0.1" max="3.0" step="0.1" value="1.0"
+                       aria-label="旋转速度">
+                <span id="fbx-rotate-speed-value" class="fbx-speed-value">1.0x</span>
+            </label>
+            <label class="fbx-speed-row" for="fbx-zoom-speed">
+                <span>缩放</span>
+                <input id="fbx-zoom-speed" type="range" min="0.1" max="3.0" step="0.1" value="1.0"
+                       aria-label="缩放速度">
+                <span id="fbx-zoom-speed-value" class="fbx-speed-value">1.0x</span>
+            </label>
+            <label class="fbx-speed-row" for="fbx-pan-speed">
+                <span>平移</span>
+                <input id="fbx-pan-speed" type="range" min="0.1" max="3.0" step="0.1" value="1.0"
+                       aria-label="平移速度">
+                <span id="fbx-pan-speed-value" class="fbx-speed-value">1.0x</span>
+            </label>
+        </div>
         <footer class="fbx-preview-footer">
             <span>FBX</span>
             <span id="fbx-preview-directory"></span>

@@ -19,6 +19,13 @@ enum class FbxPreviewMode
     TexturedWireframe
 };
 
+struct FbxPreviewInteractionSettings
+{
+    double rotateSpeed = 1.0;
+    double zoomSpeed = 1.0;
+    double panSpeed = 1.0;
+};
+
 class FbxPreviewRenderer
 {
   public:
@@ -36,7 +43,21 @@ class FbxPreviewRenderer
 
     [[nodiscard]] FbxPreviewMode mode() const { return mode_; }
 
+    void setInteractionSettings(FbxPreviewInteractionSettings settings)
+    {
+        interactionSettings_ = settings;
+    }
+
+    [[nodiscard]] FbxPreviewInteractionSettings interactionSettings() const
+    {
+        return interactionSettings_;
+    }
+
+    void resetView();
+
     void rotateBy(double deltaX, double deltaY);
+
+    void panBy(double deltaX, double deltaY);
 
     void zoomBy(double delta);
 
@@ -66,9 +87,12 @@ class FbxPreviewRenderer
     std::vector<Texture> textures_;
     std::array<float, 3> center_{};
     float modelScale_ = 1.F;
-    double yaw_ = -0.65;
-    double pitch_ = 0.55;
+    double yaw_ = 0.0;
+    double pitch_ = 1.5707963267948966;
+    double panX_ = 0.0;
+    double panY_ = 0.0;
     double zoom_ = 1.0;
-    FbxPreviewMode mode_ = FbxPreviewMode::TexturedWireframe;
+    FbxPreviewInteractionSettings interactionSettings_;
+    FbxPreviewMode mode_ = FbxPreviewMode::Textured;
 };
 } // namespace DomDownToolPreview

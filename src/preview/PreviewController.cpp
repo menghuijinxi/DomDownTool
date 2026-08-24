@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -21,6 +22,8 @@
 #include "skui_runtime.h"
 #include "skui_runtime_helpers.h"
 
+#include "nlohmann/json.hpp"
+
 #include <shobjidl.h>
 #include <shellapi.h>
 #include <wrl/client.h>
@@ -32,7 +35,9 @@ namespace
 {
 using DomDownToolPreview::ExportConfiguration;
 using DomDownToolPreview::ExportTaskRecord;
+using DomDownToolPreview::FbxPreviewInteractionSettings;
 using DomDownToolPreview::GisExportMode;
+using Json = nlohmann::json;
 
 constexpr UINT kPreviewRedrawMessage = WM_APP + 0x642;
 constexpr UINT kPreviewUiRefreshMessage = WM_APP + 0x643;
@@ -41,8 +46,11 @@ constexpr UINT kPreviewMapUiRefreshMessage = WM_APP + 0x646;
 constexpr UINT kPreviewExportTaskRefreshMessage = WM_APP + 0x647;
 constexpr UINT kPreviewPageChangeMessage = WM_APP + 0x648;
 constexpr UINT kPreviewImmediateMapRedrawMessage = WM_APP + 0x649;
+constexpr UINT kPreviewImmediateFbxRedrawMessage = WM_APP + 0x64A;
 constexpr UINT_PTR kPreviewEyedropperTimerId = 0x645;
+constexpr UINT_PTR kPreviewFbxVerticalPanTimerId = 0x64B;
 constexpr UINT kPreviewEyedropperTimerIntervalMilliseconds = 16;
+constexpr UINT kPreviewFbxVerticalPanTimerIntervalMilliseconds = 16;
 constexpr double kSearchControlLeft = 192.;
 constexpr double kSearchControlWidth = 300.;
 constexpr double kSearchPopupWidth = 360.;
@@ -62,6 +70,94 @@ constexpr double kGisColorFieldWidth = 190.;
 constexpr double kGisColorFieldHeight = 150.;
 constexpr double kGisColorHueTop = kGisColorFieldTop;
 constexpr double kGisColorHueHeight = kGisColorFieldHeight;
+constexpr double kMinimumFbxInteractionSpeed = 0.1;
+constexpr double kMaximumFbxInteractionSpeed = 3.0;
+constexpr int kFbxPreviewHeaderHeight = 56;
+constexpr int kFbxPreviewFooterHeight = 42;
+constexpr int kFbxSpeedPanelRight = 18;
+constexpr int kFbxSpeedPanelBottom = 60;
+constexpr int kFbxSpeedPanelWidth = 260;
+constexpr int kFbxSpeedPanelHeight = 146;
+constexpr double kFbxKeyboardPanPixelsPerSecond = 720.0;
+
+std::filesystem::path fbxInteractionSettingsPath()
+{
+    return std::filesystem::u8path("cache/fbx-preview-settings.json");
+}
+
+double clampFbxInteractionSpeed(double value)
+{
+    if (!std::isfinite(value))
+    {
+        return 1.0;
+    }
+    return std::clamp(value, kMinimumFbxInteractionSpeed, kMaximumFbxInteractionSpeed);
+}
+
+std::string fbxInteractionSpeedText(double value)
+{
+    return fmt::format("{:.1f}x", value);
+}
+
+FbxPreviewInteractionSettings loadFbxInteractionSettings()
+{
+    FbxPreviewInteractionSettings settings;
+    std::ifstream input(fbxInteractionSettingsPath(), std::ios::binary);
+    if (!input.is_open())
+    {
+        return settings;
+    }
+    const Json root = Json::parse(input, nullptr, false);
+    if (!root.is_object())
+    {
+        return settings;
+    }
+    settings.rotateSpeed = clampFbxInteractionSpeed(root.value("rotateSpeed", settings.rotateSpeed));
+    settings.zoomSpeed = clampFbxInteractionSpeed(root.value("zoomSpeed", settings.zoomSpeed));
+    settings.panSpeed = clampFbxInteractionSpeed(root.value("panSpeed", settings.panSpeed));
+    return settings;
+}
+
+bool saveFbxInteractionSettings(const FbxPreviewInteractionSettings& settings)
+{
+    const std::filesystem::path path = fbxInteractionSettingsPath();
+    std::error_code directoryError;
+    std::filesystem::create_directories(path.parent_path(), directoryError);
+    if (directoryError)
+    {
+        return false;
+    }
+    Json root = Json::object();
+    root["rotateSpeed"] = settings.rotateSpeed;
+    root["zoomSpeed"] = settings.zoomSpeed;
+    root["panSpeed"] = settings.panSpeed;
+
+    std::filesystem::path temporaryPath = path;
+    temporaryPath += ".tmp";
+    {
+        std::ofstream output(temporaryPath, std::ios::binary | std::ios::trunc);
+        if (!output.is_open())
+        {
+            return false;
+        }
+        output << root.dump(2);
+        if (!output.good())
+        {
+            return false;
+        }
+    }
+    std::error_code renameError;
+    std::filesystem::rename(temporaryPath, path, renameError);
+    if (!renameError)
+    {
+        return true;
+    }
+    std::error_code removeError;
+    std::filesystem::remove(path, removeError);
+    renameError.clear();
+    std::filesystem::rename(temporaryPath, path, renameError);
+    return !renameError;
+}
 
 bool isPointInside(double x, double y, double left, double top, double width, double height)
 {
@@ -1158,6 +1254,7 @@ DomDownToolPreview::PreviewController::PreviewController()
       exportTaskManager_([this] { scheduleExportTaskRefresh(); }),
       dx12FbxRenderer_([this] { requestRedraw(); })
 {
+    applyFbxInteractionSettings(loadFbxInteractionSettings());
 }
 
 void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime)
@@ -1178,6 +1275,14 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                     renderer_.SetExportRadiusMeters(*radius);
                     requestRedraw();
                 }
+                return;
+            }
+
+            if ((event.type == skui::ElementEventType::Input ||
+                 event.type == skui::ElementEventType::Change) &&
+                updateFbxInteractionSetting(runtime, event.id, event.value,
+                                            event.type == skui::ElementEventType::Change))
+            {
                 return;
             }
 
@@ -1526,6 +1631,13 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 return;
             }
 
+            if (page_ == Page::FbxPreview && event.id == "fbx-reset-view")
+            {
+                dx12FbxRenderer_.resetView();
+                requestRedraw();
+                return;
+            }
+
             if (page_ == Page::FbxPreview &&
                 (event.id == "fbx-preview-mode-textured" ||
                  event.id == "fbx-preview-mode-wireframe" ||
@@ -1533,17 +1645,14 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             {
                 if (event.id == "fbx-preview-mode-textured")
                 {
-                    fbxPreviewRenderer_.setMode(FbxPreviewMode::Textured);
                     dx12FbxRenderer_.setMode(FbxPreviewMode::Textured);
                 }
                 else if (event.id == "fbx-preview-mode-wireframe")
                 {
-                    fbxPreviewRenderer_.setMode(FbxPreviewMode::Wireframe);
                     dx12FbxRenderer_.setMode(FbxPreviewMode::Wireframe);
                 }
                 else if (event.id == "fbx-preview-mode-both")
                 {
-                    fbxPreviewRenderer_.setMode(FbxPreviewMode::TexturedWireframe);
                     dx12FbxRenderer_.setMode(FbxPreviewMode::TexturedWireframe);
                 }
                 updateUi(runtime);
@@ -1699,15 +1808,13 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                     return;
                 }
                 std::string loadError;
-                if (!fbxPreviewRenderer_.load(fbxFiles, loadError))
+                if (!dx12FbxRenderer_.load(fbxFiles, loadError))
                 {
                     MessageBoxW(window_.load(std::memory_order_relaxed),
                                 utf8ToWide(loadError).c_str(), L"DomDownTool",
                                 MB_OK | MB_ICONWARNING);
                     return;
                 }
-                std::string dx12LoadError;
-                dx12FbxRenderer_.load(fbxFiles, dx12LoadError);
                 OpenFbxPreviewPage(runtime, fbxFiles.front().parent_path(), record->title);
                 return;
             }
@@ -1968,10 +2075,7 @@ void DomDownToolPreview::PreviewController::draw(SkCanvas& canvas, int width, in
     else if (page_ == Page::FbxPreview)
     {
         canvas.clear(SkColorSetRGB(22, 27, 26));
-        if (!dx12FbxRenderer_.draw(canvas, width, height, dpiScale))
-        {
-            fbxPreviewRenderer_.draw(canvas, width, height, dpiScale);
-        }
+        static_cast<void>(dx12FbxRenderer_.draw(canvas, width, height, dpiScale));
     }
     else
     {
@@ -2001,12 +2105,19 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         KillTimer(window, kPreviewEyedropperTimerId);
         gisColorEyedropperActive_ = false;
     }
+    if (message == WM_DESTROY)
+    {
+        KillTimer(window, kPreviewFbxVerticalPanTimerId);
+        fbxVerticalPanDirection_ = 0;
+    }
     window_.store(message == WM_DESTROY ? nullptr : window, std::memory_order_relaxed);
     if (message == WM_DESTROY)
     {
         immediateMapRedrawPosted_ = false;
+        immediateFbxRedrawPosted_ = false;
         mapUiRefreshPosted_ = false;
         mapDragRedrawThrottle_.reset();
+        fbxDragRedrawThrottle_.reset();
         mapCenterUiRefreshThrottle_.reset();
     }
     if (message == kPreviewImmediateMapRedrawMessage)
@@ -2016,8 +2127,20 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
                      RDW_INVALIDATE | RDW_NOCHILDREN | RDW_UPDATENOW);
         return false;
     }
+    if (message == kPreviewImmediateFbxRedrawMessage)
+    {
+        immediateFbxRedrawPosted_ = false;
+        RedrawWindow(window, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_NOCHILDREN | RDW_UPDATENOW);
+        return false;
+    }
     if (message == kPreviewRedrawMessage)
     {
+        if (page_ == Page::FbxPreview)
+        {
+            fbxRedrawPosted_.store(false, std::memory_order_relaxed);
+            updateUi(runtime);
+        }
         return true;
     }
     if (message == kPreviewUiRefreshMessage)
@@ -2080,6 +2203,19 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         }
         return true;
     }
+    if (message == WM_TIMER && wParam == kPreviewFbxVerticalPanTimerId)
+    {
+        if (page_ == Page::FbxPreview && fbxVerticalPanDirection_ != 0)
+        {
+            applyFbxVerticalPanTick(window);
+        }
+        else
+        {
+            KillTimer(window, kPreviewFbxVerticalPanTimerId);
+            fbxVerticalPanDirection_ = 0;
+        }
+        return true;
+    }
 
     if (message == WM_KEYDOWN && wParam == VK_ESCAPE &&
         (taskClearConfirmOpen_ || taskDeleteTargetId_.has_value()))
@@ -2098,26 +2234,49 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
             OpenTaskPage(runtime);
             return true;
         }
-        if (message == WM_LBUTTONUP && dragging_)
+        if ((message == WM_KEYDOWN || message == WM_KEYUP) &&
+            (wParam == 'Q' || wParam == 'E'))
+        {
+            const bool qDown = wParam != 'Q' && (GetAsyncKeyState('Q') & 0x8000) != 0;
+            const bool eDown = wParam != 'E' && (GetAsyncKeyState('E') & 0x8000) != 0;
+            const bool nextQDown = message == WM_KEYDOWN && wParam == 'Q' ? true : qDown;
+            const bool nextEDown = message == WM_KEYDOWN && wParam == 'E' ? true : eDown;
+            const int direction = nextQDown == nextEDown ? 0 : (nextQDown ? 1 : -1);
+            setFbxVerticalPanDirection(window, direction);
+            return true;
+        }
+        if (message == WM_CAPTURECHANGED || message == WM_CANCELMODE || message == WM_KILLFOCUS)
         {
             dragging_ = false;
+            fbxDragMode_ = FbxDragMode::None;
+            fbxDragRedrawThrottle_.reset();
+            setFbxVerticalPanDirection(window, 0);
+            return false;
+        }
+        if ((message == WM_LBUTTONUP || message == WM_RBUTTONUP || message == WM_MBUTTONUP) &&
+            dragging_)
+        {
+            dragging_ = false;
+            fbxDragMode_ = FbxDragMode::None;
             if (GetCapture() == window)
             {
                 ReleaseCapture();
             }
+            fbxDragRedrawThrottle_.reset();
+            scheduleImmediateFbxRedraw(window);
             return true;
         }
-        if (message == WM_LBUTTONDOWN)
+        if (message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN || message == WM_MBUTTONDOWN)
         {
             const POINT point = clientPoint(lParam);
-            RECT client{};
-            GetClientRect(window, &client);
-            if (point.y < 56 || point.x < 0 || point.x >= client.right ||
-                point.y >= client.bottom)
+            if (!isFbxPreviewPoint(window, point.x, point.y))
             {
                 return false;
             }
             dragging_ = true;
+            fbxDragMode_ = (message == WM_LBUTTONDOWN && (wParam & MK_SHIFT) == 0)
+                ? FbxDragMode::Orbit : FbxDragMode::Pan;
+            fbxDragRedrawThrottle_.reset();
             lastDragPoint_ = point;
             SetCapture(window);
             return true;
@@ -2125,23 +2284,32 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         if (message == WM_MOUSEMOVE && dragging_)
         {
             const POINT point = clientPoint(lParam);
-            fbxPreviewRenderer_.rotateBy(
-                static_cast<double>(point.x - lastDragPoint_.x),
-                static_cast<double>(point.y - lastDragPoint_.y));
-            dx12FbxRenderer_.rotateBy(
-                static_cast<double>(point.x - lastDragPoint_.x),
-                static_cast<double>(point.y - lastDragPoint_.y));
+            const double deltaX = static_cast<double>(point.x - lastDragPoint_.x);
+            const double deltaY = static_cast<double>(point.y - lastDragPoint_.y);
+            if (fbxDragMode_ == FbxDragMode::Pan)
+            {
+                dx12FbxRenderer_.panBy(deltaX, deltaY);
+            }
+            else
+            {
+                dx12FbxRenderer_.rotateBy(deltaX, deltaY);
+            }
             lastDragPoint_ = point;
-            requestRedraw();
+            scheduleImmediateFbxRedraw(window);
             return true;
         }
         if (message == WM_MOUSEWHEEL)
         {
-            fbxPreviewRenderer_.zoomBy(
-                static_cast<double>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA);
+            POINT point{static_cast<LONG>(static_cast<int16_t>(LOWORD(lParam))),
+                        static_cast<LONG>(static_cast<int16_t>(HIWORD(lParam)))};
+            ScreenToClient(window, &point);
+            if (!isFbxPreviewPoint(window, point.x, point.y))
+            {
+                return false;
+            }
             dx12FbxRenderer_.zoomBy(
                 static_cast<double>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA);
-            requestRedraw();
+            scheduleImmediateFbxRedraw(window);
             return true;
         }
         return false;
@@ -2390,6 +2558,24 @@ bool DomDownToolPreview::PreviewController::isMapPoint(HWND window, int x, int y
     return x >= 0 && x < client.right && static_cast<double>(y) >= renderer_.toolbarHeight() &&
            static_cast<double>(y) <
                static_cast<double>(client.bottom) - renderer_.statusBarHeight();
+}
+
+bool DomDownToolPreview::PreviewController::isFbxPreviewPoint(HWND window, int x, int y) const
+{
+    if (page_ != Page::FbxPreview)
+    {
+        return false;
+    }
+    RECT client{};
+    GetClientRect(window, &client);
+    const int panelLeft = client.right - kFbxSpeedPanelRight - kFbxSpeedPanelWidth;
+    const int panelTop = client.bottom - kFbxSpeedPanelBottom - kFbxSpeedPanelHeight;
+    const int panelRight = client.right - kFbxSpeedPanelRight;
+    const int panelBottom = client.bottom - kFbxSpeedPanelBottom;
+    const bool insideSettingsPanel = x >= panelLeft && x < panelRight &&
+        y >= panelTop && y < panelBottom;
+    return !insideSettingsPanel && x >= 0 && x < client.right &&
+           y >= kFbxPreviewHeaderHeight && y < client.bottom - kFbxPreviewFooterHeight;
 }
 
 bool DomDownToolPreview::PreviewController::isSearchInteractionPoint(
@@ -2763,21 +2949,43 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
     }
     if (page_ == Page::FbxPreview)
     {
+        const FbxPreviewLoadStatus loadStatus = dx12FbxRenderer_.loadStatus();
+        std::string statsText;
+        if (!loadStatus.error.empty())
+        {
+            statsText = "加载失败：" + loadStatus.error;
+        }
+        else if (!loadStatus.meshReady)
+        {
+            statsText = "正在读取网格...";
+        }
+        else
+        {
+            statsText = fmt::format("{} 个顶点 · {} 个三角形",
+                                    dx12FbxRenderer_.vertexCount(),
+                                    dx12FbxRenderer_.triangleCount());
+            if (loadStatus.totalTextureCount > 0)
+            {
+                statsText += fmt::format(" · 贴图 {}/{}{}",
+                                         loadStatus.readyTextureCount,
+                                         loadStatus.totalTextureCount,
+                                         loadStatus.loading ? "（后台处理中）" : "");
+            }
+        }
         runtime.setTextsById({
             {"fbx-preview-title", fbxPreviewTitle_},
             {"fbx-preview-directory", pathToUtf8(fbxPreviewTaskRoot_)},
-            {"fbx-preview-stats", fmt::format("{} 个顶点 · {} 个三角形",
-                                                 fbxPreviewRenderer_.vertexCount(),
-                                                 fbxPreviewRenderer_.triangleCount())}});
+            {"fbx-preview-stats", std::move(statsText)}});
         const std::array<std::pair<const char*, bool>, 3> modeButtons = {{
-            {"fbx-preview-mode-textured", fbxPreviewRenderer_.mode() == FbxPreviewMode::Textured},
-            {"fbx-preview-mode-wireframe", fbxPreviewRenderer_.mode() == FbxPreviewMode::Wireframe},
+            {"fbx-preview-mode-textured", dx12FbxRenderer_.mode() == FbxPreviewMode::Textured},
+            {"fbx-preview-mode-wireframe", dx12FbxRenderer_.mode() == FbxPreviewMode::Wireframe},
             {"fbx-preview-mode-both",
-             fbxPreviewRenderer_.mode() == FbxPreviewMode::TexturedWireframe}}};
+             dx12FbxRenderer_.mode() == FbxPreviewMode::TexturedWireframe}}};
         for (const auto& [id, active] : modeButtons)
         {
             runtime.setAttributeById(id, "aria-pressed", active ? "true" : "false");
         }
+        syncFbxInteractionSettingsUi(runtime);
         return;
     }
 
@@ -2928,6 +3136,16 @@ void DomDownToolPreview::PreviewController::schedulePageChange(Page page,
 
 void DomDownToolPreview::PreviewController::OpenExportPage(skui::Runtime& runtime)
 {
+    if (page_ == Page::FbxPreview)
+    {
+        dx12FbxRenderer_.clear();
+        dragging_ = false;
+        fbxRedrawPosted_.store(false, std::memory_order_relaxed);
+        immediateFbxRedrawPosted_ = false;
+        fbxDragMode_ = FbxDragMode::None;
+        fbxDragRedrawThrottle_.reset();
+        setFbxVerticalPanDirection(window_.load(std::memory_order_relaxed), 0);
+    }
     taskClearConfirmOpen_ = false;
     taskDeleteTargetId_.reset();
     std::optional<ExportConfiguration> configuration =
@@ -2941,6 +3159,16 @@ void DomDownToolPreview::PreviewController::OpenExportPage(skui::Runtime& runtim
 
 void DomDownToolPreview::PreviewController::OpenTaskPage(skui::Runtime& runtime)
 {
+    if (page_ == Page::FbxPreview)
+    {
+        dx12FbxRenderer_.clear();
+        dragging_ = false;
+        fbxRedrawPosted_.store(false, std::memory_order_relaxed);
+        immediateFbxRedrawPosted_ = false;
+        fbxDragMode_ = FbxDragMode::None;
+        fbxDragRedrawThrottle_.reset();
+        setFbxVerticalPanDirection(window_.load(std::memory_order_relaxed), 0);
+    }
     taskClearConfirmOpen_ = false;
     taskDeleteTargetId_.reset();
     pendingExportConfiguration_.reset();
@@ -2952,6 +3180,16 @@ void DomDownToolPreview::PreviewController::OpenTaskPage(skui::Runtime& runtime)
 
 void DomDownToolPreview::PreviewController::OpenPreviewPage(skui::Runtime& runtime)
 {
+    if (page_ == Page::FbxPreview)
+    {
+        dx12FbxRenderer_.clear();
+        dragging_ = false;
+        fbxRedrawPosted_.store(false, std::memory_order_relaxed);
+        immediateFbxRedrawPosted_ = false;
+        fbxDragMode_ = FbxDragMode::None;
+        fbxDragRedrawThrottle_.reset();
+        setFbxVerticalPanDirection(window_.load(std::memory_order_relaxed), 0);
+    }
     taskClearConfirmOpen_ = false;
     taskDeleteTargetId_.reset();
     pendingExportConfiguration_.reset();
@@ -2963,6 +3201,12 @@ void DomDownToolPreview::PreviewController::OpenPreviewPage(skui::Runtime& runti
 void DomDownToolPreview::PreviewController::OpenFbxPreviewPage(
     skui::Runtime& runtime, const std::filesystem::path& taskRoot, std::string title)
 {
+    fbxRedrawPosted_.store(false, std::memory_order_relaxed);
+    dragging_ = false;
+    immediateFbxRedrawPosted_ = false;
+    fbxDragMode_ = FbxDragMode::None;
+    fbxDragRedrawThrottle_.reset();
+    setFbxVerticalPanDirection(window_.load(std::memory_order_relaxed), 0);
     taskClearConfirmOpen_ = false;
     taskDeleteTargetId_.reset();
     fbxPreviewTaskRoot_ = taskRoot;
@@ -3499,6 +3743,77 @@ void DomDownToolPreview::PreviewController::scheduleImmediateMapRedraw(HWND wind
     }
 }
 
+void DomDownToolPreview::PreviewController::scheduleImmediateFbxRedraw(HWND window)
+{
+    if (immediateFbxRedrawPosted_ ||
+        !fbxDragRedrawThrottle_.shouldRefresh(MapHoverRefreshThrottle::Clock::now()))
+    {
+        return;
+    }
+
+    immediateFbxRedrawPosted_ = true;
+    if (!PostMessageW(window, kPreviewImmediateFbxRedrawMessage, 0, 0))
+    {
+        immediateFbxRedrawPosted_ = false;
+    }
+}
+
+void DomDownToolPreview::PreviewController::setFbxVerticalPanDirection(HWND window,
+                                                                      int direction)
+{
+    direction = std::clamp(direction, -1, 1);
+    if (direction == fbxVerticalPanDirection_)
+    {
+        return;
+    }
+
+    fbxVerticalPanDirection_ = direction;
+    if (direction == 0)
+    {
+        if (window)
+        {
+            KillTimer(window, kPreviewFbxVerticalPanTimerId);
+        }
+        return;
+    }
+
+    lastFbxVerticalPanTick_ = std::chrono::steady_clock::now() -
+        std::chrono::milliseconds(kPreviewFbxVerticalPanTimerIntervalMilliseconds);
+    if (window)
+    {
+        if (SetTimer(window, kPreviewFbxVerticalPanTimerId,
+                     kPreviewFbxVerticalPanTimerIntervalMilliseconds, nullptr) == 0)
+        {
+            fbxVerticalPanDirection_ = 0;
+            return;
+        }
+        applyFbxVerticalPanTick(window);
+    }
+}
+
+void DomDownToolPreview::PreviewController::applyFbxVerticalPanTick(HWND window)
+{
+    if (fbxVerticalPanDirection_ == 0)
+    {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const double seconds = std::clamp(
+        std::chrono::duration<double>(now - lastFbxVerticalPanTick_).count(),
+        0.0, 0.05);
+    lastFbxVerticalPanTick_ = now;
+    if (seconds <= 0.0)
+    {
+        return;
+    }
+
+    dx12FbxRenderer_.verticalPanBy(
+        static_cast<double>(fbxVerticalPanDirection_) *
+        kFbxKeyboardPanPixelsPerSecond * seconds);
+    scheduleImmediateFbxRedraw(window);
+}
+
 void DomDownToolPreview::PreviewController::scheduleMapUiRefresh(HWND window)
 {
     if (mapUiRefreshPosted_)
@@ -3538,6 +3853,70 @@ void DomDownToolPreview::PreviewController::updateMapInteractionUi(
     {
         requestRedraw();
     }
+}
+
+void DomDownToolPreview::PreviewController::applyFbxInteractionSettings(
+    FbxPreviewInteractionSettings settings)
+{
+    settings.rotateSpeed = clampFbxInteractionSpeed(settings.rotateSpeed);
+    settings.zoomSpeed = clampFbxInteractionSpeed(settings.zoomSpeed);
+    settings.panSpeed = clampFbxInteractionSpeed(settings.panSpeed);
+    fbxInteractionSettings_ = settings;
+    dx12FbxRenderer_.setInteractionSettings(fbxInteractionSettings_);
+}
+
+bool DomDownToolPreview::PreviewController::updateFbxInteractionSetting(
+    skui::Runtime& runtime, std::string_view id, std::string_view value, bool persist)
+{
+    const std::optional<double> parsedValue = parseFiniteDouble(value);
+    if (!parsedValue.has_value())
+    {
+        return id == "fbx-rotate-speed" || id == "fbx-zoom-speed" ||
+            id == "fbx-pan-speed";
+    }
+
+    FbxPreviewInteractionSettings nextSettings = fbxInteractionSettings_;
+    if (id == "fbx-rotate-speed")
+    {
+        nextSettings.rotateSpeed = clampFbxInteractionSpeed(*parsedValue);
+    }
+    else if (id == "fbx-zoom-speed")
+    {
+        nextSettings.zoomSpeed = clampFbxInteractionSpeed(*parsedValue);
+    }
+    else if (id == "fbx-pan-speed")
+    {
+        nextSettings.panSpeed = clampFbxInteractionSpeed(*parsedValue);
+    }
+    else
+    {
+        return false;
+    }
+
+    applyFbxInteractionSettings(nextSettings);
+    syncFbxInteractionSettingsUi(runtime);
+    if (persist)
+    {
+        static_cast<void>(saveFbxInteractionSettings(fbxInteractionSettings_));
+    }
+    return true;
+}
+
+void DomDownToolPreview::PreviewController::syncFbxInteractionSettingsUi(
+    skui::Runtime& runtime)
+{
+    runtime.setValueById("fbx-rotate-speed",
+                         fmt::format("{:.1f}", fbxInteractionSettings_.rotateSpeed));
+    runtime.setValueById("fbx-zoom-speed",
+                         fmt::format("{:.1f}", fbxInteractionSettings_.zoomSpeed));
+    runtime.setValueById("fbx-pan-speed",
+                         fmt::format("{:.1f}", fbxInteractionSettings_.panSpeed));
+    runtime.setTextById("fbx-rotate-speed-value",
+                        fbxInteractionSpeedText(fbxInteractionSettings_.rotateSpeed));
+    runtime.setTextById("fbx-zoom-speed-value",
+                        fbxInteractionSpeedText(fbxInteractionSettings_.zoomSpeed));
+    runtime.setTextById("fbx-pan-speed-value",
+                        fbxInteractionSpeedText(fbxInteractionSettings_.panSpeed));
 }
 
 void DomDownToolPreview::PreviewController::scheduleUiRefresh()
@@ -3586,8 +3965,17 @@ void DomDownToolPreview::PreviewController::scheduleExportTaskRefresh()
 void DomDownToolPreview::PreviewController::requestRedraw() const
 {
     const HWND window = window_.load(std::memory_order_relaxed);
-    if (window)
+    const bool isFbxPreview = page_ == Page::FbxPreview;
+    if (isFbxPreview && fbxRedrawPosted_.exchange(true, std::memory_order_relaxed))
     {
-        PostMessageW(window, kPreviewRedrawMessage, 0, 0);
+        return;
+    }
+    if (window && PostMessageW(window, kPreviewRedrawMessage, 0, 0))
+    {
+        return;
+    }
+    if (isFbxPreview)
+    {
+        fbxRedrawPosted_.store(false, std::memory_order_relaxed);
     }
 }

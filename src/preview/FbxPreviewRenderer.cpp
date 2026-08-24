@@ -36,6 +36,13 @@ constexpr std::size_t kMaximumPreviewTriangles = 500000;
 constexpr std::size_t kMaximumPreviewTextures = 16;
 constexpr int kMaximumPreviewTextureDimension = 4096;
 constexpr uint32_t kNoTextureIndex = std::numeric_limits<uint32_t>::max();
+constexpr double kDefaultTerrainYaw = 0.0;
+constexpr double kDefaultTerrainPitch = 1.5707963267948966;
+constexpr double kMinimumTerrainPitch = 0.01;
+constexpr double kMaximumTerrainPan = 4.0;
+constexpr double kBaseRotationRadiansPerPixel = 0.004;
+constexpr double kMinimumTerrainZoom = 0.15;
+constexpr double kMaximumTerrainZoom = 100000.0;
 
 struct Bounds
 {
@@ -259,21 +266,40 @@ void DomDownToolPreview::FbxPreviewRenderer::clear()
     textures_.clear();
     center_ = {};
     modelScale_ = 1.F;
-    yaw_ = -0.65;
-    pitch_ = 0.55;
+    resetView();
+    mode_ = FbxPreviewMode::Textured;
+}
+
+void DomDownToolPreview::FbxPreviewRenderer::resetView()
+{
+    yaw_ = kDefaultTerrainYaw;
+    pitch_ = kDefaultTerrainPitch;
+    panX_ = 0.0;
+    panY_ = 0.0;
     zoom_ = 1.0;
-    mode_ = FbxPreviewMode::TexturedWireframe;
 }
 
 void DomDownToolPreview::FbxPreviewRenderer::rotateBy(double deltaX, double deltaY)
 {
-    yaw_ += deltaX * 0.008;
-    pitch_ = std::clamp(pitch_ + deltaY * 0.008, -1.35, 1.35);
+    const double rotationScale = kBaseRotationRadiansPerPixel *
+        interactionSettings_.rotateSpeed;
+    yaw_ += deltaX * rotationScale;
+    pitch_ = std::clamp(pitch_ + deltaY * rotationScale,
+                        kMinimumTerrainPitch, kDefaultTerrainPitch);
+}
+
+void DomDownToolPreview::FbxPreviewRenderer::panBy(double deltaX, double deltaY)
+{
+    panX_ = std::clamp(panX_ + deltaX * 0.002 * interactionSettings_.panSpeed,
+                       -kMaximumTerrainPan, kMaximumTerrainPan);
+    panY_ = std::clamp(panY_ - deltaY * 0.002 * interactionSettings_.panSpeed,
+                       -kMaximumTerrainPan, kMaximumTerrainPan);
 }
 
 void DomDownToolPreview::FbxPreviewRenderer::zoomBy(double delta)
 {
-    zoom_ = std::clamp(zoom_ * std::pow(1.12, delta), 0.15, 12.0);
+    zoom_ = std::clamp(zoom_ * std::pow(1.12, delta * interactionSettings_.zoomSpeed),
+                       kMinimumTerrainZoom, kMaximumTerrainZoom);
 }
 
 void DomDownToolPreview::FbxPreviewRenderer::draw(
@@ -295,8 +321,8 @@ void DomDownToolPreview::FbxPreviewRenderer::draw(
     const double sinPitch = std::sin(pitch_);
     const float scale = std::min(width, height) * 0.76F * static_cast<float>(zoom_) /
         modelScale_;
-    const float centerX = static_cast<float>(width) * 0.5F;
-    const float centerY = static_cast<float>(height) * 0.54F;
+    const float centerX = static_cast<float>(width) * (0.5F + static_cast<float>(panX_) * 0.5F);
+    const float centerY = static_cast<float>(height) * (0.54F - static_cast<float>(panY_) * 0.5F);
     std::vector<ProjectedVertex> projected;
     projected.reserve(vertices_.size());
     for (const Vertex& vertex : vertices_)
@@ -304,10 +330,10 @@ void DomDownToolPreview::FbxPreviewRenderer::draw(
         const double x = static_cast<double>(vertex.position[0] - center_[0]);
         const double y = static_cast<double>(vertex.position[1] - center_[1]);
         const double z = static_cast<double>(vertex.position[2] - center_[2]);
-        const float rotatedX = static_cast<float>(cosYaw * x - sinYaw * y);
-        const float rotatedY = static_cast<float>(sinYaw * x + cosYaw * y);
-        const float elevatedY = static_cast<float>(cosPitch * rotatedY - sinPitch * z);
-        const float depth = static_cast<float>(sinPitch * rotatedY + cosPitch * z);
+        const float rotatedX = static_cast<float>(cosYaw * x - sinYaw * z);
+        const float rotatedZ = static_cast<float>(sinYaw * x + cosYaw * z);
+        const float elevatedY = static_cast<float>(cosPitch * y - sinPitch * rotatedZ);
+        const float depth = static_cast<float>(cosPitch * rotatedZ + sinPitch * y);
         projected.push_back({SkPoint::Make(centerX + rotatedX * scale,
                                             centerY - elevatedY * scale),
                              depth});

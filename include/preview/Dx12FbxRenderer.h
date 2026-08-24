@@ -12,6 +12,16 @@ class SkCanvas;
 
 namespace DomDownToolPreview
 {
+struct FbxPreviewLoadStatus
+{
+    bool loading = false;
+    bool meshReady = false;
+    std::size_t readyTextureCount = 0;
+    std::size_t completedTextureCount = 0;
+    std::size_t totalTextureCount = 0;
+    std::string error;
+};
+
 class Dx12FbxRenderer
 {
   public:
@@ -29,7 +39,17 @@ class Dx12FbxRenderer
 
     [[nodiscard]] FbxPreviewMode mode() const;
 
+    void setInteractionSettings(FbxPreviewInteractionSettings settings);
+
+    [[nodiscard]] FbxPreviewInteractionSettings interactionSettings() const;
+
+    void resetView();
+
     void rotateBy(double deltaX, double deltaY);
+
+    void panBy(double deltaX, double deltaY);
+
+    void verticalPanBy(double delta);
 
     void zoomBy(double delta);
 
@@ -38,6 +58,8 @@ class Dx12FbxRenderer
     [[nodiscard]] std::size_t vertexCount() const;
 
     [[nodiscard]] std::size_t triangleCount() const;
+
+    [[nodiscard]] FbxPreviewLoadStatus loadStatus() const;
 
     [[nodiscard]] bool draw(SkCanvas& canvas, int width, int height, float dpiScale);
 

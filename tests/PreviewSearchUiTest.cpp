@@ -113,13 +113,24 @@ bool runTest()
                     documentPath, "id=\"fbx-preview-mode-wireframe\" class=\"fbx-preview-mode-button\"") &&
                 postprocess_test::ContainsText(
                     documentPath, "id=\"fbx-preview-mode-both\" class=\"fbx-preview-mode-button\"") &&
+                postprocess_test::ContainsText(documentPath, "id=\"fbx-reset-view\"") &&
+                postprocess_test::ContainsText(documentPath, "data-action=\"reset-fbx-view\"") &&
+                postprocess_test::ContainsText(documentPath, "id=\"fbx-rotate-speed\"") &&
+                postprocess_test::ContainsText(documentPath, "id=\"fbx-zoom-speed\"") &&
+                postprocess_test::ContainsText(documentPath, "id=\"fbx-pan-speed\"") &&
                 postprocess_test::ContainsText(documentPath, "aria-label=\"预览显示模式\"") &&
                 postprocess_test::ContainsText(
                     documentPath, "data-action=\"set-fbx-preview-mode\"") &&
+                runtime.setValueById("fbx-rotate-speed", "1.0") &&
+                runtime.setValueById("fbx-zoom-speed", "1.0") &&
+                runtime.setValueById("fbx-pan-speed", "1.0") &&
                 runtime.setTextsById({
                     {"fbx-preview-title", "测试 FBX"},
                     {"fbx-preview-directory", "tmp/export"},
-                    {"fbx-preview-stats", "4 个顶点 · 2 个三角形"}}),
+                    {"fbx-preview-stats", "4 个顶点 · 2 个三角形"},
+                    {"fbx-rotate-speed-value", "1.0x"},
+                    {"fbx-zoom-speed-value", "1.0x"},
+                    {"fbx-pan-speed-value", "1.0x"}}),
             "FBX 网格预览页缺少页面结构或动态状态字段"))
     {
         return false;

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -15,7 +16,6 @@
 #include "preview/AmapWebViewSearch.h"
 #include "preview/Dx12FbxRenderer.h"
 #include "preview/ExportTaskManager.h"
-#include "preview/FbxPreviewRenderer.h"
 #include "preview/MapHoverRefreshThrottle.h"
 #include "preview/MapRenderer.h"
 
@@ -60,6 +60,13 @@ class PreviewController
         Error
     };
 
+    enum class FbxDragMode
+    {
+        None,
+        Orbit,
+        Pan
+    };
+
     struct PendingLocationRequest
     {
         uint64_t requestId = 0;
@@ -75,6 +82,8 @@ class PreviewController
     };
 
     [[nodiscard]] bool isMapPoint(HWND window, int x, int y) const;
+
+    [[nodiscard]] bool isFbxPreviewPoint(HWND window, int x, int y) const;
 
     [[nodiscard]] bool isSearchInteractionPoint(const skui::Runtime& runtime, int x, int y) const;
 
@@ -136,9 +145,22 @@ class PreviewController
 
     void scheduleImmediateMapRedraw(HWND window);
 
+    void scheduleImmediateFbxRedraw(HWND window);
+
+    void setFbxVerticalPanDirection(HWND window, int direction);
+
+    void applyFbxVerticalPanTick(HWND window);
+
     void scheduleMapUiRefresh(HWND window);
 
     void updateMapInteractionUi(skui::Runtime& runtime);
+
+    void applyFbxInteractionSettings(FbxPreviewInteractionSettings settings);
+
+    bool updateFbxInteractionSetting(skui::Runtime& runtime, std::string_view id,
+                                     std::string_view value, bool persist);
+
+    void syncFbxInteractionSettingsUi(skui::Runtime& runtime);
 
     void scheduleUiRefresh();
 
@@ -207,16 +229,22 @@ class PreviewController
     std::string lastUiTileStats_;
     std::string lastCenterCoordinate_;
     std::string lastZoomValue_;
+    FbxPreviewInteractionSettings fbxInteractionSettings_;
     bool dragging_ = false;
+    FbxDragMode fbxDragMode_ = FbxDragMode::None;
     POINT lastDragPoint_{};
     bool immediateMapRedrawPosted_ = false;
+    bool immediateFbxRedrawPosted_ = false;
+    int fbxVerticalPanDirection_ = 0;
+    std::chrono::steady_clock::time_point lastFbxVerticalPanTick_{};
     bool mapUiRefreshPosted_ = false;
+    mutable std::atomic_bool fbxRedrawPosted_ = false;
     MapHoverRefreshThrottle mapDragRedrawThrottle_{std::chrono::milliseconds(4)};
+    MapHoverRefreshThrottle fbxDragRedrawThrottle_{std::chrono::milliseconds(4)};
     MapHoverRefreshThrottle mapCenterUiRefreshThrottle_{std::chrono::milliseconds(50)};
     std::atomic_bool exportTaskRefreshPosted_ = false;
     // 必须先于任务状态回调所访问的成员析构。
     ExportTaskManager exportTaskManager_;
-    FbxPreviewRenderer fbxPreviewRenderer_;
     Dx12FbxRenderer dx12FbxRenderer_;
     std::string fbxPreviewTitle_;
     std::filesystem::path fbxPreviewTaskRoot_;

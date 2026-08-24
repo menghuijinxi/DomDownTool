@@ -390,11 +390,14 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
 
   add_executable(FbxPreviewRendererTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/FbxPreviewRendererTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/Dx12FbxRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/FbxPreviewRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SkiaImageCodecs.cpp)
   target_link_libraries(FbxPreviewRendererTest PRIVATE
     DomDownToolCore
-    SkiaUI::SkuiWin32Dx12)
+    SkiaUI::SkuiWin32Dx12
+    d3d12
+    d3dcompiler)
   target_compile_definitions(FbxPreviewRendererTest PRIVATE
     DOMDOWNTOOL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     NOMINMAX

@@ -19,14 +19,17 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <fstream>
 #include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
-#include <string_view>
+#include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include <assimp/Importer.hpp>
@@ -63,7 +66,22 @@ constexpr std::size_t kMaximumTextures = 1024;
 constexpr int kMaximumTextureDimension = 4096;
 constexpr UINT kFrameCount = 3;
 constexpr UINT kRootConstantCount = 20;
-constexpr UINT kTextureDescriptorCount = static_cast<UINT>(kMaximumTextures);
+constexpr UINT kNullTextureDescriptorIndex = static_cast<UINT>(kMaximumTextures);
+constexpr UINT kTextureDescriptorCount = kNullTextureDescriptorIndex + 1;
+constexpr double kDefaultTerrainYaw = 0.0;
+constexpr double kDefaultTerrainPitch = 1.5707963267948966;
+constexpr double kMinimumTerrainPitch = 0.01;
+constexpr double kMaximumTerrainPan = 4.0;
+constexpr double kBaseRotationRadiansPerPixel = 0.004;
+constexpr double kCameraDistance = 2.0;
+constexpr double kMinimumCameraDistance = 0.0;
+constexpr double kMinimumRenderCameraDistance = 0.05;
+constexpr double kMinimumPanReferenceDistance = 0.25;
+constexpr double kPerspectiveScale = 1.64;
+constexpr double kMinimumTerrainZoom = 0.15;
+constexpr double kMaximumTerrainZoom = 100000.0;
+constexpr double kNearPlane = 0.001;
+constexpr double kFarPlane = 20.0;
 
 struct Bounds
 {
@@ -100,6 +118,13 @@ struct CpuTexture
     std::vector<uint8_t> bc1;
 };
 
+struct CompletedTexture
+{
+    uint64_t revision = 0;
+    uint32_t index = 0;
+    CpuTexture texture;
+};
+
 struct UploadLifetime
 {
     std::vector<ComPtr<ID3D12Resource>> uploads;
@@ -124,6 +149,14 @@ struct GpuBatch
     UINT edgeIndexCount = 0;
 };
 
+struct ParsedFbx
+{
+    std::shared_ptr<const std::vector<CpuBatch>> batches;
+    std::vector<std::filesystem::path> texturePaths;
+    std::size_t vertexCount = 0;
+    std::size_t triangleCount = 0;
+};
+
 struct RootConstants
 {
     float transform[16]{};
@@ -133,6 +166,77 @@ struct RootConstants
 };
 
 static_assert(sizeof(RootConstants) == kRootConstantCount * sizeof(uint32_t));
+
+struct CameraVector
+{
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+};
+
+double dot(const CameraVector& left, const CameraVector& right)
+{
+    return left.x * right.x + left.y * right.y + left.z * right.z;
+}
+
+CameraVector cross(const CameraVector& left, const CameraVector& right)
+{
+    return {left.y * right.z - left.z * right.y,
+            left.z * right.x - left.x * right.z,
+            left.x * right.y - left.y * right.x};
+}
+
+double cameraDistanceFromZoom(double zoom)
+{
+    const double clampedZoom = std::clamp(zoom, kMinimumTerrainZoom, kMaximumTerrainZoom);
+    return std::max(kMinimumRenderCameraDistance,
+                    std::max(kMinimumCameraDistance, kCameraDistance / clampedZoom));
+}
+
+void fillOrbitPerspectiveTransform(RootConstants& constants, UINT targetWidth,
+                                   UINT targetHeight, double yaw, double pitch,
+                                   double targetX, double targetY, double targetZ,
+                                   double zoom)
+{
+    const double aspect = static_cast<double>(std::max<UINT>(targetWidth, 1)) /
+        static_cast<double>(std::max<UINT>(targetHeight, 1));
+    const double cameraDistance = cameraDistanceFromZoom(zoom);
+    const double perspectiveY = kPerspectiveScale;
+    const double perspectiveX = perspectiveY / std::max(aspect, 1e-6);
+    const double depthScale = kFarPlane / (kFarPlane - kNearPlane);
+    const double depthOffset = -kNearPlane * kFarPlane / (kFarPlane - kNearPlane);
+    const double yawCos = std::cos(yaw);
+    const double yawSin = std::sin(yaw);
+    const double pitchCos = std::cos(pitch);
+    const double pitchSin = std::sin(pitch);
+    const CameraVector forward{pitchCos * yawSin, -pitchSin, pitchCos * yawCos};
+    const CameraVector right{yawCos, 0.0, -yawSin};
+    const CameraVector up = cross(forward, right);
+    const CameraVector target{targetX, targetY, targetZ};
+    const CameraVector eye{target.x - forward.x * cameraDistance,
+                           target.y - forward.y * cameraDistance,
+                           target.z - forward.z * cameraDistance};
+    const double eyeForward = dot(eye, forward);
+    const double eyeRight = dot(eye, right);
+    const double eyeUp = dot(eye, up);
+
+    constants.transform[0] = static_cast<float>(right.x * perspectiveX);
+    constants.transform[4] = static_cast<float>(right.y * perspectiveX);
+    constants.transform[8] = static_cast<float>(right.z * perspectiveX);
+    constants.transform[12] = static_cast<float>(-eyeRight * perspectiveX);
+    constants.transform[1] = static_cast<float>(up.x * perspectiveY);
+    constants.transform[5] = static_cast<float>(up.y * perspectiveY);
+    constants.transform[9] = static_cast<float>(up.z * perspectiveY);
+    constants.transform[13] = static_cast<float>(-eyeUp * perspectiveY);
+    constants.transform[2] = static_cast<float>(forward.x * depthScale);
+    constants.transform[6] = static_cast<float>(forward.y * depthScale);
+    constants.transform[10] = static_cast<float>(forward.z * depthScale);
+    constants.transform[14] = static_cast<float>(-eyeForward * depthScale + depthOffset);
+    constants.transform[3] = static_cast<float>(forward.x);
+    constants.transform[7] = static_cast<float>(forward.y);
+    constants.transform[11] = static_cast<float>(forward.z);
+    constants.transform[15] = static_cast<float>(-eyeForward);
+}
 
 std::string pathToUtf8(const std::filesystem::path& path)
 {
@@ -237,22 +341,35 @@ std::array<std::array<uint8_t, 3>, 4> makeBc1Palette(uint16_t endpoint0,
 std::pair<uint16_t, uint16_t> chooseBc1Endpoints(
     const std::array<std::array<uint8_t, 3>, 16>& pixels)
 {
-    std::size_t first = 0;
-    std::size_t second = 0;
-    int maximumDistance = -1;
-    for (std::size_t lhs = 0; lhs < pixels.size(); ++lhs)
+    std::array<uint32_t, 3> sums{};
+    for (const auto& pixel : pixels)
     {
-        for (std::size_t rhs = lhs + 1; rhs < pixels.size(); ++rhs)
+        for (std::size_t channel = 0; channel < sums.size(); ++channel)
         {
-            const int distance = colorDistanceSquared(pixels[lhs], pixels[rhs]);
+            sums[channel] += pixel[channel];
+        }
+    }
+    const std::array<uint8_t, 3> average{
+        static_cast<uint8_t>(sums[0] / pixels.size()),
+        static_cast<uint8_t>(sums[1] / pixels.size()),
+        static_cast<uint8_t>(sums[2] / pixels.size())};
+    const auto farthestFrom = [&pixels](const std::array<uint8_t, 3>& reference)
+    {
+        std::size_t farthest = 0;
+        int maximumDistance = -1;
+        for (std::size_t index = 0; index < pixels.size(); ++index)
+        {
+            const int distance = colorDistanceSquared(pixels[index], reference);
             if (distance > maximumDistance)
             {
                 maximumDistance = distance;
-                first = lhs;
-                second = rhs;
+                farthest = index;
             }
         }
-    }
+        return farthest;
+    };
+    const std::size_t first = farthestFrom(average);
+    const std::size_t second = farthestFrom(pixels[first]);
     uint16_t endpoint0 = static_cast<uint16_t>(
         color565(pixels[first][0], pixels[first][1], pixels[first][2]));
     uint16_t endpoint1 = static_cast<uint16_t>(
@@ -275,7 +392,7 @@ std::pair<uint16_t, uint16_t> chooseBc1Endpoints(
     return {endpoint0, endpoint1};
 }
 
-std::vector<uint8_t> encodeBc1(const SkImage& image)
+std::vector<uint8_t> encodeBc1(const SkImage& image, std::stop_token stopToken)
 {
     SkBitmap bitmap;
     const SkImageInfo info = SkImageInfo::MakeN32Premul(image.width(), image.height());
@@ -288,6 +405,10 @@ std::vector<uint8_t> encodeBc1(const SkImage& image)
     std::vector<uint8_t> output(static_cast<std::size_t>(blockWidth) * blockHeight * 8U);
     for (int blockY = 0; blockY < blockHeight; ++blockY)
     {
+        if (stopToken.stop_requested())
+        {
+            return {};
+        }
         for (int blockX = 0; blockX < blockWidth; ++blockX)
         {
             std::array<std::array<uint8_t, 3>, 16> pixels{};
@@ -336,8 +457,10 @@ ComPtr<ID3DBlob> compileShader(const char* source, const char* entryPoint, const
 {
     ComPtr<ID3DBlob> code;
     ComPtr<ID3DBlob> errors;
-    if (FAILED(D3DCompile(source, std::strlen(source), nullptr, nullptr, nullptr, entryPoint,
-                          target, D3DCOMPILE_ENABLE_STRICTNESS, 0, &code, &errors)))
+    const HRESULT result = D3DCompile(source, std::strlen(source), nullptr, nullptr, nullptr,
+                                      entryPoint, target, D3DCOMPILE_ENABLE_STRICTNESS, 0,
+                                      &code, &errors);
+    if (FAILED(result))
     {
         return nullptr;
     }
@@ -346,7 +469,7 @@ ComPtr<ID3DBlob> compileShader(const char* source, const char* entryPoint, const
 
 const char* kVertexShader = R"(
 cbuffer Constants : register(b0) {
-    float4x4 transform;
+    row_major float4x4 transform;
     uint textureIndex;
     uint flags;
     float2 color;
@@ -362,10 +485,10 @@ Output main(Input input) {
 )";
 
 const char* kTexturedPixelShader = R"(
-Texture2D textures[1024] : register(t0);
+Texture2D textureImage : register(t0);
 SamplerState samplerState : register(s0);
 cbuffer Constants : register(b0) {
-    float4x4 transform;
+    row_major float4x4 transform;
     uint textureIndex;
     uint flags;
     float2 color;
@@ -373,13 +496,13 @@ cbuffer Constants : register(b0) {
 struct Input { float4 position : SV_POSITION; float2 uv : TEXCOORD0; };
 float4 main(Input input) : SV_TARGET {
     if (textureIndex == 0xffffffff) return float4(color.x, color.y, 0.42, 1.0);
-    return textures[textureIndex].Sample(samplerState, input.uv);
+    return textureImage.Sample(samplerState, input.uv);
 }
 )";
 
 const char* kWirePixelShader = R"(
 cbuffer Constants : register(b0) {
-    float4x4 transform;
+    row_major float4x4 transform;
     uint textureIndex;
     uint flags;
     float2 color;
@@ -408,7 +531,8 @@ struct Dx12FbxState
     UINT depthHeight = 0;
     std::vector<ComPtr<ID3D12Resource>> textures;
     std::vector<GpuBatch> batches;
-    UINT64 loadedRevision = 0;
+    std::shared_ptr<const std::vector<CpuBatch>> cpuBatches;
+    UINT64 loadedMeshRevision = 0;
 
     ~Dx12FbxState()
     {
@@ -466,6 +590,7 @@ struct Dx12FbxState
         }
         textures.clear();
         batches.clear();
+        cpuBatches.reset();
         depth.Reset();
         dsvHeap.Reset();
         srvHeap.Reset();
@@ -478,7 +603,7 @@ struct Dx12FbxState
         device.Reset();
         fenceValue = 0;
         frameIndex = 0;
-        loadedRevision = 0;
+        loadedMeshRevision = 0;
         depthWidth = 0;
         depthHeight = 0;
     }
@@ -487,14 +612,21 @@ struct Dx12FbxState
 bool initializeState(Dx12FbxState& state, ID3D12Resource* target, ID3D12CommandQueue* queue)
 {
     ComPtr<ID3D12Device> device;
-    if (!target || !queue || FAILED(target->GetDevice(IID_PPV_ARGS(&device))))
+    if (!target || !queue)
+    {
+        return false;
+    }
+    HRESULT result = target->GetDevice(IID_PPV_ARGS(&device));
+    if (FAILED(result))
     {
         return false;
     }
     state.reset();
     state.device = std::move(device);
     state.queue = queue;
-    if (FAILED(state.device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&state.fence))))
+    result = state.device->CreateFence(0, D3D12_FENCE_FLAG_NONE,
+                                       IID_PPV_ARGS(&state.fence));
+    if (FAILED(result))
     {
         state.reset();
         return false;
@@ -507,12 +639,23 @@ bool initializeState(Dx12FbxState& state, ID3D12Resource* target, ID3D12CommandQ
     }
     for (Frame& frame : state.frames)
     {
-        if (FAILED(state.device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-                                                         IID_PPV_ARGS(&frame.allocator))) ||
-            FAILED(state.device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
-                                                    frame.allocator.Get(), nullptr,
-                                                    IID_PPV_ARGS(&frame.commandList))) ||
-            FAILED(frame.commandList->Close()))
+        result = state.device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                                       IID_PPV_ARGS(&frame.allocator));
+        if (FAILED(result))
+        {
+            state.reset();
+            return false;
+        }
+        result = state.device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                                  frame.allocator.Get(), nullptr,
+                                                  IID_PPV_ARGS(&frame.commandList));
+        if (FAILED(result))
+        {
+            state.reset();
+            return false;
+        }
+        result = frame.commandList->Close();
+        if (FAILED(result))
         {
             state.reset();
             return false;
@@ -525,18 +668,38 @@ bool initializeState(Dx12FbxState& state, ID3D12Resource* target, ID3D12CommandQ
         D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
     const D3D12_DESCRIPTOR_HEAP_DESC dsvDescription{
         D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
-    if (FAILED(state.device->CreateDescriptorHeap(&srvDescription,
-                                                  IID_PPV_ARGS(&state.srvHeap))) ||
-        FAILED(state.device->CreateDescriptorHeap(&dsvDescription,
-                                                  IID_PPV_ARGS(&state.dsvHeap))) ||
-        FAILED(state.device->CreateDescriptorHeap(&rtvDescription,
-                                                  IID_PPV_ARGS(&state.rtvHeap))))
+    result = state.device->CreateDescriptorHeap(&srvDescription,
+                                                 IID_PPV_ARGS(&state.srvHeap));
+    if (FAILED(result))
+    {
+        state.reset();
+        return false;
+    }
+    result = state.device->CreateDescriptorHeap(&dsvDescription,
+                                                 IID_PPV_ARGS(&state.dsvHeap));
+    if (FAILED(result))
+    {
+        state.reset();
+        return false;
+    }
+    result = state.device->CreateDescriptorHeap(&rtvDescription,
+                                                 IID_PPV_ARGS(&state.rtvHeap));
+    if (FAILED(result))
     {
         state.reset();
         return false;
     }
     state.descriptorSize = state.device->GetDescriptorHandleIncrementSize(
         D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    D3D12_SHADER_RESOURCE_VIEW_DESC nullTextureView{};
+    nullTextureView.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    nullTextureView.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    nullTextureView.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    nullTextureView.Texture2D.MipLevels = 1;
+    D3D12_CPU_DESCRIPTOR_HANDLE nullTextureHandle =
+        state.srvHeap->GetCPUDescriptorHandleForHeapStart();
+    nullTextureHandle.ptr += kNullTextureDescriptorIndex * state.descriptorSize;
+    state.device->CreateShaderResourceView(nullptr, &nullTextureView, nullTextureHandle);
 
     D3D12_ROOT_PARAMETER rootParameter{};
     rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
@@ -544,7 +707,7 @@ bool initializeState(Dx12FbxState& state, ID3D12Resource* target, ID3D12CommandQ
     rootParameter.Constants.ShaderRegister = 0;
     rootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     D3D12_DESCRIPTOR_RANGE textureRange{
-        D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kTextureDescriptorCount, 0, 0,
+        D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0,
         D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND};
     D3D12_ROOT_PARAMETER descriptorParameter{};
     descriptorParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
@@ -564,11 +727,17 @@ bool initializeState(Dx12FbxState& state, ID3D12Resource* target, ID3D12CommandQ
         D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT};
     ComPtr<ID3DBlob> rootBlob;
     ComPtr<ID3DBlob> rootErrors;
-    if (FAILED(D3D12SerializeRootSignature(&rootDescription, D3D_ROOT_SIGNATURE_VERSION_1,
-                                           &rootBlob, &rootErrors)) ||
-        FAILED(state.device->CreateRootSignature(0, rootBlob->GetBufferPointer(),
-                                                  rootBlob->GetBufferSize(),
-                                                  IID_PPV_ARGS(&state.rootSignature))))
+    result = D3D12SerializeRootSignature(&rootDescription, D3D_ROOT_SIGNATURE_VERSION_1,
+                                         &rootBlob, &rootErrors);
+    if (FAILED(result))
+    {
+        state.reset();
+        return false;
+    }
+    result = state.device->CreateRootSignature(0, rootBlob->GetBufferPointer(),
+                                                rootBlob->GetBufferSize(),
+                                                IID_PPV_ARGS(&state.rootSignature));
+    if (FAILED(result))
     {
         state.reset();
         return false;
@@ -618,8 +787,9 @@ bool initializeState(Dx12FbxState& state, ID3D12Resource* target, ID3D12CommandQ
         description.BlendState.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
         description.BlendState.RenderTarget[0].RenderTargetWriteMask =
             D3D12_COLOR_WRITE_ENABLE_ALL;
-        return SUCCEEDED(state.device->CreateGraphicsPipelineState(
-            &description, IID_PPV_ARGS(&result)));
+        const HRESULT createResult = state.device->CreateGraphicsPipelineState(
+            &description, IID_PPV_ARGS(&result));
+        return SUCCEEDED(createResult);
     };
     if (!makePipeline(texturedShader.Get(), D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true,
                       state.texturedPipeline) ||
@@ -772,96 +942,60 @@ bool uploadTexture(ID3D12Device* device, ID3D12GraphicsCommandList* commandList,
     return true;
 }
 
-} // namespace
-
-struct DomDownToolPreview::Dx12FbxRenderer::Impl
+uint32_t findTextureIndex(const aiScene& scene, unsigned int materialIndex,
+                          const std::filesystem::path& fbxPath,
+                          std::unordered_map<std::string, uint32_t>& textureIndices,
+                          std::vector<std::filesystem::path>& texturePaths)
 {
-    explicit Impl(std::function<void()> callback) : requestRedraw(std::move(callback)) {}
-
-    std::function<void()> requestRedraw;
-    std::vector<CpuBatch> batches;
-    std::vector<CpuTexture> textures;
-    Bounds bounds;
-    std::array<float, 3> center{};
-    float scale = 1.F;
-    double yaw = -0.65;
-    double pitch = 0.55;
-    double zoom = 1.0;
-    FbxPreviewMode mode = FbxPreviewMode::TexturedWireframe;
-    uint64_t revision = 0;
-    std::size_t vertexCount = 0;
-    std::size_t triangleCount = 0;
-    Dx12FbxState state;
-};
-
-DomDownToolPreview::Dx12FbxRenderer::Dx12FbxRenderer(std::function<void()> requestRedraw)
-    : impl_(std::make_unique<Impl>(std::move(requestRedraw)))
-{
-}
-
-DomDownToolPreview::Dx12FbxRenderer::~Dx12FbxRenderer() = default;
-
-void DomDownToolPreview::Dx12FbxRenderer::clear()
-{
-    impl_->state.reset();
-    impl_->batches.clear();
-    impl_->textures.clear();
-    impl_->center = {};
-    impl_->scale = 1.F;
-    impl_->bounds = {};
-    impl_->vertexCount = 0;
-    impl_->triangleCount = 0;
-    impl_->revision++;
-}
-
-bool DomDownToolPreview::Dx12FbxRenderer::load(
-    const std::vector<std::filesystem::path>& paths, std::string& error)
-{
-    registerSkiaImageCodecs();
-    clear();
-    std::unordered_map<std::string, uint32_t> textureIndices;
-    bool loadedAny = false;
-    const auto loadTexture = [&](const aiScene* scene, unsigned int materialIndex,
-                                 const std::filesystem::path& fbxPath) -> uint32_t
+    if (materialIndex >= scene.mNumMaterials || texturePaths.size() >= kMaximumTextures)
     {
-        if (!scene || materialIndex >= scene->mNumMaterials || impl_->textures.size() >= kMaximumTextures)
-        {
-            return std::numeric_limits<uint32_t>::max();
-        }
-        aiString name;
-        if (scene->mMaterials[materialIndex]->GetTexture(aiTextureType_DIFFUSE, 0, &name) != AI_SUCCESS ||
-            name.length == 0 || name.C_Str()[0] == '*')
-        {
-            return std::numeric_limits<uint32_t>::max();
-        }
-        const std::filesystem::path texturePath =
-            (fbxPath.parent_path() / std::filesystem::u8path(name.C_Str())).lexically_normal();
-        const std::string key = pathToUtf8(texturePath);
-        if (const auto existing = textureIndices.find(key); existing != textureIndices.end())
-        {
-            return existing->second;
-        }
-        const sk_sp<SkImage> image = loadImage(texturePath);
-        if (!image)
-        {
-            return std::numeric_limits<uint32_t>::max();
-        }
-        CpuTexture texture;
-        texture.path = texturePath;
-        texture.width = image->width();
-        texture.height = image->height();
-        texture.bc1 = encodeBc1(*image);
-        if (texture.bc1.empty())
-        {
-            return std::numeric_limits<uint32_t>::max();
-        }
-        const uint32_t index = static_cast<uint32_t>(impl_->textures.size());
-        impl_->textures.push_back(std::move(texture));
-        textureIndices.emplace(key, index);
-        return index;
-    };
+        return std::numeric_limits<uint32_t>::max();
+    }
+    aiString name;
+    if (scene.mMaterials[materialIndex]->GetTexture(aiTextureType_DIFFUSE, 0, &name) !=
+            AI_SUCCESS ||
+        name.length == 0 || name.C_Str()[0] == '*')
+    {
+        return std::numeric_limits<uint32_t>::max();
+    }
+    const std::filesystem::path texturePath =
+        (fbxPath.parent_path() / std::filesystem::u8path(name.C_Str())).lexically_normal();
+    const std::string key = pathToUtf8(texturePath);
+    if (const auto existing = textureIndices.find(key); existing != textureIndices.end())
+    {
+        return existing->second;
+    }
+    const uint32_t index = static_cast<uint32_t>(texturePaths.size());
+    texturePaths.push_back(texturePath);
+    textureIndices.emplace(key, index);
+    return index;
+}
+
+void appendUniqueEdge(std::vector<uint32_t>& edgeIndices,
+                      std::unordered_set<uint64_t>& edges, uint32_t first, uint32_t second)
+{
+    const uint32_t minimum = std::min(first, second);
+    const uint32_t maximum = std::max(first, second);
+    const uint64_t key = (static_cast<uint64_t>(minimum) << 32U) | maximum;
+    if (edges.insert(key).second)
+    {
+        edgeIndices.insert(edgeIndices.end(), {first, second});
+    }
+}
+
+bool parseFbx(const std::vector<std::filesystem::path>& paths, std::stop_token stopToken,
+              ParsedFbx& parsed, std::string& error)
+{
+    auto batches = std::make_shared<std::vector<CpuBatch>>();
+    std::unordered_map<std::string, uint32_t> textureIndices;
+    Bounds bounds;
+    bool loadedAny = false;
     for (const std::filesystem::path& path : paths)
     {
+        if (stopToken.stop_requested())
+        {
+            return false;
+        }
         Assimp::Importer importer;
         const aiScene* scene = importer.ReadFile(
             pathToUtf8(path), aiProcess_Triangulate | aiProcess_JoinIdenticalVertices |
@@ -874,48 +1008,58 @@ bool DomDownToolPreview::Dx12FbxRenderer::load(
         const auto appendNode = [&](const auto& self, const aiNode* node,
                                     const aiMatrix4x4& parent) -> void
         {
+            if (stopToken.stop_requested())
+            {
+                return;
+            }
             const aiMatrix4x4 transform = nodeTransform(node, parent);
             for (unsigned int meshIndex = 0; meshIndex < node->mNumMeshes; ++meshIndex)
             {
                 const aiMesh* mesh = scene->mMeshes[node->mMeshes[meshIndex]];
                 if (!mesh || !mesh->HasPositions() || !mesh->HasFaces() ||
-                    impl_->vertexCount + mesh->mNumVertices > kMaximumVertices ||
-                    impl_->triangleCount >= kMaximumTriangles)
+                    parsed.vertexCount + mesh->mNumVertices > kMaximumVertices ||
+                    parsed.triangleCount >= kMaximumTriangles)
                 {
                     continue;
                 }
                 CpuBatch batch;
-                batch.textureIndex = loadTexture(scene, mesh->mMaterialIndex, path);
+                batch.textureIndex = findTextureIndex(
+                    *scene, mesh->mMaterialIndex, path, textureIndices, parsed.texturePaths);
                 batch.vertices.reserve(mesh->mNumVertices);
-                for (unsigned int vertexIndex = 0; vertexIndex < mesh->mNumVertices; ++vertexIndex)
+                for (unsigned int vertexIndex = 0; vertexIndex < mesh->mNumVertices;
+                     ++vertexIndex)
                 {
                     const aiVector3D point = transform * mesh->mVertices[vertexIndex];
                     const aiVector3D uv = mesh->HasTextureCoords(0)
                         ? mesh->mTextureCoords[0][vertexIndex] : aiVector3D{};
-                    const std::array<float, 3> position{point.x, point.y, point.z};
-                    includePoint(impl_->bounds, position);
+                    includePoint(bounds, {point.x, point.y, point.z});
                     batch.vertices.push_back({point.x, point.y, point.z, uv.x, uv.y});
                 }
+                std::unordered_set<uint64_t> edges;
+                edges.reserve(static_cast<std::size_t>(mesh->mNumFaces) * 2U);
                 for (unsigned int faceIndex = 0; faceIndex < mesh->mNumFaces; ++faceIndex)
                 {
                     const aiFace& face = mesh->mFaces[faceIndex];
                     if (face.mNumIndices != 3 ||
-                        impl_->triangleCount + batch.indices.size() / 3 >= kMaximumTriangles)
+                        parsed.triangleCount + batch.indices.size() / 3 >=
+                            kMaximumTriangles)
                     {
                         continue;
                     }
-                    const uint32_t a = face.mIndices[0];
-                    const uint32_t b = face.mIndices[1];
-                    const uint32_t c = face.mIndices[2];
-                    batch.indices.insert(batch.indices.end(), {a, b, c});
-                    batch.edgeIndices.insert(batch.edgeIndices.end(), {a, b, b, c, c, a});
+                    const uint32_t first = face.mIndices[0];
+                    const uint32_t second = face.mIndices[1];
+                    const uint32_t third = face.mIndices[2];
+                    batch.indices.insert(batch.indices.end(), {first, second, third});
+                    appendUniqueEdge(batch.edgeIndices, edges, first, second);
+                    appendUniqueEdge(batch.edgeIndices, edges, second, third);
+                    appendUniqueEdge(batch.edgeIndices, edges, third, first);
                 }
                 if (!batch.indices.empty())
                 {
                     loadedAny = true;
-                    impl_->vertexCount += batch.vertices.size();
-                    impl_->triangleCount += batch.indices.size() / 3;
-                    impl_->batches.push_back(std::move(batch));
+                    parsed.vertexCount += batch.vertices.size();
+                    parsed.triangleCount += batch.indices.size() / 3;
+                    batches->push_back(std::move(batch));
                 }
             }
             for (unsigned int childIndex = 0; childIndex < node->mNumChildren; ++childIndex)
@@ -925,33 +1069,222 @@ bool DomDownToolPreview::Dx12FbxRenderer::load(
         };
         appendNode(appendNode, scene->mRootNode, aiMatrix4x4());
     }
+    if (stopToken.stop_requested())
+    {
+        return false;
+    }
     if (!loadedAny)
     {
-        clear();
         if (error.empty())
         {
             error = "没有找到可预览的 FBX 三角网格。";
         }
         return false;
     }
-    for (std::size_t index = 0; index < impl_->center.size(); ++index)
+    std::array<float, 3> center{};
+    for (std::size_t index = 0; index < center.size(); ++index)
     {
-        impl_->center[index] = (impl_->bounds.minimum[index] + impl_->bounds.maximum[index]) * 0.5F;
+        center[index] = (bounds.minimum[index] + bounds.maximum[index]) * 0.5F;
     }
-    impl_->scale = std::max({impl_->bounds.maximum[0] - impl_->bounds.minimum[0],
-                             impl_->bounds.maximum[1] - impl_->bounds.minimum[1],
-                             impl_->bounds.maximum[2] - impl_->bounds.minimum[2], 1e-3F});
-    for (CpuBatch& batch : impl_->batches)
+    const float scale = std::max({bounds.maximum[0] - bounds.minimum[0],
+                                  bounds.maximum[1] - bounds.minimum[1],
+                                  bounds.maximum[2] - bounds.minimum[2], 1e-3F});
+    for (CpuBatch& batch : *batches)
     {
         for (GpuVertex& vertex : batch.vertices)
         {
-            vertex.x = (vertex.x - impl_->center[0]) / impl_->scale;
-            vertex.y = (vertex.y - impl_->center[1]) / impl_->scale;
-            vertex.z = (vertex.z - impl_->center[2]) / impl_->scale;
+            vertex.x = (vertex.x - center[0]) / scale;
+            vertex.y = (vertex.y - center[1]) / scale;
+            vertex.z = (vertex.z - center[2]) / scale;
         }
     }
-    error.clear();
+    parsed.batches = std::move(batches);
+    return true;
+}
+
+} // namespace
+
+struct DomDownToolPreview::Dx12FbxRenderer::Impl
+{
+    explicit Impl(std::function<void()> callback) : requestRedraw(std::move(callback)) {}
+
+    std::function<void()> requestRedraw;
+    mutable std::mutex mutex;
+    std::shared_ptr<const std::vector<CpuBatch>> batches;
+    std::deque<CompletedTexture> completedTextures;
+    double yaw = kDefaultTerrainYaw;
+    double pitch = kDefaultTerrainPitch;
+    double panX = 0.0;
+    double panHeight = 0.0;
+    double panY = 0.0;
+    double zoom = 1.0;
+    uint32_t viewportWidth = 0;
+    uint32_t viewportHeight = 0;
+    FbxPreviewMode mode = FbxPreviewMode::Textured;
+    FbxPreviewInteractionSettings interactionSettings;
+    uint64_t revision = 0;
+    bool loading = false;
+    bool meshReady = false;
+    std::size_t readyTextureCount = 0;
+    std::size_t completedTextureCount = 0;
+    std::size_t totalTextureCount = 0;
+    std::size_t vertexCount = 0;
+    std::size_t triangleCount = 0;
+    std::string error;
+    Dx12FbxState state;
+    // 工作线程只生产 CPU 网格和 BC1 数据；clear() 请求取消并 join 后才释放共享状态。
+    std::jthread loader;
+};
+
+DomDownToolPreview::Dx12FbxRenderer::Dx12FbxRenderer(std::function<void()> requestRedraw)
+    : impl_(std::make_unique<Impl>(std::move(requestRedraw)))
+{
+}
+
+DomDownToolPreview::Dx12FbxRenderer::~Dx12FbxRenderer()
+{
+    clear();
+}
+
+void DomDownToolPreview::Dx12FbxRenderer::clear()
+{
+    if (impl_->loader.joinable())
+    {
+        impl_->loader.request_stop();
+        impl_->loader.join();
+    }
+    impl_->state.reset();
+    const std::lock_guard lock(impl_->mutex);
+    impl_->batches.reset();
+    impl_->completedTextures.clear();
+    impl_->loading = false;
+    impl_->meshReady = false;
+    impl_->readyTextureCount = 0;
+    impl_->completedTextureCount = 0;
+    impl_->totalTextureCount = 0;
+    impl_->vertexCount = 0;
+    impl_->triangleCount = 0;
+    impl_->error.clear();
+    impl_->yaw = kDefaultTerrainYaw;
+    impl_->pitch = kDefaultTerrainPitch;
+    impl_->panX = 0.0;
+    impl_->panHeight = 0.0;
+    impl_->panY = 0.0;
+    impl_->zoom = 1.0;
+    impl_->viewportWidth = 0;
+    impl_->viewportHeight = 0;
     ++impl_->revision;
+}
+
+bool DomDownToolPreview::Dx12FbxRenderer::load(
+    const std::vector<std::filesystem::path>& paths, std::string& error)
+{
+    registerSkiaImageCodecs();
+    clear();
+    if (paths.empty())
+    {
+        error = "没有指定要预览的 FBX 文件。";
+        return false;
+    }
+    error.clear();
+    uint64_t revision = 0;
+    {
+        const std::lock_guard lock(impl_->mutex);
+        impl_->loading = true;
+        revision = impl_->revision;
+    }
+    Impl* const impl = impl_.get();
+    impl_->loader = std::jthread(
+        [impl, paths, revision](std::stop_token stopToken)
+        {
+            ParsedFbx parsed;
+            std::string loadError;
+            if (!parseFbx(paths, stopToken, parsed, loadError))
+            {
+                if (!stopToken.stop_requested())
+                {
+                    {
+                        const std::lock_guard lock(impl->mutex);
+                        if (impl->revision != revision)
+                        {
+                            return;
+                        }
+                        impl->loading = false;
+                        impl->error = std::move(loadError);
+                    }
+                    if (impl->requestRedraw)
+                    {
+                        impl->requestRedraw();
+                    }
+                }
+                return;
+            }
+            {
+                const std::lock_guard lock(impl->mutex);
+                if (impl->revision != revision || stopToken.stop_requested())
+                {
+                    return;
+                }
+                impl->batches = parsed.batches;
+                impl->meshReady = true;
+                impl->totalTextureCount = parsed.texturePaths.size();
+                impl->vertexCount = parsed.vertexCount;
+                impl->triangleCount = parsed.triangleCount;
+            }
+            if (impl->requestRedraw)
+            {
+                impl->requestRedraw();
+            }
+            for (std::size_t index = 0; index < parsed.texturePaths.size(); ++index)
+            {
+                if (stopToken.stop_requested())
+                {
+                    return;
+                }
+                CpuTexture texture;
+                texture.path = parsed.texturePaths[index];
+                const sk_sp<SkImage> image = loadImage(texture.path);
+                if (image)
+                {
+                    texture.width = image->width();
+                    texture.height = image->height();
+                    texture.bc1 = encodeBc1(*image, stopToken);
+                }
+                if (stopToken.stop_requested())
+                {
+                    return;
+                }
+                {
+                    const std::lock_guard lock(impl->mutex);
+                    if (impl->revision != revision)
+                    {
+                        return;
+                    }
+                    ++impl->completedTextureCount;
+                    if (!texture.bc1.empty())
+                    {
+                        impl->completedTextures.push_back(
+                            {revision, static_cast<uint32_t>(index), std::move(texture)});
+                    }
+                }
+                if (impl->requestRedraw)
+                {
+                    impl->requestRedraw();
+                }
+            }
+            {
+                const std::lock_guard lock(impl->mutex);
+                if (impl->revision != revision)
+                {
+                    return;
+                }
+                impl->loading = false;
+            }
+            if (impl->requestRedraw)
+            {
+                impl->requestRedraw();
+            }
+        });
     return true;
 }
 
@@ -965,36 +1298,114 @@ DomDownToolPreview::FbxPreviewMode DomDownToolPreview::Dx12FbxRenderer::mode() c
     return impl_->mode;
 }
 
+void DomDownToolPreview::Dx12FbxRenderer::setInteractionSettings(
+    FbxPreviewInteractionSettings settings)
+{
+    impl_->interactionSettings = settings;
+}
+
+DomDownToolPreview::FbxPreviewInteractionSettings
+DomDownToolPreview::Dx12FbxRenderer::interactionSettings() const
+{
+    return impl_->interactionSettings;
+}
+
+void DomDownToolPreview::Dx12FbxRenderer::resetView()
+{
+    impl_->yaw = kDefaultTerrainYaw;
+    impl_->pitch = kDefaultTerrainPitch;
+    impl_->panX = 0.0;
+    impl_->panHeight = 0.0;
+    impl_->panY = 0.0;
+    impl_->zoom = 1.0;
+}
+
 void DomDownToolPreview::Dx12FbxRenderer::rotateBy(double deltaX, double deltaY)
 {
-    impl_->yaw += deltaX * 0.008;
-    impl_->pitch = std::clamp(impl_->pitch + deltaY * 0.008, -1.35, 1.35);
+    const double rotationScale = kBaseRotationRadiansPerPixel *
+        impl_->interactionSettings.rotateSpeed;
+    impl_->yaw += deltaX * rotationScale;
+    impl_->pitch = std::clamp(impl_->pitch + deltaY * rotationScale,
+                              kMinimumTerrainPitch, kDefaultTerrainPitch);
+}
+
+void DomDownToolPreview::Dx12FbxRenderer::panBy(double deltaX, double deltaY)
+{
+    const double width = static_cast<double>(std::max<uint32_t>(impl_->viewportWidth, 1));
+    const double height = static_cast<double>(std::max<uint32_t>(impl_->viewportHeight, 1));
+    const double yawCos = std::cos(impl_->yaw);
+    const double yawSin = std::sin(impl_->yaw);
+    const CameraVector right{yawCos, 0.0, -yawSin};
+    const CameraVector groundForward{yawSin, 0.0, yawCos};
+    const double referenceDistance = std::max(cameraDistanceFromZoom(impl_->zoom),
+                                              kMinimumPanReferenceDistance);
+    const double xUnits = deltaX * 2.0 * referenceDistance *
+        impl_->interactionSettings.panSpeed / (width * kPerspectiveScale);
+    const double yUnits = deltaY * 2.0 * referenceDistance *
+        impl_->interactionSettings.panSpeed / (height * kPerspectiveScale);
+    impl_->panX = std::clamp(impl_->panX - right.x * xUnits + groundForward.x * yUnits,
+                             -kMaximumTerrainPan, kMaximumTerrainPan);
+    impl_->panY = std::clamp(impl_->panY - right.z * xUnits + groundForward.z * yUnits,
+                             -kMaximumTerrainPan, kMaximumTerrainPan);
+}
+
+void DomDownToolPreview::Dx12FbxRenderer::verticalPanBy(double delta)
+{
+    const double height = static_cast<double>(std::max<uint32_t>(impl_->viewportHeight, 1));
+    const double referenceDistance = std::max(cameraDistanceFromZoom(impl_->zoom),
+                                              kMinimumPanReferenceDistance);
+    const double units = delta * 2.0 * referenceDistance *
+        impl_->interactionSettings.panSpeed / (height * kPerspectiveScale);
+    impl_->panHeight = std::clamp(impl_->panHeight - units,
+                                  -kMaximumTerrainPan, kMaximumTerrainPan);
 }
 
 void DomDownToolPreview::Dx12FbxRenderer::zoomBy(double delta)
 {
-    impl_->zoom = std::clamp(impl_->zoom * std::pow(1.12, delta), 0.15, 12.0);
+    impl_->zoom = std::clamp(
+        impl_->zoom * std::pow(1.12, delta * impl_->interactionSettings.zoomSpeed),
+        kMinimumTerrainZoom, kMaximumTerrainZoom);
 }
 
 bool DomDownToolPreview::Dx12FbxRenderer::empty() const
 {
-    return impl_->batches.empty();
+    const std::lock_guard lock(impl_->mutex);
+    return !impl_->batches || impl_->batches->empty();
 }
 
 std::size_t DomDownToolPreview::Dx12FbxRenderer::vertexCount() const
 {
+    const std::lock_guard lock(impl_->mutex);
     return impl_->vertexCount;
 }
 
 std::size_t DomDownToolPreview::Dx12FbxRenderer::triangleCount() const
 {
+    const std::lock_guard lock(impl_->mutex);
     return impl_->triangleCount;
+}
+
+DomDownToolPreview::FbxPreviewLoadStatus
+DomDownToolPreview::Dx12FbxRenderer::loadStatus() const
+{
+    const std::lock_guard lock(impl_->mutex);
+    return {impl_->loading, impl_->meshReady, impl_->readyTextureCount,
+            impl_->completedTextureCount, impl_->totalTextureCount, impl_->error};
 }
 
 bool DomDownToolPreview::Dx12FbxRenderer::draw(SkCanvas& canvas, int width, int height,
                                                float /*dpiScale*/)
 {
-    if (empty() || width <= 0 || height <= 0)
+    std::shared_ptr<const std::vector<CpuBatch>> batches;
+    std::size_t totalTextureCount = 0;
+    uint64_t revision = 0;
+    {
+        const std::lock_guard lock(impl_->mutex);
+        batches = impl_->batches;
+        totalTextureCount = impl_->totalTextureCount;
+        revision = impl_->revision;
+    }
+    if (!batches || batches->empty() || width <= 0 || height <= 0)
     {
         return false;
     }
@@ -1029,7 +1440,12 @@ bool DomDownToolPreview::Dx12FbxRenderer::draw(SkCanvas& canvas, int width, int 
         }
     }
     const D3D12_RESOURCE_DESC targetDescription = targetResource->GetDesc();
-    if (!ensureDepth(impl_->state, static_cast<UINT>(targetDescription.Width), targetDescription.Height))
+    const UINT targetWidth = static_cast<UINT>(std::min<UINT64>(
+        targetDescription.Width, std::numeric_limits<UINT>::max()));
+    const UINT targetHeight = targetDescription.Height;
+    impl_->viewportWidth = targetWidth;
+    impl_->viewportHeight = targetHeight;
+    if (!ensureDepth(impl_->state, targetWidth, targetHeight))
     {
         return false;
     }
@@ -1042,30 +1458,13 @@ bool DomDownToolPreview::Dx12FbxRenderer::draw(SkCanvas& canvas, int width, int 
     frame.fenceValue = 0;
     frame.retainedUpload = std::make_shared<UploadLifetime>();
     ID3D12GraphicsCommandList* commandList = frame.commandList.Get();
-    if (impl_->state.loadedRevision != impl_->revision)
+    if (impl_->state.loadedMeshRevision != revision)
     {
         impl_->state.textures.clear();
+        impl_->state.textures.resize(totalTextureCount);
         impl_->state.batches.clear();
-        for (std::size_t index = 0; index < impl_->textures.size(); ++index)
-        {
-            ComPtr<ID3D12Resource> texture;
-            ComPtr<ID3D12Resource> upload;
-            if (!uploadTexture(impl_->state.device.Get(), commandList, impl_->textures[index], texture, upload))
-            {
-                return false;
-            }
-            impl_->state.textures.push_back(texture);
-            frame.retainedUpload->uploads.push_back(upload);
-            D3D12_SHADER_RESOURCE_VIEW_DESC view{};
-            view.Format = DXGI_FORMAT_BC1_UNORM;
-            view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-            view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-            view.Texture2D.MipLevels = 1;
-            D3D12_CPU_DESCRIPTOR_HANDLE handle = impl_->state.srvHeap->GetCPUDescriptorHandleForHeapStart();
-            handle.ptr += static_cast<SIZE_T>(index) * impl_->state.descriptorSize;
-            impl_->state.device->CreateShaderResourceView(texture.Get(), &view, handle);
-        }
-        for (const CpuBatch& batch : impl_->batches)
+        impl_->state.cpuBatches = batches;
+        for (const CpuBatch& batch : *batches)
         {
             GpuBatch gpuBatch;
             gpuBatch.source = &batch;
@@ -1091,7 +1490,51 @@ bool DomDownToolPreview::Dx12FbxRenderer::draw(SkCanvas& canvas, int width, int 
             gpuBatch.edgeIndexCount = static_cast<UINT>(batch.edgeIndices.size());
             impl_->state.batches.push_back(std::move(gpuBatch));
         }
-        impl_->state.loadedRevision = impl_->revision;
+        impl_->state.loadedMeshRevision = revision;
+    }
+    std::optional<CompletedTexture> completedTexture;
+    {
+        // DX12 资源只在 UI/渲染线程创建，每帧至多上传一张以控制帧耗时。
+        const std::lock_guard lock(impl_->mutex);
+        if (!impl_->completedTextures.empty() &&
+            impl_->completedTextures.front().revision == revision)
+        {
+            completedTexture = std::move(impl_->completedTextures.front());
+            impl_->completedTextures.pop_front();
+        }
+    }
+    if (completedTexture && completedTexture->index < impl_->state.textures.size())
+    {
+        ComPtr<ID3D12Resource> texture;
+        ComPtr<ID3D12Resource> upload;
+        if (!uploadTexture(impl_->state.device.Get(), commandList,
+                           completedTexture->texture, texture, upload))
+        {
+            return false;
+        }
+        const std::size_t textureIndex = completedTexture->index;
+        impl_->state.textures[textureIndex] = texture;
+        frame.retainedUpload->uploads.push_back(upload);
+        D3D12_SHADER_RESOURCE_VIEW_DESC view{};
+        view.Format = DXGI_FORMAT_BC1_UNORM;
+        view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        view.Texture2D.MipLevels = 1;
+        D3D12_CPU_DESCRIPTOR_HANDLE handle =
+            impl_->state.srvHeap->GetCPUDescriptorHandleForHeapStart();
+        handle.ptr += textureIndex * impl_->state.descriptorSize;
+        impl_->state.device->CreateShaderResourceView(texture.Get(), &view, handle);
+        {
+            const std::lock_guard lock(impl_->mutex);
+            if (impl_->revision == revision)
+            {
+                ++impl_->readyTextureCount;
+            }
+        }
+        if (impl_->requestRedraw)
+        {
+            impl_->requestRedraw();
+        }
     }
     D3D12_RESOURCE_STATES targetState = targetInfo.fResourceState;
     if (targetState != D3D12_RESOURCE_STATE_RENDER_TARGET)
@@ -1110,38 +1553,30 @@ bool DomDownToolPreview::Dx12FbxRenderer::draw(SkCanvas& canvas, int width, int 
     commandList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
     commandList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.F, 0, 0, nullptr);
     const D3D12_VIEWPORT viewport{
-        0.F, 0.F, static_cast<float>(width), static_cast<float>(height), 0.F, 1.F};
-    const D3D12_RECT scissor{0, 0, width, height};
+        0.F, 0.F, static_cast<float>(targetWidth), static_cast<float>(targetHeight), 0.F, 1.F};
+    const D3D12_RECT scissor{0, 0, static_cast<LONG>(targetWidth),
+                             static_cast<LONG>(targetHeight)};
     commandList->RSSetViewports(1, &viewport);
     commandList->RSSetScissorRects(1, &scissor);
     commandList->SetDescriptorHeaps(1, impl_->state.srvHeap.GetAddressOf());
     commandList->SetGraphicsRootSignature(impl_->state.rootSignature.Get());
-    const float sx = static_cast<float>(std::min(width, height)) * 0.82F *
-        static_cast<float>(impl_->zoom);
-    const float xScale = sx * 2.F / static_cast<float>(width);
-    const float yScale = sx * 2.F / static_cast<float>(height);
-    const double yawCos = std::cos(impl_->yaw);
-    const double yawSin = std::sin(impl_->yaw);
-    const double pitchCos = std::cos(impl_->pitch);
-    const double pitchSin = std::sin(impl_->pitch);
     RootConstants constants{};
-    constants.transform[0] = static_cast<float>(yawCos) * xScale;
-    constants.transform[4] = -static_cast<float>(yawSin) * xScale;
-    constants.transform[1] = -static_cast<float>(yawSin * pitchCos) * yScale;
-    constants.transform[5] = -static_cast<float>(yawCos * pitchCos) * yScale;
-    constants.transform[9] = static_cast<float>(pitchSin) * yScale;
-    constants.transform[2] = static_cast<float>(pitchSin * yawSin) * 0.8F;
-    constants.transform[6] = static_cast<float>(pitchSin * yawCos) * 0.8F;
-    constants.transform[10] = static_cast<float>(pitchCos) * 0.8F;
-    constants.transform[14] = 0.5F;
+    fillOrbitPerspectiveTransform(constants, targetWidth, targetHeight, impl_->yaw,
+                                  impl_->pitch, impl_->panX, impl_->panHeight,
+                                  impl_->panY, impl_->zoom);
     const auto drawBatch = [&](const GpuBatch& batch, bool wire)
     {
-        constants.textureIndex = wire || batch.source->textureIndex >= impl_->state.textures.size()
-            ? std::numeric_limits<uint32_t>::max() : batch.source->textureIndex;
+        const bool hasTexture = !wire &&
+            batch.source->textureIndex < impl_->state.textures.size() &&
+            impl_->state.textures[batch.source->textureIndex];
+        constants.textureIndex = hasTexture ? 0 : std::numeric_limits<uint32_t>::max();
         commandList->SetGraphicsRoot32BitConstants(0, kRootConstantCount, &constants, 0);
-        const D3D12_GPU_DESCRIPTOR_HANDLE heapHandle =
+        D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
             impl_->state.srvHeap->GetGPUDescriptorHandleForHeapStart();
-        commandList->SetGraphicsRootDescriptorTable(1, heapHandle);
+        const UINT descriptorIndex = hasTexture ? batch.source->textureIndex
+                                                : kNullTextureDescriptorIndex;
+        textureHandle.ptr += descriptorIndex * impl_->state.descriptorSize;
+        commandList->SetGraphicsRootDescriptorTable(1, textureHandle);
         const D3D12_VERTEX_BUFFER_VIEW vertexView{
             batch.vertexBuffer->GetGPUVirtualAddress(),
             static_cast<UINT>(batch.source->vertices.size() * sizeof(GpuVertex)),

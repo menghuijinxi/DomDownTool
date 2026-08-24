@@ -1,8 +1,11 @@
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "include/core/SkBitmap.h"
@@ -10,6 +13,7 @@
 #include "include/core/SkColor.h"
 
 #include "PostProcessTestSupport.h"
+#include "preview/Dx12FbxRenderer.h"
 #include "preview/FbxPreviewRenderer.h"
 
 namespace
@@ -54,6 +58,19 @@ bool drawMode(DomDownToolPreview::FbxPreviewRenderer& renderer,
     renderer.setMode(mode);
     renderer.draw(canvas, bitmap.width(), bitmap.height(), 1.F);
     return hasOpaquePixel(bitmap);
+}
+
+DomDownToolPreview::FbxPreviewLoadStatus waitForAsyncLoad(
+    DomDownToolPreview::Dx12FbxRenderer& renderer)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    DomDownToolPreview::FbxPreviewLoadStatus status = renderer.loadStatus();
+    while (status.loading && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        status = renderer.loadStatus();
+    }
+    return status;
 }
 
 bool runTest()
@@ -111,6 +128,82 @@ bool runTest()
         !drawMode(renderer, DomDownToolPreview::FbxPreviewMode::TexturedWireframe, bitmap))
     {
         std::cerr << "FBX 贴图或线框模式没有绘制到画布。\n";
+        return false;
+    }
+    renderer.rotateBy(24.0, -16.0);
+    renderer.panBy(18.0, -12.0);
+    renderer.zoomBy(1.0);
+    if (!drawMode(renderer, DomDownToolPreview::FbxPreviewMode::TexturedWireframe, bitmap))
+    {
+        std::cerr << "FBX 交互相机变换后没有绘制到画布。\n";
+        return false;
+    }
+
+    std::atomic_size_t redrawCount = 0;
+    DomDownToolPreview::Dx12FbxRenderer dx12Renderer([&redrawCount]
+    {
+        redrawCount.fetch_add(1, std::memory_order_relaxed);
+    });
+    const auto loadStarted = std::chrono::steady_clock::now();
+    error.clear();
+    if (!dx12Renderer.load({fbxPath}, error) || !error.empty() ||
+        std::chrono::steady_clock::now() - loadStarted > std::chrono::milliseconds(250))
+    {
+        std::cerr << "DX12 FBX 后台加载没有立即返回。\n";
+        return false;
+    }
+    const DomDownToolPreview::FbxPreviewLoadStatus asyncStatus =
+        waitForAsyncLoad(dx12Renderer);
+    if (asyncStatus.loading || !asyncStatus.meshReady || !asyncStatus.error.empty() ||
+        asyncStatus.totalTextureCount == 0 ||
+        asyncStatus.completedTextureCount != asyncStatus.totalTextureCount ||
+        dx12Renderer.vertexCount() == 0 || dx12Renderer.triangleCount() == 0 ||
+        redrawCount.load(std::memory_order_relaxed) < 2)
+    {
+        std::cerr << "DX12 FBX 网格或贴图没有在后台完成加载。\n";
+        return false;
+    }
+    dx12Renderer.rotateBy(24.0, -16.0);
+    dx12Renderer.panBy(18.0, -12.0);
+    dx12Renderer.verticalPanBy(1.0);
+    dx12Renderer.verticalPanBy(-1.0);
+    dx12Renderer.zoomBy(1.0);
+    dx12Renderer.clear();
+    const DomDownToolPreview::FbxPreviewLoadStatus clearedStatus =
+        dx12Renderer.loadStatus();
+    if (clearedStatus.loading || clearedStatus.meshReady ||
+        clearedStatus.totalTextureCount != 0 || !dx12Renderer.empty())
+    {
+        std::cerr << "DX12 FBX 后台任务取消后没有清理状态。\n";
+        return false;
+    }
+
+    error.clear();
+    if (!dx12Renderer.load({fbxPath}, error))
+    {
+        return false;
+    }
+    dx12Renderer.clear();
+    const DomDownToolPreview::FbxPreviewLoadStatus cancelledStatus =
+        dx12Renderer.loadStatus();
+    if (cancelledStatus.loading || cancelledStatus.meshReady ||
+        cancelledStatus.totalTextureCount != 0 || !cancelledStatus.error.empty())
+    {
+        std::cerr << "DX12 FBX 加载中的取消没有恢复空闲状态。\n";
+        return false;
+    }
+
+    error.clear();
+    if (!dx12Renderer.load({testRoot / "missing.fbx"}, error) || !error.empty())
+    {
+        std::cerr << "DX12 FBX 无效路径没有进入异步错误报告流程。\n";
+        return false;
+    }
+    const DomDownToolPreview::FbxPreviewLoadStatus invalidStatus =
+        waitForAsyncLoad(dx12Renderer);
+    if (invalidStatus.loading || invalidStatus.meshReady || invalidStatus.error.empty())
+    {
+        std::cerr << "DX12 FBX 无效路径没有报告后台加载错误。\n";
         return false;
     }
 
