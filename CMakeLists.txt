@@ -235,6 +235,7 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     comctl32
     ole32
     shell32
+    imm32
     d3d12
     d3dcompiler)
   target_compile_definitions(DomDownToolPreview PRIVATE

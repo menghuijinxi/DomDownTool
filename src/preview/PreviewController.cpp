@@ -48,9 +48,13 @@ constexpr UINT kPreviewPageChangeMessage = WM_APP + 0x648;
 constexpr UINT kPreviewImmediateMapRedrawMessage = WM_APP + 0x649;
 constexpr UINT kPreviewImmediateFbxRedrawMessage = WM_APP + 0x64A;
 constexpr UINT_PTR kPreviewEyedropperTimerId = 0x645;
-constexpr UINT_PTR kPreviewFbxVerticalPanTimerId = 0x64B;
+constexpr UINT_PTR kPreviewFbxKeyboardPanTimerId = 0x64B;
+constexpr UINT_PTR kPreviewFbxFrameTimerId = 0x64C;
 constexpr UINT kPreviewEyedropperTimerIntervalMilliseconds = 16;
-constexpr UINT kPreviewFbxVerticalPanTimerIntervalMilliseconds = 16;
+constexpr UINT kPreviewFbxKeyboardPanFrameIntervalMilliseconds = 4;
+constexpr UINT kPreviewFbxFrameTimerIntervalMilliseconds = 16;
+constexpr auto kFbxFrameRateUpdateInterval = std::chrono::milliseconds(500);
+constexpr auto kFbxFrameRateIdleResetInterval = std::chrono::seconds(1);
 constexpr double kSearchControlLeft = 192.;
 constexpr double kSearchControlWidth = 300.;
 constexpr double kSearchPopupWidth = 360.;
@@ -2084,6 +2088,10 @@ void DomDownToolPreview::PreviewController::draw(SkCanvas& canvas, int width, in
 
     if (runtime_)
     {
+        if (page_ == Page::FbxPreview)
+        {
+            recordFbxPreviewFrame(*runtime_);
+        }
         SkAutoCanvasRestore restore(&canvas, true);
         canvas.clipRect(SkRect::MakeLTRB(0.F, 0.F, static_cast<float>(width),
                                          static_cast<float>(height)),
@@ -2100,18 +2108,24 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
                                                                 WPARAM wParam, LPARAM lParam,
                                                                 skui::Runtime& runtime)
 {
+    const bool destroyingWindow = message == WM_DESTROY || message == WM_NCDESTROY;
     if (message == WM_DESTROY && gisColorEyedropperActive_)
     {
         KillTimer(window, kPreviewEyedropperTimerId);
         gisColorEyedropperActive_ = false;
     }
+    if (destroyingWindow)
+    {
+        restoreFbxInputMethod();
+    }
     if (message == WM_DESTROY)
     {
-        KillTimer(window, kPreviewFbxVerticalPanTimerId);
+        stopFbxKeyboardPanFrame(window);
+        stopFbxPreviewFrameLoop(window);
         fbxVerticalPanDirection_ = 0;
     }
-    window_.store(message == WM_DESTROY ? nullptr : window, std::memory_order_relaxed);
-    if (message == WM_DESTROY)
+    window_.store(destroyingWindow ? nullptr : window, std::memory_order_relaxed);
+    if (destroyingWindow)
     {
         immediateMapRedrawPosted_ = false;
         immediateFbxRedrawPosted_ = false;
@@ -2130,8 +2144,17 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
     if (message == kPreviewImmediateFbxRedrawMessage)
     {
         immediateFbxRedrawPosted_ = false;
+        if (page_ == Page::FbxPreview && fbxVerticalPanDirection_ != 0)
+        {
+            lastFbxKeyboardPanFrame_ = std::chrono::steady_clock::now();
+            applyFbxVerticalPanTick();
+        }
         RedrawWindow(window, nullptr, nullptr,
                      RDW_INVALIDATE | RDW_NOCHILDREN | RDW_UPDATENOW);
+        if (page_ == Page::FbxPreview && fbxVerticalPanDirection_ != 0)
+        {
+            scheduleFbxKeyboardPanFrame(window);
+        }
         return false;
     }
     if (message == kPreviewRedrawMessage)
@@ -2203,18 +2226,31 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         }
         return true;
     }
-    if (message == WM_TIMER && wParam == kPreviewFbxVerticalPanTimerId)
+    if (message == WM_TIMER && wParam == kPreviewFbxKeyboardPanTimerId)
     {
+        fbxKeyboardPanTimerActive_ = false;
+        KillTimer(window, kPreviewFbxKeyboardPanTimerId);
         if (page_ == Page::FbxPreview && fbxVerticalPanDirection_ != 0)
         {
-            applyFbxVerticalPanTick(window);
+            scheduleImmediateFbxRedraw(window, false);
+        }
+        return true;
+    }
+    if (message == WM_TIMER && wParam == kPreviewFbxFrameTimerId)
+    {
+        if (page_ == Page::FbxPreview)
+        {
+            scheduleImmediateFbxRedraw(window, false);
         }
         else
         {
-            KillTimer(window, kPreviewFbxVerticalPanTimerId);
-            fbxVerticalPanDirection_ = 0;
+            stopFbxPreviewFrameLoop(window);
         }
         return true;
+    }
+    if (page_ == Page::FbxPreview && !destroyingWindow)
+    {
+        disableFbxInputMethod(window);
     }
 
     if (message == WM_KEYDOWN && wParam == VK_ESCAPE &&
@@ -2229,6 +2265,13 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
 
     if (page_ == Page::FbxPreview)
     {
+        if (message == WM_IME_SETCONTEXT || message == WM_IME_STARTCOMPOSITION ||
+            message == WM_IME_COMPOSITION || message == WM_IME_ENDCOMPOSITION ||
+            message == WM_IME_NOTIFY || message == WM_IME_CHAR ||
+            message == WM_IME_REQUEST)
+        {
+            return true;
+        }
         if (message == WM_KEYDOWN && wParam == VK_ESCAPE)
         {
             OpenTaskPage(runtime);
@@ -2975,7 +3018,8 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
         runtime.setTextsById({
             {"fbx-preview-title", fbxPreviewTitle_},
             {"fbx-preview-directory", pathToUtf8(fbxPreviewTaskRoot_)},
-            {"fbx-preview-stats", std::move(statsText)}});
+            {"fbx-preview-stats", std::move(statsText)},
+            {"fbx-preview-fps", fbxFrameRateText_}});
         const std::array<std::pair<const char*, bool>, 3> modeButtons = {{
             {"fbx-preview-mode-textured", dx12FbxRenderer_.mode() == FbxPreviewMode::Textured},
             {"fbx-preview-mode-wireframe", dx12FbxRenderer_.mode() == FbxPreviewMode::Wireframe},
@@ -3138,6 +3182,7 @@ void DomDownToolPreview::PreviewController::OpenExportPage(skui::Runtime& runtim
 {
     if (page_ == Page::FbxPreview)
     {
+        restoreFbxInputMethod();
         dx12FbxRenderer_.clear();
         dragging_ = false;
         fbxRedrawPosted_.store(false, std::memory_order_relaxed);
@@ -3145,6 +3190,8 @@ void DomDownToolPreview::PreviewController::OpenExportPage(skui::Runtime& runtim
         fbxDragMode_ = FbxDragMode::None;
         fbxDragRedrawThrottle_.reset();
         setFbxVerticalPanDirection(window_.load(std::memory_order_relaxed), 0);
+        stopFbxPreviewFrameLoop(window_.load(std::memory_order_relaxed));
+        resetFbxPreviewFrameRate();
     }
     taskClearConfirmOpen_ = false;
     taskDeleteTargetId_.reset();
@@ -3161,6 +3208,7 @@ void DomDownToolPreview::PreviewController::OpenTaskPage(skui::Runtime& runtime)
 {
     if (page_ == Page::FbxPreview)
     {
+        restoreFbxInputMethod();
         dx12FbxRenderer_.clear();
         dragging_ = false;
         fbxRedrawPosted_.store(false, std::memory_order_relaxed);
@@ -3168,6 +3216,8 @@ void DomDownToolPreview::PreviewController::OpenTaskPage(skui::Runtime& runtime)
         fbxDragMode_ = FbxDragMode::None;
         fbxDragRedrawThrottle_.reset();
         setFbxVerticalPanDirection(window_.load(std::memory_order_relaxed), 0);
+        stopFbxPreviewFrameLoop(window_.load(std::memory_order_relaxed));
+        resetFbxPreviewFrameRate();
     }
     taskClearConfirmOpen_ = false;
     taskDeleteTargetId_.reset();
@@ -3182,6 +3232,7 @@ void DomDownToolPreview::PreviewController::OpenPreviewPage(skui::Runtime& runti
 {
     if (page_ == Page::FbxPreview)
     {
+        restoreFbxInputMethod();
         dx12FbxRenderer_.clear();
         dragging_ = false;
         fbxRedrawPosted_.store(false, std::memory_order_relaxed);
@@ -3189,6 +3240,8 @@ void DomDownToolPreview::PreviewController::OpenPreviewPage(skui::Runtime& runti
         fbxDragMode_ = FbxDragMode::None;
         fbxDragRedrawThrottle_.reset();
         setFbxVerticalPanDirection(window_.load(std::memory_order_relaxed), 0);
+        stopFbxPreviewFrameLoop(window_.load(std::memory_order_relaxed));
+        resetFbxPreviewFrameRate();
     }
     taskClearConfirmOpen_ = false;
     taskDeleteTargetId_.reset();
@@ -3206,12 +3259,16 @@ void DomDownToolPreview::PreviewController::OpenFbxPreviewPage(
     immediateFbxRedrawPosted_ = false;
     fbxDragMode_ = FbxDragMode::None;
     fbxDragRedrawThrottle_.reset();
-    setFbxVerticalPanDirection(window_.load(std::memory_order_relaxed), 0);
+    const HWND window = window_.load(std::memory_order_relaxed);
+    setFbxVerticalPanDirection(window, 0);
+    resetFbxPreviewFrameRate();
     taskClearConfirmOpen_ = false;
     taskDeleteTargetId_.reset();
     fbxPreviewTaskRoot_ = taskRoot;
     fbxPreviewTitle_ = std::move(title);
     page_ = Page::FbxPreview;
+    disableFbxInputMethod(window);
+    startFbxPreviewFrameLoop(window);
     updateUi(runtime);
     requestRedraw();
 }
@@ -3743,9 +3800,14 @@ void DomDownToolPreview::PreviewController::scheduleImmediateMapRedraw(HWND wind
     }
 }
 
-void DomDownToolPreview::PreviewController::scheduleImmediateFbxRedraw(HWND window)
+void DomDownToolPreview::PreviewController::scheduleImmediateFbxRedraw(HWND window,
+                                                                      bool throttle)
 {
-    if (immediateFbxRedrawPosted_ ||
+    if (immediateFbxRedrawPosted_ || !window)
+    {
+        return;
+    }
+    if (throttle &&
         !fbxDragRedrawThrottle_.shouldRefresh(MapHoverRefreshThrottle::Clock::now()))
     {
         return;
@@ -3770,28 +3832,17 @@ void DomDownToolPreview::PreviewController::setFbxVerticalPanDirection(HWND wind
     fbxVerticalPanDirection_ = direction;
     if (direction == 0)
     {
-        if (window)
-        {
-            KillTimer(window, kPreviewFbxVerticalPanTimerId);
-        }
+        stopFbxKeyboardPanFrame(window);
         return;
     }
 
     lastFbxVerticalPanTick_ = std::chrono::steady_clock::now() -
-        std::chrono::milliseconds(kPreviewFbxVerticalPanTimerIntervalMilliseconds);
-    if (window)
-    {
-        if (SetTimer(window, kPreviewFbxVerticalPanTimerId,
-                     kPreviewFbxVerticalPanTimerIntervalMilliseconds, nullptr) == 0)
-        {
-            fbxVerticalPanDirection_ = 0;
-            return;
-        }
-        applyFbxVerticalPanTick(window);
-    }
+        std::chrono::milliseconds(4);
+    lastFbxKeyboardPanFrame_ = std::chrono::steady_clock::time_point{};
+    scheduleFbxKeyboardPanFrame(window);
 }
 
-void DomDownToolPreview::PreviewController::applyFbxVerticalPanTick(HWND window)
+void DomDownToolPreview::PreviewController::applyFbxVerticalPanTick()
 {
     if (fbxVerticalPanDirection_ == 0)
     {
@@ -3811,7 +3862,145 @@ void DomDownToolPreview::PreviewController::applyFbxVerticalPanTick(HWND window)
     dx12FbxRenderer_.verticalPanBy(
         static_cast<double>(fbxVerticalPanDirection_) *
         kFbxKeyboardPanPixelsPerSecond * seconds);
-    scheduleImmediateFbxRedraw(window);
+}
+
+void DomDownToolPreview::PreviewController::scheduleFbxKeyboardPanFrame(HWND window)
+{
+    if (!window || fbxVerticalPanDirection_ == 0 || immediateFbxRedrawPosted_ ||
+        fbxKeyboardPanTimerActive_)
+    {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto minimumFrameInterval =
+        std::chrono::milliseconds(kPreviewFbxKeyboardPanFrameIntervalMilliseconds);
+    if (lastFbxKeyboardPanFrame_ == std::chrono::steady_clock::time_point{} ||
+        now - lastFbxKeyboardPanFrame_ >= minimumFrameInterval)
+    {
+        scheduleImmediateFbxRedraw(window, false);
+        return;
+    }
+
+    const auto remaining = minimumFrameInterval - (now - lastFbxKeyboardPanFrame_);
+    const UINT delayMilliseconds = static_cast<UINT>(std::max<int64_t>(
+        1, std::chrono::duration_cast<std::chrono::milliseconds>(remaining).count()));
+    if (SetTimer(window, kPreviewFbxKeyboardPanTimerId, delayMilliseconds, nullptr) != 0)
+    {
+        fbxKeyboardPanTimerActive_ = true;
+        return;
+    }
+
+    scheduleImmediateFbxRedraw(window, false);
+}
+
+void DomDownToolPreview::PreviewController::stopFbxKeyboardPanFrame(HWND window)
+{
+    if (window && fbxKeyboardPanTimerActive_)
+    {
+        KillTimer(window, kPreviewFbxKeyboardPanTimerId);
+    }
+    fbxKeyboardPanTimerActive_ = false;
+}
+
+void DomDownToolPreview::PreviewController::startFbxPreviewFrameLoop(HWND window)
+{
+    if (!window || fbxFrameTimerActive_)
+    {
+        return;
+    }
+
+    if (SetTimer(window, kPreviewFbxFrameTimerId,
+                 kPreviewFbxFrameTimerIntervalMilliseconds, nullptr) != 0)
+    {
+        fbxFrameTimerActive_ = true;
+    }
+}
+
+void DomDownToolPreview::PreviewController::stopFbxPreviewFrameLoop(HWND window)
+{
+    if (window && fbxFrameTimerActive_)
+    {
+        KillTimer(window, kPreviewFbxFrameTimerId);
+    }
+    fbxFrameTimerActive_ = false;
+}
+
+void DomDownToolPreview::PreviewController::recordFbxPreviewFrame(skui::Runtime& runtime)
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (lastFbxFrameTime_ != std::chrono::steady_clock::time_point{} &&
+        now - lastFbxFrameTime_ > kFbxFrameRateIdleResetInterval)
+    {
+        resetFbxPreviewFrameRate();
+    }
+
+    lastFbxFrameTime_ = now;
+    if (fbxFrameRateWindowStart_ == std::chrono::steady_clock::time_point{})
+    {
+        fbxFrameRateWindowStart_ = now;
+        fbxFrameRateFrameCount_ = 1;
+        runtime.setTextById("fbx-preview-fps", fbxFrameRateText_);
+        return;
+    }
+
+    ++fbxFrameRateFrameCount_;
+    const auto elapsed = now - fbxFrameRateWindowStart_;
+    if (elapsed < kFbxFrameRateUpdateInterval)
+    {
+        return;
+    }
+
+    const double seconds = std::chrono::duration<double>(elapsed).count();
+    fbxFrameRateText_ = fmt::format("FPS {:.0f}",
+                                    static_cast<double>(fbxFrameRateFrameCount_) / seconds);
+    runtime.setTextById("fbx-preview-fps", fbxFrameRateText_);
+    fbxFrameRateWindowStart_ = now;
+    fbxFrameRateFrameCount_ = 0;
+}
+
+void DomDownToolPreview::PreviewController::resetFbxPreviewFrameRate()
+{
+    lastFbxFrameTime_ = std::chrono::steady_clock::time_point{};
+    fbxFrameRateWindowStart_ = std::chrono::steady_clock::time_point{};
+    fbxFrameRateFrameCount_ = 0;
+    fbxFrameRateText_ = "FPS --";
+}
+
+void DomDownToolPreview::PreviewController::disableFbxInputMethod(HWND window)
+{
+    if (!window)
+    {
+        return;
+    }
+    if (fbxInputMethodDisabled_)
+    {
+        if (fbxInputMethodWindow_ == window)
+        {
+            return;
+        }
+        restoreFbxInputMethod();
+    }
+
+    // FBX 预览只消费相机快捷键和鼠标输入，不应让中文输入法抢占 Q/E 等按键。
+    fbxInputMethodContext_ = ImmAssociateContext(window, nullptr);
+    fbxInputMethodWindow_ = window;
+    fbxInputMethodDisabled_ = true;
+}
+
+void DomDownToolPreview::PreviewController::restoreFbxInputMethod()
+{
+    if (!fbxInputMethodDisabled_)
+    {
+        return;
+    }
+    if (fbxInputMethodWindow_)
+    {
+        ImmAssociateContext(fbxInputMethodWindow_, fbxInputMethodContext_);
+    }
+    fbxInputMethodWindow_ = nullptr;
+    fbxInputMethodContext_ = nullptr;
+    fbxInputMethodDisabled_ = false;
 }
 
 void DomDownToolPreview::PreviewController::scheduleMapUiRefresh(HWND window)

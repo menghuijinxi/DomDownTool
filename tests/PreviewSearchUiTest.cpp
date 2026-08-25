@@ -114,6 +114,8 @@ bool runTest()
                 postprocess_test::ContainsText(
                     documentPath, "id=\"fbx-preview-mode-both\" class=\"fbx-preview-mode-button\"") &&
                 postprocess_test::ContainsText(documentPath, "id=\"fbx-reset-view\"") &&
+                postprocess_test::ContainsText(documentPath, "id=\"fbx-preview-fps\"") &&
+                postprocess_test::ContainsText(documentPath, "FPS --") &&
                 postprocess_test::ContainsText(documentPath, "data-action=\"reset-fbx-view\"") &&
                 postprocess_test::ContainsText(documentPath, "id=\"fbx-rotate-speed\"") &&
                 postprocess_test::ContainsText(documentPath, "id=\"fbx-zoom-speed\"") &&
@@ -128,6 +130,7 @@ bool runTest()
                     {"fbx-preview-title", "测试 FBX"},
                     {"fbx-preview-directory", "tmp/export"},
                     {"fbx-preview-stats", "4 个顶点 · 2 个三角形"},
+                    {"fbx-preview-fps", "FPS 60"},
                     {"fbx-rotate-speed-value", "1.0x"},
                     {"fbx-zoom-speed-value", "1.0x"},
                     {"fbx-pan-speed-value", "1.0x"}}),
@@ -171,6 +174,30 @@ bool runTest()
 
     const std::filesystem::path controllerPath =
         sourceRoot / "src" / "preview" / "PreviewController.cpp";
+    const std::filesystem::path cmakePath = sourceRoot / "CMakeLists.txt";
+    if (!postprocess_test::Require(
+            postprocess_test::ContainsText(controllerPath, "disableFbxInputMethod") &&
+                postprocess_test::ContainsText(controllerPath, "restoreFbxInputMethod") &&
+                postprocess_test::ContainsText(controllerPath, "ImmAssociateContext") &&
+                postprocess_test::ContainsText(cmakePath, "imm32"),
+            "FBX 预览没有在页面生命周期内禁用并恢复输入法"))
+    {
+        return false;
+    }
+    if (!postprocess_test::Require(
+            postprocess_test::ContainsText(controllerPath,
+                                           "scheduleFbxKeyboardPanFrame(window)") &&
+                postprocess_test::ContainsText(
+                    controllerPath, "kPreviewFbxKeyboardPanFrameIntervalMilliseconds") &&
+                postprocess_test::ContainsText(controllerPath, "startFbxPreviewFrameLoop") &&
+                postprocess_test::ContainsText(controllerPath, "kPreviewFbxFrameTimerId") &&
+                postprocess_test::ContainsText(controllerPath, "nextQDown ? 1 : -1") &&
+                !postprocess_test::ContainsText(controllerPath,
+                                                "kPreviewFbxVerticalPanTimerId"),
+            "FBX Q/E 连续平移没有使用独立帧调度器"))
+    {
+        return false;
+    }
     if (!postprocess_test::Require(
             postprocess_test::ContainsText(documentPath, "id=\"gis-overlay-arrow-icon\"") &&
                 postprocess_test::ContainsText(documentPath,

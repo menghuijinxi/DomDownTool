@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <windows.h>
+#include <imm.h>
 
 #include "preview/AmapPlaceSearch.h"
 #include "preview/AmapWebViewSearch.h"
@@ -145,11 +146,27 @@ class PreviewController
 
     void scheduleImmediateMapRedraw(HWND window);
 
-    void scheduleImmediateFbxRedraw(HWND window);
+    void scheduleImmediateFbxRedraw(HWND window, bool throttle = true);
 
     void setFbxVerticalPanDirection(HWND window, int direction);
 
-    void applyFbxVerticalPanTick(HWND window);
+    void applyFbxVerticalPanTick();
+
+    void scheduleFbxKeyboardPanFrame(HWND window);
+
+    void stopFbxKeyboardPanFrame(HWND window);
+
+    void startFbxPreviewFrameLoop(HWND window);
+
+    void stopFbxPreviewFrameLoop(HWND window);
+
+    void recordFbxPreviewFrame(skui::Runtime& runtime);
+
+    void resetFbxPreviewFrameRate();
+
+    void disableFbxInputMethod(HWND window);
+
+    void restoreFbxInputMethod();
 
     void scheduleMapUiRefresh(HWND window);
 
@@ -237,6 +254,16 @@ class PreviewController
     bool immediateFbxRedrawPosted_ = false;
     int fbxVerticalPanDirection_ = 0;
     std::chrono::steady_clock::time_point lastFbxVerticalPanTick_{};
+    std::chrono::steady_clock::time_point lastFbxKeyboardPanFrame_{};
+    std::chrono::steady_clock::time_point lastFbxFrameTime_{};
+    std::chrono::steady_clock::time_point fbxFrameRateWindowStart_{};
+    uint32_t fbxFrameRateFrameCount_ = 0;
+    std::string fbxFrameRateText_ = "FPS --";
+    bool fbxKeyboardPanTimerActive_ = false;
+    bool fbxFrameTimerActive_ = false;
+    bool fbxInputMethodDisabled_ = false;
+    HWND fbxInputMethodWindow_ = nullptr;
+    HIMC fbxInputMethodContext_ = nullptr;
     bool mapUiRefreshPosted_ = false;
     mutable std::atomic_bool fbxRedrawPosted_ = false;
     MapHoverRefreshThrottle mapDragRedrawThrottle_{std::chrono::milliseconds(4)};
