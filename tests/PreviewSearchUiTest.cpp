@@ -43,7 +43,7 @@ bool runTest()
     {
         return false;
     }
-    const std::array<std::string_view, 25> exportCheckboxIds = {
+    const std::array<std::string_view, 26> exportCheckboxIds = {
         "export-provider-gaode", "export-provider-tencent",
         "export-provider-tianditu", "export-provider-baidu",
         "export-provider-google", "export-provider-bing", "export-provider-arcgis",
@@ -53,7 +53,7 @@ bool runTest()
         "export-gis-combine-overlay", "export-gis-combine-merged",
         "export-gis-combine-separate", "export-satellite-tiles",
         "export-satellite-merged", "export-fbx", "export-terrain-height", "export-geojson",
-        "export-building-height-colors"};
+        "export-building-height-colors", "export-building-fbx"};
     for (const std::string_view checkboxId : exportCheckboxIds)
     {
         const std::string checkedMarkup =
@@ -294,13 +294,63 @@ bool runTest()
     const std::vector<std::string> expectedGisCombinationItems = {
         "export-gis-combine-overlay-item", "export-gis-combine-merged-item",
         "export-gis-combine-separate-item"};
+    const std::vector<std::string> expectedBuildingFbxFields = {
+        "export-building-wall-textures", "export-building-roof-textures",
+        "export-building-layer-height", "export-building-max-wall-materials",
+        "export-building-texture-seed"};
     if (!postprocess_test::Require(
             runtime.childElementIdsById("export-gis-groups") == expectedInitialGisItems,
             "GIS 数据初始结构没有使用单层两列网格") ||
         !postprocess_test::Require(
             runtime.childElementIdsById("export-gis-combine-options") ==
                 expectedGisCombinationItems,
-            "GIS 组合方式初始结构不是三个独立复选项"))
+            "GIS 组合方式初始结构不是三个独立复选项") ||
+        !postprocess_test::Require(
+            postprocess_test::ContainsText(documentPath, "id=\"export-building-fbx\"") &&
+                !postprocess_test::ContainsText(
+                    documentPath,
+                    "id=\"export-building-fbx\" type=\"checkbox\" disabled") &&
+                std::ranges::all_of(
+                    expectedBuildingFbxFields,
+                    [&documentPath](const std::string& id)
+                    {
+                        return postprocess_test::ContainsText(
+                            documentPath,
+                            "id=\"" + id + "\"");
+                    }),
+            "建筑 FBX 配置区缺少散图测试控件"))
+    {
+        return false;
+    }
+    const std::filesystem::path exportManagerPath =
+        sourceRoot / "src" / "preview" / "ExportTaskManager.cpp";
+    if (!postprocess_test::Require(
+            postprocess_test::ContainsText(exportManagerPath, "RunBuildingFbxExport") &&
+                postprocess_test::ContainsText(exportManagerPath, "建筑散图 FBX") &&
+                postprocess_test::ContainsText(exportManagerPath,
+                                               "ExportAmapBuildingsToFbx"),
+            "建筑散图 FBX 没有独立导出调度入口"))
+    {
+        return false;
+    }
+    const std::filesystem::path dx12RendererPath =
+        sourceRoot / "src" / "preview" / "Dx12FbxRenderer.cpp";
+    const std::filesystem::path skiaFbxRendererPath =
+        sourceRoot / "src" / "preview" / "FbxPreviewRenderer.cpp";
+    if (!postprocess_test::Require(
+            postprocess_test::ContainsText(dx12RendererPath,
+                                           "D3D12_TEXTURE_ADDRESS_MODE_WRAP") &&
+                postprocess_test::ContainsText(skiaFbxRendererPath,
+                                               "SkTileMode::kRepeat") &&
+                !postprocess_test::ContainsText(dx12RendererPath,
+                                                "kMaximumVertices") &&
+                !postprocess_test::ContainsText(dx12RendererPath,
+                                                "kMaximumTriangles") &&
+                !postprocess_test::ContainsText(skiaFbxRendererPath,
+                                                "kMaximumPreviewVertices") &&
+                !postprocess_test::ContainsText(skiaFbxRendererPath,
+                                                "kMaximumPreviewTriangles"),
+            "FBX 预览不应截断顶点/三角形，墙体贴图 U 方向应重复采样"))
     {
         return false;
     }

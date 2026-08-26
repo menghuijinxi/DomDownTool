@@ -60,8 +60,6 @@ namespace
 {
 constexpr DXGI_FORMAT kColorFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
 constexpr DXGI_FORMAT kDepthFormat = DXGI_FORMAT_D32_FLOAT;
-constexpr std::size_t kMaximumVertices = 250000;
-constexpr std::size_t kMaximumTriangles = 500000;
 constexpr std::size_t kMaximumTextures = 1024;
 constexpr int kMaximumTextureDimension = 4096;
 constexpr UINT kFrameCount = 3;
@@ -716,7 +714,7 @@ bool initializeState(Dx12FbxState& state, ID3D12Resource* target, ID3D12CommandQ
     descriptorParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-    sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
     sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
     sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
     sampler.MaxLOD = D3D12_FLOAT32_MAX;
@@ -1016,9 +1014,7 @@ bool parseFbx(const std::vector<std::filesystem::path>& paths, std::stop_token s
             for (unsigned int meshIndex = 0; meshIndex < node->mNumMeshes; ++meshIndex)
             {
                 const aiMesh* mesh = scene->mMeshes[node->mMeshes[meshIndex]];
-                if (!mesh || !mesh->HasPositions() || !mesh->HasFaces() ||
-                    parsed.vertexCount + mesh->mNumVertices > kMaximumVertices ||
-                    parsed.triangleCount >= kMaximumTriangles)
+                if (!mesh || !mesh->HasPositions() || !mesh->HasFaces())
                 {
                     continue;
                 }
@@ -1040,9 +1036,7 @@ bool parseFbx(const std::vector<std::filesystem::path>& paths, std::stop_token s
                 for (unsigned int faceIndex = 0; faceIndex < mesh->mNumFaces; ++faceIndex)
                 {
                     const aiFace& face = mesh->mFaces[faceIndex];
-                    if (face.mNumIndices != 3 ||
-                        parsed.triangleCount + batch.indices.size() / 3 >=
-                            kMaximumTriangles)
+                    if (face.mNumIndices != 3)
                     {
                         continue;
                     }

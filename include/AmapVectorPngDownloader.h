@@ -84,6 +84,16 @@ namespace DownTool
         int lineWidth = 2;
         int transitLineWidth = 3;
         int pointRadius = 5;
+        bool exportBuildingsToFbx = false;
+        std::filesystem::path buildingWallTexturePath =
+            std::filesystem::u8path("贴图/墙体");
+        std::filesystem::path buildingRoofTexturePath =
+            std::filesystem::u8path("贴图/房顶");
+        double buildingLayerHeightCentimeters = 45.;
+        double buildingTextureUnitLayer = 5.;
+        uint32_t buildingTextureUnitPixelSize = 64;
+        uint32_t buildingMaxWallMaterialsPerBucket = 1;
+        uint32_t buildingTextureRandomSeed = 0;
     };
 
     struct AmapVectorPngDownloadOptions

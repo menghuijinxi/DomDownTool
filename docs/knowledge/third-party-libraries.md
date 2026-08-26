@@ -35,6 +35,26 @@ BC1 编码器使用 4 色块端点和最近颜色索引，属于预览用途的�
 验证时应使用 `PostProcessFbxTest` 生成的含外部 PNG 的 FBX，并确认任务列表入口、贴图、线框和
 贴图加线框三种模式均可用；拖动旋转、滚轮缩放不应改变导出文件。
 
+## OpenCV 读取中文贴图路径
+
+### 现象与影响
+
+建筑散图 FBX 导出时，如果墙体/屋顶贴图目录使用默认 `贴图/墙体`、`贴图/房顶` 中文路径，
+直接调用 `cv::imread(PathToUtf8String(path))` 会在 Windows 下读取失败。导出器会误判目录里
+没有可读取的 JPG/PNG，任务记录中表现为“建筑贴图目录没有可读取的 JPG/PNG 贴图”。
+
+### 根因与解决方案
+
+OpenCV 的窄字符串文件路径在 Windows 下不能稳定处理 UTF-8 中文路径。项目内读取图片时应先用
+`std::ifstream` 和 `std::filesystem::path` 打开文件、读入字节，再调用 `cv::imdecode()`；写入
+图片则先 `cv::imencode()`，再通过文件流落盘。不要在中文缓存目录、用户导出目录或素材目录上
+直接使用 `cv::imread(path.string())` / `cv::imwrite(path.string())`。
+
+### 验证方式
+
+`AmapVectorPngTileTest` 的建筑 FBX 后处理用例使用中文 `贴图/墙体` 和 `贴图/房顶` 临时目录，
+覆盖无后缀 JPEG 墙体贴图、`.jpg` 屋顶贴图、FBX 材质贴图复制和高度顶点生成。
+
 ## WebView2 同会话访问高德网页搜索
 
 ### 现象与影响

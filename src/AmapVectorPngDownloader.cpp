@@ -22,6 +22,7 @@
 #include "opencv2/imgproc.hpp"
 
 #include "AmapVectorDecoder.h"
+#include "AmapBuildingFbxExporter.h"
 #include "GCJ02GoogleDownBase.h"
 
 namespace
@@ -404,6 +405,31 @@ namespace
         const bool meetsMinimumZoom = feature.minZoom == 0 || zoom >= feature.minZoom;
         return meetsMinimumZoom &&
             (feature.maxZoom == 0 || zoom <= feature.maxZoom);
+    }
+
+    AmapVectorDecodedData SelectBuildingFeaturesForFbx(
+        const AmapVectorDecodedData& decodedData,
+        uint32_t zoom,
+        const AmapVectorRenderOptions& options)
+    {
+        AmapVectorDecodedData buildingData;
+        buildingData.version = decodedData.version;
+        buildingData.status = decodedData.status;
+        buildingData.packetCount = decodedData.packetCount;
+        for (const AmapVectorFeature& feature : decodedData.features)
+        {
+            const AmapVectorRenderCategory category = GetCategory(feature, options);
+            if (category != AmapVectorRenderCategory::Building ||
+                !IsCategorySelected(category, options) ||
+                !IsFeatureVisibleAtZoom(feature, zoom, options.ignoreFeatureZoomRange) ||
+                feature.geometryType != AmapVectorGeometryType::Polygon ||
+                !feature.hasHeight || feature.height == 0)
+            {
+                continue;
+            }
+            buildingData.features.push_back(feature);
+        }
+        return buildingData;
     }
 
     bool BuildProjectedFeature(
@@ -954,6 +980,38 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
     if (GetPostProcessEnabled() || GetPostProcessMergedImageEnabled() || GetPostProcessFbxEnabled())
     {
         RunPostProcess();
+    }
+
+    if (GetPostProcessFbxEnabled() && renderOptions.exportBuildingsToFbx)
+    {
+        const AmapVectorDecodedData buildingData = SelectBuildingFeaturesForFbx(
+            decodedData,
+            vectorOptions.zoom,
+            renderOptions);
+        if (!buildingData.features.empty())
+        {
+            AmapBuildingFbxExportOptions buildingFbxOptions;
+            buildingFbxOptions.outputPath = GetFbxRootPath() / "buildings.fbx";
+            buildingFbxOptions.centerWgs84 = vectorOptions.centerWgs84;
+            buildingFbxOptions.wallTexturePath = renderOptions.buildingWallTexturePath;
+            buildingFbxOptions.roofTexturePath = renderOptions.buildingRoofTexturePath;
+            buildingFbxOptions.layerHeightCentimeters =
+                renderOptions.buildingLayerHeightCentimeters;
+            buildingFbxOptions.textureUnitLayer = renderOptions.buildingTextureUnitLayer;
+            buildingFbxOptions.textureUnitPixelSize =
+                renderOptions.buildingTextureUnitPixelSize;
+            buildingFbxOptions.maxWallMaterialsPerBucket =
+                renderOptions.buildingMaxWallMaterialsPerBucket;
+            buildingFbxOptions.randomSeed = renderOptions.buildingTextureRandomSeed;
+            buildingFbxOptions.cancellationRequested = isCancellationRequested;
+            const AmapBuildingFbxExportResult buildingFbxResult =
+                ExportAmapBuildingsToFbx(buildingData, buildingFbxOptions);
+            if (!buildingFbxResult.success)
+            {
+                result.error = buildingFbxResult.error;
+                return result;
+            }
+        }
     }
 
     if (isCancellationRequested() || IsStopRequested())

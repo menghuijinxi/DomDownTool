@@ -1,15 +1,21 @@
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "assimp/Importer.hpp"
+#include "assimp/material.h"
+#include "assimp/scene.h"
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/imgproc.hpp"
 
 #include "AmapVectorPngDownloader.h"
 #include "GCJ02GoogleDownBase.h"
+#include "PostProcessTestSupport.h"
 
 namespace
 {
@@ -81,6 +87,177 @@ namespace
     {
         return first[0] == second[0] && first[1] == second[1] &&
             first[2] == second[2];
+    }
+
+    bool WriteJpegTextureWithoutExtension(
+        const std::filesystem::path& path,
+        int width,
+        int height,
+        const cv::Scalar& color)
+    {
+        std::error_code createError;
+        std::filesystem::create_directories(path.parent_path(), createError);
+        if (createError)
+        {
+            return false;
+        }
+
+        cv::Mat image(height, width, CV_8UC3, color);
+        std::vector<unsigned char> encodedImage;
+        if (!cv::imencode(".jpg", image, encodedImage) || encodedImage.empty())
+        {
+            return false;
+        }
+
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        if (!output.is_open())
+        {
+            return false;
+        }
+        output.write(
+            reinterpret_cast<const char*>(encodedImage.data()),
+            static_cast<std::streamsize>(encodedImage.size()));
+        return output.good();
+    }
+
+    bool WriteJpegTexture(
+        const std::filesystem::path& path,
+        int width,
+        int height,
+        const cv::Scalar& color)
+    {
+        std::error_code createError;
+        std::filesystem::create_directories(path.parent_path(), createError);
+        if (createError)
+        {
+            return false;
+        }
+
+        cv::Mat image(height, width, CV_8UC3, color);
+        std::vector<unsigned char> encodedImage;
+        if (!cv::imencode(".jpg", image, encodedImage) || encodedImage.empty())
+        {
+            return false;
+        }
+
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        if (!output.is_open())
+        {
+            return false;
+        }
+        output.write(
+            reinterpret_cast<const char*>(encodedImage.data()),
+            static_cast<std::streamsize>(encodedImage.size()));
+        return output.good();
+    }
+
+    bool RequireBuildingFbx(
+        const std::filesystem::path& fbxPath,
+        const std::filesystem::path& fbxRoot)
+    {
+        Assimp::Importer importer;
+        const aiScene* scene = postprocess_test::ReadFbxScene(importer, fbxPath);
+        if (!Require(scene != nullptr, "建筑 FBX 无法读取") ||
+            !Require(scene->HasMeshes(), "建筑 FBX 没有网格") ||
+            !Require(scene->mNumMaterials >= 2, "建筑 FBX 没有墙体和屋顶材质"))
+        {
+            return false;
+        }
+
+        bool foundPositiveHeight = false;
+        bool foundDiffuseTexture = false;
+        bool foundRepeatingWallUv = false;
+        for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; meshIndex++)
+        {
+            const aiMesh* mesh = scene->mMeshes[meshIndex];
+            if (mesh == nullptr)
+            {
+                continue;
+            }
+            for (unsigned int vertexIndex = 0; vertexIndex < mesh->mNumVertices;
+                 vertexIndex++)
+            {
+                foundPositiveHeight = foundPositiveHeight || mesh->mVertices[vertexIndex].z > 1.f;
+            }
+
+            if (!mesh->HasTextureCoords(0) || mesh->mMaterialIndex >= scene->mNumMaterials)
+            {
+                continue;
+            }
+            aiString meshTexturePath;
+            if (scene->mMaterials[mesh->mMaterialIndex]->GetTexture(
+                    aiTextureType_DIFFUSE,
+                    0,
+                    &meshTexturePath) != AI_SUCCESS ||
+                !std::string(meshTexturePath.C_Str()).starts_with("building_wall_"))
+            {
+                continue;
+            }
+
+            float minimumV = std::numeric_limits<float>::max();
+            float maximumV = std::numeric_limits<float>::lowest();
+            float maximumU = 0.f;
+            for (unsigned int vertexIndex = 0; vertexIndex < mesh->mNumVertices;
+                 vertexIndex++)
+            {
+                const aiVector3D& uv = mesh->mTextureCoords[0][vertexIndex];
+                maximumU = std::max(maximumU, uv.x);
+                minimumV = std::min(minimumV, uv.y);
+                maximumV = std::max(maximumV, uv.y);
+            }
+            foundRepeatingWallUv = foundRepeatingWallUv ||
+                (maximumU > 1.1f && minimumV <= 0.01f && maximumV >= 0.99f);
+        }
+
+        for (unsigned int materialIndex = 0; materialIndex < scene->mNumMaterials;
+             materialIndex++)
+        {
+            aiString texturePath;
+            if (scene->mMaterials[materialIndex]->GetTexture(
+                    aiTextureType_DIFFUSE,
+                    0,
+                    &texturePath) != AI_SUCCESS)
+            {
+                continue;
+            }
+            foundDiffuseTexture = true;
+            const std::filesystem::path relativeTexturePath =
+                std::filesystem::u8path(texturePath.C_Str());
+            if (!Require(!relativeTexturePath.has_parent_path(),
+                    std::string("建筑 FBX 贴图路径不是平铺相对路径：") +
+                        texturePath.C_Str()) ||
+                !Require(std::filesystem::exists(fbxRoot / relativeTexturePath),
+                    std::string("建筑 FBX 贴图缺失：") + texturePath.C_Str()))
+            {
+                return false;
+            }
+        }
+
+        const aiMesh* firstMesh = scene->mMeshes[0];
+        if (!Require(firstMesh != nullptr && firstMesh->mMaterialIndex < scene->mNumMaterials,
+                "建筑 FBX 第一个 mesh 没有关联材质"))
+        {
+            return false;
+        }
+        aiString firstTexturePath;
+        const aiMaterial* firstMaterial = scene->mMaterials[firstMesh->mMaterialIndex];
+        if (!Require(firstMaterial != nullptr &&
+                    firstMaterial->GetTexture(
+                        aiTextureType_DIFFUSE, 0, &firstTexturePath) == AI_SUCCESS,
+                "建筑 FBX 第一个 mesh 没有关联 diffuse 贴图") ||
+            !Require(std::string(firstTexturePath.C_Str()).starts_with("building_wall_"),
+                "建筑 FBX 应优先输出墙体 mesh，便于低角度检查立面"))
+        {
+            return false;
+        }
+
+        return Require(foundPositiveHeight, "建筑 FBX 没有正高度顶点") &&
+            Require(foundDiffuseTexture, "建筑 FBX 没有 diffuse 贴图") &&
+            Require(foundRepeatingWallUv, "建筑 FBX 墙体 UV 没有横向重复或纵向完整映射") &&
+            Require(std::filesystem::exists(fbxRoot / "building_wall_0.jpg"),
+                "建筑 FBX 没有复制无后缀墙体 JPEG") &&
+            Require(std::filesystem::exists(fbxRoot / "building_roof_0.jpg"),
+                "建筑 FBX 没有复制屋顶 JPEG");
     }
 
     DownTool::AmapVectorFeature MakePolygon(
@@ -456,6 +633,27 @@ namespace
         const std::filesystem::path postProcessRoot = outputRoot / "postprocess";
         const std::filesystem::path xyzRoot = postProcessRoot / "XYZ";
         const std::filesystem::path fbxRoot = postProcessRoot / "FBX";
+        const std::filesystem::path textureRoot = outputRoot / std::filesystem::u8path("贴图");
+        if (!Require(WriteJpegTextureWithoutExtension(
+                textureRoot / std::filesystem::u8path("墙体") /
+                    "wall_texture_without_suffix",
+                96,
+                128,
+                cv::Scalar(40, 80, 180)),
+                "无法写入无后缀墙体 JPEG 测试贴图") ||
+            !Require(WriteJpegTexture(
+                textureRoot / std::filesystem::u8path("房顶") / "roof_texture.jpg",
+                160,
+                96,
+                cv::Scalar(120, 160, 40)),
+                "无法写入屋顶 JPEG 测试贴图"))
+        {
+            return false;
+        }
+        renderOptions.buildingWallTexturePath = textureRoot / std::filesystem::u8path("墙体");
+        renderOptions.buildingRoofTexturePath = textureRoot / std::filesystem::u8path("房顶");
+        renderOptions.exportBuildingsToFbx = true;
+        renderOptions.buildingTextureRandomSeed = 1234;
         downloader.SetPostProcessOutputPath(xyzRoot.string());
         downloader.SetPostProcessEnabled(true);
         downloader.SetPostProcessMergedImageEnabled(true);
@@ -467,7 +665,13 @@ namespace
         downloader.SetFbxTextureSize(256);
         downloader.SetFbxShape(DownTool::FbxPlanetShape::Plane);
         downloader.SetFbxMeshSubdivision(2);
-        renderResult = downloader.Render(decodedData, vectorOptions, renderOptions);
+        DownTool::AmapVectorDecodedData fbxData = decodedData;
+        fbxData.features.push_back(
+            MakeHeightBuilding({ centerGcj02.lon + 0.0015, centerGcj02.lat - 0.0015 },
+                20,
+                true,
+                9));
+        renderResult = downloader.Render(fbxData, vectorOptions, renderOptions);
         if (!Require(renderResult.success, "PNG 后处理渲染失败：" + renderResult.error) ||
             !Require(std::filesystem::exists(
                 xyzRoot / std::to_string(tile.Zoom) / std::to_string(tile.X) /
@@ -477,7 +681,12 @@ namespace
                 "后处理缺少合并大图") ||
             !Require(std::filesystem::exists(
                 fbxRoot / "plane.fbx"),
-                "后处理缺少 FBX"))
+                "后处理缺少 FBX") ||
+            !Require(std::filesystem::exists(
+                fbxRoot / "buildings.fbx"),
+                "后处理缺少建筑 FBX") ||
+            !postprocess_test::RequireFbxAxisAndUnit(fbxRoot / "buildings.fbx") ||
+            !RequireBuildingFbx(fbxRoot / "buildings.fbx", fbxRoot))
         {
             return false;
         }

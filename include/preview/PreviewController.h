@@ -129,6 +129,8 @@ class PreviewController
 
     void setExportGisGroupSelected(uint64_t groupId, bool selected);
 
+    [[nodiscard]] bool hasSelectedBuildingExportGroup() const;
+
     void SubmitExport(skui::Runtime& runtime);
 
     [[nodiscard]] std::optional<ExportConfiguration> BuildExportConfiguration(
@@ -207,6 +209,11 @@ class PreviewController
     std::string exportMergedResolutionValue_ = "16384";
     std::string exportFbxSizeValue_ = "4096";
     std::string exportTerrainSampleRateValue_ = "30";
+    std::string exportBuildingWallTexturePathValue_ = "贴图/墙体";
+    std::string exportBuildingRoofTexturePathValue_ = "贴图/房顶";
+    std::string exportBuildingLayerHeightValue_ = "45";
+    std::string exportBuildingMaxWallMaterialsValue_ = "1";
+    std::string exportBuildingTextureSeedValue_ = "0";
     bool exportTiles_ = false;
     bool exportMergedImage_ = false;
     bool exportGisOverlayOnSatellite_ = false;
@@ -216,6 +223,7 @@ class PreviewController
     bool exportTerrainHeight_ = false;
     bool exportGeoJson_ = false;
     bool exportBuildingHeightColors_ = false;
+    bool exportBuildingFbx_ = false;
     std::string exportValidationMessage_;
     std::string lastTaskListHtml_;
     std::optional<MapRenderStats> scheduledStats_;

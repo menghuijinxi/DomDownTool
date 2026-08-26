@@ -811,6 +811,58 @@ std::optional<ExportConfiguration> loadLegacyTaskConfiguration(
         if (!buildingValue.empty())
         {
             configuration.colorBuildingsByHeight = buildingValue == "是";
+            continue;
+        }
+        const std::string buildingFbxValue = conversionRecordValue(line, "建筑散图 FBX: ");
+        if (!buildingFbxValue.empty())
+        {
+            configuration.exportBuildingFbx = buildingFbxValue == "是";
+            continue;
+        }
+        const std::string wallTexturePath = conversionRecordValue(
+            line, "建筑墙体贴图目录: ");
+        if (!wallTexturePath.empty())
+        {
+            configuration.buildingWallTexturePath = std::filesystem::u8path(wallTexturePath);
+            continue;
+        }
+        const std::string roofTexturePath = conversionRecordValue(
+            line, "建筑屋顶贴图目录: ");
+        if (!roofTexturePath.empty())
+        {
+            configuration.buildingRoofTexturePath = std::filesystem::u8path(roofTexturePath);
+            continue;
+        }
+        const std::string layerHeightValue = conversionRecordValue(
+            line, "建筑楼层高度 (厘米): ");
+        if (!layerHeightValue.empty())
+        {
+            if (const std::optional<double> layerHeight =
+                    parseFiniteDouble(layerHeightValue))
+            {
+                configuration.buildingLayerHeightCentimeters = *layerHeight;
+            }
+            continue;
+        }
+        const std::string materialCountValue = conversionRecordValue(
+            line, "建筑墙体材质上限: ");
+        if (!materialCountValue.empty())
+        {
+            if (const std::optional<uint32_t> materialCount =
+                    parseUint32(materialCountValue))
+            {
+                configuration.buildingMaxWallMaterialsPerBucket = *materialCount;
+            }
+            continue;
+        }
+        const std::string randomSeedValue = conversionRecordValue(
+            line, "建筑贴图随机种子: ");
+        if (!randomSeedValue.empty())
+        {
+            if (const std::optional<uint32_t> randomSeed = parseUint32(randomSeedValue))
+            {
+                configuration.buildingTextureRandomSeed = *randomSeed;
+            }
         }
     }
 
@@ -1003,11 +1055,15 @@ std::vector<std::string> gisSelectionValues(
 {
     if (categories.empty())
     {
-        return {"none"};
+        std::vector<std::string> values;
+        values.emplace_back("none");
+        return values;
     }
     if (categories == allGisCategories())
     {
-        return {"all"};
+        std::vector<std::string> values;
+        values.emplace_back("all");
+        return values;
     }
 
     std::vector<std::string> values;
@@ -1321,6 +1377,31 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                     exportOutputValue_ = event.value;
                     return;
                 }
+                if (event.id == "export-building-wall-textures")
+                {
+                    exportBuildingWallTexturePathValue_ = event.value;
+                    return;
+                }
+                if (event.id == "export-building-roof-textures")
+                {
+                    exportBuildingRoofTexturePathValue_ = event.value;
+                    return;
+                }
+                if (event.id == "export-building-layer-height")
+                {
+                    exportBuildingLayerHeightValue_ = event.value;
+                    return;
+                }
+                if (event.id == "export-building-max-wall-materials")
+                {
+                    exportBuildingMaxWallMaterialsValue_ = event.value;
+                    return;
+                }
+                if (event.id == "export-building-texture-seed")
+                {
+                    exportBuildingTextureSeedValue_ = event.value;
+                    return;
+                }
                 if (event.id == "export-merged-resolution")
                 {
                     exportMergedResolutionValue_ = event.value;
@@ -1420,6 +1501,12 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 if (event.id == "export-building-height-colors")
                 {
                     exportBuildingHeightColors_ = event.checked;
+                    return;
+                }
+                if (event.id == "export-building-fbx")
+                {
+                    exportBuildingFbx_ = event.checked;
+                    UpdateExportUi(runtime);
                     return;
                 }
                 if (const std::optional<uint64_t> groupId = exportGisGroupId(event.id))
@@ -3309,6 +3396,17 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
         configuration->exportTerrainHeight : false;
     exportGeoJson_ = configuration ? configuration->exportGeoJson : false;
     exportBuildingHeightColors_ = configuration ? configuration->colorBuildingsByHeight : false;
+    exportBuildingFbx_ = configuration ? configuration->exportBuildingFbx : false;
+    exportBuildingWallTexturePathValue_ = configuration ?
+        pathToUtf8(configuration->buildingWallTexturePath) : "贴图/墙体";
+    exportBuildingRoofTexturePathValue_ = configuration ?
+        pathToUtf8(configuration->buildingRoofTexturePath) : "贴图/房顶";
+    exportBuildingLayerHeightValue_ = configuration ?
+        fmt::format("{:.0f}", configuration->buildingLayerHeightCentimeters) : "45";
+    exportBuildingMaxWallMaterialsValue_ = configuration ?
+        std::to_string(configuration->buildingMaxWallMaterialsPerBucket) : "1";
+    exportBuildingTextureSeedValue_ = configuration ?
+        std::to_string(configuration->buildingTextureRandomSeed) : "0";
     exportGisOverlayOnSatellite_ = configuration && configuration->gisModes.contains(
         GisExportMode::OverlayOnSatellite);
     exportGisLayersMerged_ = configuration && configuration->gisModes.contains(
@@ -3358,6 +3456,15 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
     runtime.setValueById("export-fbx-size", exportFbxSizeValue_);
     runtime.setValueById(
         "export-terrain-sample-rate", exportTerrainSampleRateValue_);
+    runtime.setValueById("export-building-wall-textures",
+                         exportBuildingWallTexturePathValue_);
+    runtime.setValueById("export-building-roof-textures",
+                         exportBuildingRoofTexturePathValue_);
+    runtime.setValueById("export-building-layer-height",
+                         exportBuildingLayerHeightValue_);
+    runtime.setValueById("export-building-max-wall-materials",
+                         exportBuildingMaxWallMaterialsValue_);
+    runtime.setValueById("export-building-texture-seed", exportBuildingTextureSeedValue_);
     for (const auto& [sourceId, controlId] : kExportProviderControls)
     {
         setCheckboxChecked(runtime, controlId, exportMapSourceIds_.contains(
@@ -3374,6 +3481,7 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
     setCheckboxChecked(runtime, "export-terrain-height", exportTerrainHeight_);
     setCheckboxChecked(runtime, "export-geojson", exportGeoJson_);
     setCheckboxChecked(runtime, "export-building-height-colors", exportBuildingHeightColors_);
+    setCheckboxChecked(runtime, "export-building-fbx", exportBuildingFbx_);
     UpdateExportUi(runtime);
 }
 
@@ -3396,6 +3504,7 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
 
     const bool hasGisData = std::ranges::any_of(
         exportGisGroups_, [](const ExportGisUiGroup& group) { return group.selected; });
+    const bool canExportBuildingFbx = exportFbx_ && hasSelectedBuildingExportGroup();
     const auto setDisabled = [&runtime](std::string_view id, bool disabled)
     {
         if (disabled)
@@ -3415,6 +3524,16 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
     setDisabled("export-fbx-size", !exportFbx_);
     setDisabled("export-terrain-height", !exportFbx_);
     setDisabled("export-terrain-sample-rate", !exportFbx_ || !exportTerrainHeight_);
+    setDisabled("export-building-wall-textures", !exportBuildingFbx_);
+    setDisabled("export-building-roof-textures", !exportBuildingFbx_);
+    setDisabled("export-building-layer-height", !exportBuildingFbx_);
+    setDisabled("export-building-max-wall-materials", !exportBuildingFbx_);
+    setDisabled("export-building-texture-seed", !exportBuildingFbx_);
+    runtime.setTextById(
+        "export-building-fbx-hint",
+        exportBuildingFbx_ && canExportBuildingFbx ?
+            "散图模式会额外生成 buildings.fbx，贴图通过 FBX 材质槽引用。" :
+            "默认关闭；启用后需要同时勾选 FBX 和 GIS 建筑图层。");
     runtime.setVisibleById("export-terrain-height-item", exportFbx_);
     setDisabled("export-merged-format", !exportMergedImage_);
     setDisabled("export-merged-resolution", !exportMergedImage_);
@@ -3427,6 +3546,7 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
                        exportGisLayersSeparate_);
     setCheckboxChecked(runtime, "export-building-height-colors",
                        exportBuildingHeightColors_);
+    setCheckboxChecked(runtime, "export-building-fbx", exportBuildingFbx_);
     setCheckboxChecked(runtime, "export-terrain-height", exportTerrainHeight_);
 }
 
@@ -3621,6 +3741,17 @@ void DomDownToolPreview::PreviewController::setExportGisGroupSelected(
     }
 }
 
+bool DomDownToolPreview::PreviewController::hasSelectedBuildingExportGroup() const
+{
+    return std::ranges::any_of(
+        exportGisGroups_,
+        [](const ExportGisUiGroup& group)
+        {
+            return group.selected && group.categories.contains(
+                DownTool::AmapVectorRenderCategory::Building);
+        });
+}
+
 std::optional<DomDownToolPreview::ExportConfiguration>
 DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& error) const
 {
@@ -3632,6 +3763,13 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
     const std::optional<uint32_t> fbxSize = parseUint32(exportFbxSizeValue_);
     const std::optional<double> terrainSampleRate =
         parseFiniteDouble(exportTerrainSampleRateValue_);
+    const bool buildingFbxRequested = exportBuildingFbx_;
+    const std::optional<double> buildingLayerHeight = buildingFbxRequested ?
+        parseFiniteDouble(exportBuildingLayerHeightValue_) : std::optional<double>(45.);
+    const std::optional<uint32_t> buildingMaxWallMaterials = buildingFbxRequested ?
+        parseUint32(exportBuildingMaxWallMaterialsValue_) : std::optional<uint32_t>(1);
+    const std::optional<uint32_t> buildingTextureSeed = buildingFbxRequested ?
+        parseUint32(exportBuildingTextureSeedValue_) : std::optional<uint32_t>(0);
     if (!lon || *lon < -180. || *lon > 180. || !lat || *lat < -85. || *lat > 85.)
     {
         error = "中心经纬度无效。";
@@ -3646,6 +3784,15 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
         !fbxSize || !terrainSampleRate || *terrainSampleRate <= 0.)
     {
         error = "层级、合并大图尺寸、FBX 贴图尺寸或高度采样率无效。";
+        return std::nullopt;
+    }
+    if (buildingFbxRequested &&
+        (exportBuildingWallTexturePathValue_.empty() ||
+         exportBuildingRoofTexturePathValue_.empty() || !buildingLayerHeight ||
+         *buildingLayerHeight <= 0. || !buildingMaxWallMaterials ||
+         *buildingMaxWallMaterials == 0 || !buildingTextureSeed))
+    {
+        error = "建筑 FBX 贴图目录、楼层高度、材质上限或随机种子无效。";
         return std::nullopt;
     }
 
@@ -3694,6 +3841,14 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
     configuration.exportTerrainHeight = exportFbx_ && exportTerrainHeight_;
     configuration.exportGeoJson = exportGeoJson_;
     configuration.colorBuildingsByHeight = exportBuildingHeightColors_;
+    configuration.exportBuildingFbx = buildingFbxRequested;
+    configuration.buildingWallTexturePath = std::filesystem::u8path(
+        exportBuildingWallTexturePathValue_);
+    configuration.buildingRoofTexturePath = std::filesystem::u8path(
+        exportBuildingRoofTexturePathValue_);
+    configuration.buildingLayerHeightCentimeters = *buildingLayerHeight;
+    configuration.buildingMaxWallMaterialsPerBucket = *buildingMaxWallMaterials;
+    configuration.buildingTextureRandomSeed = *buildingTextureSeed;
     configuration.mergedImageResolution = *mergedResolution;
     configuration.mergedImageFormat = exportMergedFormat_ == "jpg" ? "jpg" : "png";
     configuration.fbxTextureSize = *fbxSize;
@@ -3701,6 +3856,16 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
     if (exportTerrainHeight_ && !exportFbx_)
     {
         error = "导出高度需要同时选择 FBX。";
+        return std::nullopt;
+    }
+    if (buildingFbxRequested && !exportFbx_)
+    {
+        error = "建筑散图 FBX 需要同时选择 FBX 切片与网格。";
+        return std::nullopt;
+    }
+    if (buildingFbxRequested && !hasSelectedBuildingExportGroup())
+    {
+        error = "建筑散图 FBX 需要同时选择 GIS 建筑图层。";
         return std::nullopt;
     }
     for (const DownTool::AmapVectorRenderCategory category : kExportCategories)
@@ -3724,7 +3889,8 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
         return std::nullopt;
     }
     if (!configuration.gisCategories.empty() && visualOutputRequested &&
-        configuration.gisModes.empty() && !configuration.exportGeoJson)
+        configuration.gisModes.empty() && !configuration.exportGeoJson &&
+        !configuration.exportBuildingFbx)
     {
         error = "所选 GIS 数据需要至少一种 GIS 组合方式。";
         return std::nullopt;
@@ -3732,7 +3898,8 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
     const bool satelliteRequested = !configuration.satelliteSources.empty() &&
         visualOutputRequested;
     const bool gisVisualRequested = !configuration.gisCategories.empty() &&
-        !configuration.gisModes.empty() && visualOutputRequested;
+        ((!configuration.gisModes.empty() && visualOutputRequested) ||
+         configuration.exportBuildingFbx);
     if (configuration.gisModes.contains(GisExportMode::OverlayOnSatellite) &&
         configuration.satelliteSources.empty())
     {
@@ -3744,7 +3911,8 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
         error = "所选导出类型没有对应的卫星图或 GIS 组合方式。";
         return std::nullopt;
     }
-    if ((configuration.exportGeoJson || !configuration.gisModes.empty()) &&
+    if ((configuration.exportGeoJson || !configuration.gisModes.empty() ||
+         configuration.exportBuildingFbx) &&
         configuration.gisCategories.empty())
     {
         error = "GIS 输出至少需要选择一个 GIS 数据图层。";

@@ -17,6 +17,8 @@
 #include <vector>
 
 #include "ArcGISDown.h"
+#include "AmapBuildingFbxExporter.h"
+#include "AmapVectorDownloader.h"
 #include "BaiduDown.h"
 #include "BingDown.h"
 #include "CopernicusDem.h"
@@ -130,6 +132,12 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
         {"exportTerrainHeight", configuration.exportTerrainHeight},
         {"exportGeoJson", configuration.exportGeoJson},
         {"colorBuildingsByHeight", configuration.colorBuildingsByHeight},
+        {"exportBuildingFbx", configuration.exportBuildingFbx},
+        {"buildingWallTexturePath", PathToUtf8(configuration.buildingWallTexturePath)},
+        {"buildingRoofTexturePath", PathToUtf8(configuration.buildingRoofTexturePath)},
+        {"buildingLayerHeightCentimeters", configuration.buildingLayerHeightCentimeters},
+        {"buildingMaxWallMaterialsPerBucket", configuration.buildingMaxWallMaterialsPerBucket},
+        {"buildingTextureRandomSeed", configuration.buildingTextureRandomSeed},
         {"mergedImageResolution", configuration.mergedImageResolution},
         {"mergedImageFormat", configuration.mergedImageFormat},
         {"fbxTextureSize", configuration.fbxTextureSize},
@@ -164,6 +172,23 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
     configuration.exportTerrainHeight = GetJsonBool(value, "exportTerrainHeight");
     configuration.exportGeoJson = GetJsonBool(value, "exportGeoJson");
     configuration.colorBuildingsByHeight = GetJsonBool(value, "colorBuildingsByHeight");
+    configuration.exportBuildingFbx = GetJsonBool(value, "exportBuildingFbx", false);
+    const std::string wallTexturePath = GetJsonString(value, "buildingWallTexturePath");
+    if (!wallTexturePath.empty())
+    {
+        configuration.buildingWallTexturePath = std::filesystem::u8path(wallTexturePath);
+    }
+    const std::string roofTexturePath = GetJsonString(value, "buildingRoofTexturePath");
+    if (!roofTexturePath.empty())
+    {
+        configuration.buildingRoofTexturePath = std::filesystem::u8path(roofTexturePath);
+    }
+    configuration.buildingLayerHeightCentimeters = GetJsonDouble(
+        value, "buildingLayerHeightCentimeters", 45.);
+    configuration.buildingMaxWallMaterialsPerBucket = static_cast<uint32_t>(
+        std::max(1., GetJsonDouble(value, "buildingMaxWallMaterialsPerBucket", 1.)));
+    configuration.buildingTextureRandomSeed = static_cast<uint32_t>(
+        std::max(0., GetJsonDouble(value, "buildingTextureRandomSeed", 0.)));
     configuration.mergedImageResolution = static_cast<uint32_t>(
         std::max(0., GetJsonDouble(value, "mergedImageResolution")));
     configuration.mergedImageFormat = GetJsonString(value, "mergedImageFormat");
@@ -356,6 +381,59 @@ std::string SanitizeFileName(std::string name)
         },
         '_');
     return name.empty() ? "GIS" : name;
+}
+
+bool IsBuildingFbxArtifact(const std::filesystem::path& path)
+{
+    const std::string fileName = PathToUtf8(path.filename());
+    return fileName == "buildings.fbx" || fileName.starts_with("building_wall_") ||
+        fileName.starts_with("building_roof_");
+}
+
+bool CopyBuildingFbxArtifacts(const std::filesystem::path& sourceRoot,
+                              const std::filesystem::path& destinationRoot,
+                              std::string& error)
+{
+    std::error_code existsError;
+    if (!std::filesystem::exists(sourceRoot / "buildings.fbx", existsError))
+    {
+        return true;
+    }
+
+    std::error_code createError;
+    std::filesystem::create_directories(destinationRoot, createError);
+    if (createError)
+    {
+        error = "无法创建建筑 FBX 叠加输出目录：" + createError.message();
+        return false;
+    }
+
+    std::error_code iteratorError;
+    for (std::filesystem::directory_iterator iterator(sourceRoot, iteratorError), end;
+         iterator != end && !iteratorError; iterator.increment(iteratorError))
+    {
+        if (!iterator->is_regular_file() || !IsBuildingFbxArtifact(iterator->path()))
+        {
+            continue;
+        }
+        std::error_code copyError;
+        std::filesystem::copy_file(
+            iterator->path(),
+            destinationRoot / iterator->path().filename(),
+            std::filesystem::copy_options::overwrite_existing,
+            copyError);
+        if (copyError)
+        {
+            error = "复制建筑 FBX 叠加产物失败：" + copyError.message();
+            return false;
+        }
+    }
+    if (iteratorError)
+    {
+        error = "遍历建筑 FBX 叠加产物失败：" + iteratorError.message();
+        return false;
+    }
+    return true;
 }
 
 std::unique_ptr<DownTool::DownToolBase> CreateDownloader(std::string_view sourceId)
@@ -586,6 +664,10 @@ std::string BuildTaskDetailsText(const ExportConfiguration& configuration)
     {
         outputs.emplace_back(configuration.exportTerrainHeight ?
             "FBX 切片、网格与高度" : "FBX 切片与网格");
+        if (configuration.exportBuildingFbx)
+        {
+            outputs.emplace_back("建筑散图 FBX");
+        }
     }
     if (configuration.exportGeoJson)
     {
@@ -676,6 +758,18 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
            << configuration.fbxTerrainSampleRateMeters << "\n"
            << "建筑按高度着色: "
            << (configuration.colorBuildingsByHeight ? "是" : "否") << "\n"
+           << "建筑散图 FBX: "
+           << (configuration.exportBuildingFbx ? "是" : "否") << "\n"
+           << "建筑墙体贴图目录: "
+           << PathToUtf8(configuration.buildingWallTexturePath) << "\n"
+           << "建筑屋顶贴图目录: "
+           << PathToUtf8(configuration.buildingRoofTexturePath) << "\n"
+           << "建筑楼层高度 (厘米): "
+           << configuration.buildingLayerHeightCentimeters << "\n"
+           << "建筑墙体材质上限: "
+           << configuration.buildingMaxWallMaterialsPerBucket << "\n"
+           << "建筑贴图随机种子: "
+           << configuration.buildingTextureRandomSeed << "\n"
            << "结果: " << result << "\n";
     if (!output.good())
     {
@@ -724,6 +818,45 @@ DownTool::AmapVectorDecodedData FilterGisData(
             break;
         }
         if (categories.contains(DownTool::ClassifyAmapVectorFeature(feature)))
+        {
+            filteredData.features.push_back(feature);
+        }
+    }
+    return filteredData;
+}
+
+bool IsGisCategorySelected(
+    const std::set<DownTool::AmapVectorRenderCategory>& categories,
+    DownTool::AmapVectorRenderCategory category)
+{
+    return categories.contains(DownTool::AmapVectorRenderCategory::All) ||
+        categories.contains(category);
+}
+
+DownTool::AmapVectorDecodedData FilterBuildingFbxData(
+    const DownTool::AmapVectorDecodedData& decodedData,
+    const std::set<DownTool::AmapVectorRenderCategory>& categories,
+    const std::function<bool()>& cancellationRequested)
+{
+    DownTool::AmapVectorDecodedData filteredData;
+    filteredData.version = decodedData.version;
+    filteredData.status = decodedData.status;
+    filteredData.packetCount = decodedData.packetCount;
+    filteredData.features.reserve(decodedData.features.size());
+    if (!IsGisCategorySelected(categories, DownTool::AmapVectorRenderCategory::Building))
+    {
+        return filteredData;
+    }
+    for (const DownTool::AmapVectorFeature& feature : decodedData.features)
+    {
+        if (cancellationRequested && cancellationRequested())
+        {
+            break;
+        }
+        if (feature.geometryType == DownTool::AmapVectorGeometryType::Polygon &&
+            feature.hasHeight && feature.height != 0 &&
+            DownTool::ClassifyAmapVectorFeature(feature) ==
+                DownTool::AmapVectorRenderCategory::Building)
         {
             filteredData.features.push_back(feature);
         }
@@ -1171,13 +1304,27 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
         error = "导出高度需要同时启用 FBX。";
         return false;
     }
+    if (configuration.exportBuildingFbx && !configuration.exportFbx)
+    {
+        error = "建筑散图 FBX 需要同时启用 FBX。";
+        return false;
+    }
+    if (configuration.exportBuildingFbx &&
+        !IsGisCategorySelected(
+            configuration.gisCategories, DownTool::AmapVectorRenderCategory::Building))
+    {
+        error = "建筑散图 FBX 需要选择 GIS 建筑图层。";
+        return false;
+    }
     const bool satelliteRequested = !configuration.satelliteSources.empty() &&
         (configuration.exportTiles || configuration.exportMergedImage ||
          configuration.exportFbx);
-    const bool gisVisualRequested = !configuration.gisCategories.empty() &&
+    const bool gisModeVisualRequested = !configuration.gisCategories.empty() &&
         !configuration.gisModes.empty() &&
         (configuration.exportTiles || configuration.exportMergedImage ||
          configuration.exportFbx);
+    const bool standaloneBuildingFbxRequested = configuration.exportBuildingFbx &&
+        !gisModeVisualRequested;
     if (!configuration.gisModes.empty() &&
         !configuration.exportTiles && !configuration.exportMergedImage &&
         !configuration.exportFbx)
@@ -1188,24 +1335,24 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
     if (!configuration.gisCategories.empty() &&
         (configuration.exportTiles || configuration.exportMergedImage ||
          configuration.exportFbx) && configuration.gisModes.empty() &&
-        !configuration.exportGeoJson)
+        !configuration.exportGeoJson && !configuration.exportBuildingFbx)
     {
         error = "所选 GIS 数据需要至少一种 GIS 组合方式。";
         return false;
     }
-    const bool gisRequested = gisVisualRequested ||
+    const bool gisRequested = gisModeVisualRequested || standaloneBuildingFbxRequested ||
         (!configuration.gisCategories.empty() && configuration.exportGeoJson);
-    const size_t separateCount = gisVisualRequested && configuration.gisModes.contains(
+    const size_t separateCount = gisModeVisualRequested && configuration.gisModes.contains(
         GisExportMode::SeparateLayers) ? configuration.gisCategories.size() : 0u;
-    const size_t mergedCount = gisVisualRequested && configuration.gisModes.contains(
+    const size_t mergedCount = gisModeVisualRequested && configuration.gisModes.contains(
         GisExportMode::MergeSelectedLayers) ? 1u : 0u;
-    const size_t overlayCount = gisVisualRequested && configuration.gisModes.contains(
+    const size_t overlayCount = gisModeVisualRequested && configuration.gisModes.contains(
         GisExportMode::OverlayOnSatellite) ? 1u : 0u;
     const size_t geoJsonCount = configuration.exportGeoJson ? 1u : 0u;
     const size_t elevationCount = configuration.exportTerrainHeight ? 1u : 0u;
     const size_t stepCount = (satelliteRequested ? configuration.satelliteSources.size() : 0u) +
         (gisRequested ? separateCount + mergedCount + overlayCount + geoJsonCount : 0u) +
-        elevationCount;
+        (standaloneBuildingFbxRequested ? 1u : 0u) + elevationCount;
     if (stepCount == 0)
     {
         error = "没有选择任何导出内容。";
@@ -1310,6 +1457,11 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
         }
         if (geoJsonCount != 0 &&
             !RunGeoJsonExport(queuedExport, stepIndex++, stepCount, error))
+        {
+            return false;
+        }
+        if (standaloneBuildingFbxRequested &&
+            !RunBuildingFbxExport(queuedExport, stepIndex++, stepCount, error))
         {
             return false;
         }
@@ -1481,6 +1633,14 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
     options.render.categories = categories;
     options.render.colors = configuration.gisColors;
     options.render.colorBuildingsByHeight = configuration.colorBuildingsByHeight;
+    options.render.exportBuildingsToFbx = configuration.exportBuildingFbx;
+    options.render.buildingWallTexturePath = configuration.buildingWallTexturePath;
+    options.render.buildingRoofTexturePath = configuration.buildingRoofTexturePath;
+    options.render.buildingLayerHeightCentimeters =
+        configuration.buildingLayerHeightCentimeters;
+    options.render.buildingMaxWallMaterialsPerBucket =
+        configuration.buildingMaxWallMaterialsPerBucket;
+    options.render.buildingTextureRandomSeed = configuration.buildingTextureRandomSeed;
     options.render.pngTileCachePath = temporaryRoot;
     options.render.maxConcurrency = 0;
     options.render.cancellationRequested =
@@ -1606,6 +1766,11 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
             {
                 return false;
             }
+            if (configuration.exportFbx && configuration.exportBuildingFbx &&
+                !CopyBuildingFbxArtifacts(fbxOutputPath, compositeRoot / "FBX", error))
+            {
+                return false;
+            }
             if (configuration.exportMergedImage)
             {
                 const std::filesystem::path satelliteImage = satelliteRoot /
@@ -1633,6 +1798,101 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
     }
 
     UpdateProgress(queuedExport.taskId, "GIS 导出完成 · " + groupName,
+                   static_cast<double>(stepIndex + 1) / static_cast<double>(stepCount),
+                   1, 1);
+    return true;
+}
+
+bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
+    const QueuedExport& queuedExport, size_t stepIndex, size_t stepCount,
+    std::string& error)
+{
+    const ExportConfiguration& configuration = queuedExport.configuration;
+    if (IsCancellationRequested())
+    {
+        return false;
+    }
+
+    DownTool::AmapVectorDownloadOptions options;
+    options.centerWgs84 = configuration.centerWgs84;
+    options.radiusMeters = configuration.radiusMeters;
+    options.zoom = configuration.zoom;
+    options.includeBaseLayers = true;
+    options.includeLabels = false;
+    options.maxConcurrency = 0;
+    options.cancellationRequested = [this] { return IsCancellationRequested(); };
+    options.progressCallback =
+        [this, taskId = queuedExport.taskId, stepIndex, stepCount](
+            const DownTool::AmapVectorDownloadProgress& progress)
+        {
+            const double subProgress =
+                ProgressRatio(progress.completedTaskCount, progress.totalTaskCount) * 0.7;
+            UpdateProgress(
+                taskId, "下载 GIS 建筑 PBF",
+                (static_cast<double>(stepIndex) + subProgress) /
+                    static_cast<double>(stepCount),
+                progress.completedTaskCount, progress.totalTaskCount);
+        };
+
+    DownTool::AmapVectorDownloader downloader;
+    const DownTool::AmapVectorDownloadResult downloadResult = downloader.Download(options);
+    if (IsCancellationRequested())
+    {
+        return false;
+    }
+    if (!downloadResult.success)
+    {
+        error = downloadResult.error;
+        return false;
+    }
+
+    const std::function<bool()> cancellationRequested =
+        [this] { return IsCancellationRequested(); };
+    const DownTool::AmapVectorDecodedData buildingData = FilterBuildingFbxData(
+        downloadResult.decodedData, configuration.gisCategories, cancellationRequested);
+    if (IsCancellationRequested())
+    {
+        return false;
+    }
+    if (buildingData.features.empty())
+    {
+        error = "所选范围没有可导出的带高度 GIS 建筑。";
+        return false;
+    }
+
+    const std::filesystem::path outputRoot = GisOutputRoot(
+        configuration, queuedExport.taskId, "建筑散图 FBX", "建筑") / "FBX";
+    DownTool::AmapBuildingFbxExportOptions exportOptions;
+    exportOptions.outputPath = outputRoot / "buildings.fbx";
+    exportOptions.centerWgs84 = configuration.centerWgs84;
+    exportOptions.wallTexturePath = configuration.buildingWallTexturePath;
+    exportOptions.roofTexturePath = configuration.buildingRoofTexturePath;
+    exportOptions.layerHeightCentimeters = configuration.buildingLayerHeightCentimeters;
+    exportOptions.maxWallMaterialsPerBucket =
+        configuration.buildingMaxWallMaterialsPerBucket;
+    exportOptions.randomSeed = configuration.buildingTextureRandomSeed;
+    exportOptions.cancellationRequested = cancellationRequested;
+    UpdateProgress(
+        queuedExport.taskId, "导出建筑散图 FBX",
+        (static_cast<double>(stepIndex) + 0.85) / static_cast<double>(stepCount),
+        0, 1);
+    const DownTool::AmapBuildingFbxExportResult exportResult =
+        DownTool::ExportAmapBuildingsToFbx(buildingData, exportOptions);
+    if (IsCancellationRequested())
+    {
+        return false;
+    }
+    if (!exportResult.success)
+    {
+        error = exportResult.error;
+        return false;
+    }
+    if (!std::filesystem::exists(exportOptions.outputPath))
+    {
+        error = "建筑散图 FBX 没有生成有效网格。";
+        return false;
+    }
+    UpdateProgress(queuedExport.taskId, "建筑散图 FBX 导出完成",
                    static_cast<double>(stepIndex + 1) / static_cast<double>(stepCount),
                    1, 1);
     return true;

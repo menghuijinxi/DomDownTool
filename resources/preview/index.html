@@ -1149,6 +1149,11 @@
             border-color: #2ea694;
         }
 
+        .range-field input:disabled {
+            border-color: #3a3f3d;
+            color: #6f7874;
+        }
+
         .content-groups {
             display: grid;
             grid-template-columns: 6fr 7fr;
@@ -1284,6 +1289,27 @@
 
         .param-check input {
             order: 2;
+        }
+
+        .building-fbx-panel {
+            display: grid;
+            gap: 16px;
+            min-width: 0;
+        }
+
+        .building-fbx-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            column-gap: 32px;
+            row-gap: 14px;
+        }
+
+        .building-fbx-grid .range-field {
+            grid-template-columns: 112px 1fr;
+        }
+
+        .building-fbx-hint {
+            color: #929d98;
+            font-size: 12px;
         }
 
         .output-location {
@@ -2139,6 +2165,46 @@
                         <span>建筑按高度着色</span>
                         <input id="export-building-height-colors" type="checkbox">
                     </label>
+                </div>
+            </section>
+
+            <section id="export-building-fbx-section" class="form-section">
+                <h2>建筑 FBX</h2>
+                <div id="export-building-fbx-panel" class="building-fbx-panel">
+                    <label class="check-item">
+                        <input id="export-building-fbx" type="checkbox">
+                        <span>导出建筑散图 FBX（生成 buildings.fbx）</span>
+                    </label>
+                    <div id="export-building-fbx-fields" class="range-grid building-fbx-grid">
+                        <label class="range-field">
+                            <span>墙体贴图目录</span>
+                            <input id="export-building-wall-textures" type="text"
+                                   value="贴图/墙体">
+                        </label>
+                        <label class="range-field">
+                            <span>屋顶贴图目录</span>
+                            <input id="export-building-roof-textures" type="text"
+                                   value="贴图/房顶">
+                        </label>
+                        <label class="range-field">
+                            <span>楼层高度 cm</span>
+                            <input id="export-building-layer-height" type="number"
+                                   min="1" step="1" value="45">
+                        </label>
+                        <label class="range-field">
+                            <span>墙体材质上限</span>
+                            <input id="export-building-max-wall-materials" type="number"
+                                   min="1" step="1" value="1">
+                        </label>
+                        <label class="range-field">
+                            <span>随机种子</span>
+                            <input id="export-building-texture-seed" type="number"
+                                   min="0" step="1" value="0">
+                        </label>
+                    </div>
+                    <span id="export-building-fbx-hint" class="building-fbx-hint">
+                        默认关闭；需要同时勾选 FBX 和 GIS 建筑图层。
+                    </span>
                 </div>
             </section>
 

@@ -24,14 +24,13 @@
 #include "include/core/SkPathBuilder.h"
 #include "include/core/SkSamplingOptions.h"
 #include "include/core/SkShader.h"
+#include "include/core/SkTileMode.h"
 #include "include/core/SkVertices.h"
 
 #include "preview/SkiaImageCodecs.h"
 
 namespace
 {
-constexpr std::size_t kMaximumPreviewVertices = 250000;
-constexpr std::size_t kMaximumPreviewTriangles = 500000;
 // DX12 是主路径；Skia 仅作为不支持 D3D12 的回退，仍覆盖常见多贴图 FBX。
 constexpr std::size_t kMaximumPreviewTextures = 16;
 constexpr int kMaximumPreviewTextureDimension = 4096;
@@ -193,8 +192,7 @@ bool DomDownToolPreview::FbxPreviewRenderer::load(
             for (unsigned int meshIndex = 0; meshIndex < node->mNumMeshes; ++meshIndex)
             {
                 const aiMesh* mesh = scene->mMeshes[node->mMeshes[meshIndex]];
-                if (mesh == nullptr || mesh->mNumVertices == 0 ||
-                    vertices_.size() + mesh->mNumVertices > kMaximumPreviewVertices)
+                if (mesh == nullptr || mesh->mNumVertices == 0)
                 {
                     continue;
                 }
@@ -216,8 +214,7 @@ bool DomDownToolPreview::FbxPreviewRenderer::load(
                 for (unsigned int faceIndex = 0; faceIndex < mesh->mNumFaces; ++faceIndex)
                 {
                     const aiFace& face = mesh->mFaces[faceIndex];
-                    if (face.mNumIndices != 3 ||
-                        triangles_.size() >= kMaximumPreviewTriangles)
+                    if (face.mNumIndices != 3)
                     {
                         continue;
                     }
@@ -408,7 +405,10 @@ void DomDownToolPreview::FbxPreviewRenderer::draw(
                 SkVertices::kTriangles_VertexMode, 3, positions, textureCoordinates, nullptr);
             SkPaint texturePaint;
             texturePaint.setAntiAlias(true);
-            texturePaint.setShader(image->makeShader(textureSampling));
+            texturePaint.setShader(image->makeShader(
+                SkTileMode::kRepeat,
+                SkTileMode::kClamp,
+                textureSampling));
             canvas.drawVertices(mesh, SkBlendMode::kSrcOver, texturePaint);
         }
         else if (drawSurface)

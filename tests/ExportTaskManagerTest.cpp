@@ -175,6 +175,14 @@ bool runTest()
     }
 
     DomDownToolPreview::ExportConfiguration defaultOutputConfiguration;
+    DownTool::AmapVectorRenderOptions defaultRenderOptions;
+    if (!postprocess_test::Require(
+            !defaultOutputConfiguration.exportBuildingFbx &&
+                !defaultRenderOptions.exportBuildingsToFbx,
+            "建筑散图 FBX 不应在配置或渲染选项中默认启用"))
+    {
+        return false;
+    }
     DomDownToolPreview::ExportConfiguration selectedOutputConfiguration;
     selectedOutputConfiguration.outputRoot = testRoot / "selected-output";
     if (!postprocess_test::Require(
@@ -660,6 +668,7 @@ bool runTest()
                     record->configuration.has_value() &&
                     record->configuration->zoom == configuration.zoom &&
                     record->configuration->exportTiles == configuration.exportTiles &&
+                    !record->configuration->exportBuildingFbx &&
                     record->configuration->fbxTerrainSampleRateMeters == 60. &&
                     burstChangeCount.load(std::memory_order_relaxed) <= 10 &&
                     persistedHasConfiguration,
@@ -678,6 +687,7 @@ bool runTest()
         if (!postprocess_test::Require(
                 configuration.has_value() && configuration->radiusMeters == 1000. &&
                     configuration->zoom == 15 && configuration->exportTiles &&
+                    !configuration->exportBuildingFbx &&
                     configuration->fbxTerrainSampleRateMeters == 60. &&
                     configuration->outputRoot == testRoot / "progress-burst-output" &&
                     configuration->satelliteSources.size() == 1 &&
