@@ -77,7 +77,24 @@
             -webkit-appearance: none;
             background: #1F2224 url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%239aa3a0' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>") no-repeat right 9px center;
             color: #edf1ef;
+            color-scheme: dark;
             font: inherit;
+        }
+
+        select option,
+        select optgroup {
+            background-color: #1F2224;
+            color: #edf1ef;
+        }
+
+        select option:checked {
+            background-color: #237F77;
+            color: #ffffff;
+        }
+
+        select option:disabled {
+            background-color: #1F2224;
+            color: #7a837f;
         }
 
         .toolbar select {
@@ -2173,7 +2190,7 @@
                 <div id="export-building-fbx-panel" class="building-fbx-panel">
                     <label class="check-item">
                         <input id="export-building-fbx" type="checkbox">
-                        <span>导出建筑散图 FBX（生成 buildings.fbx）</span>
+                        <span>导出建筑 FBX（生成 buildings.fbx）</span>
                     </label>
                     <div id="export-building-fbx-fields" class="range-grid building-fbx-grid">
                         <label class="range-field">
@@ -2185,6 +2202,20 @@
                             <span>屋顶贴图目录</span>
                             <input id="export-building-roof-textures" type="text"
                                    value="贴图/房顶">
+                        </label>
+                        <label class="range-field">
+                            <span>贴图模式</span>
+                            <select id="export-building-texture-mode">
+                                <option value="scattered" selected>散图</option>
+                                <option value="merged-atlas">合并贴图</option>
+                            </select>
+                        </label>
+                        <label class="range-field">
+                            <span>合并格式</span>
+                            <select id="export-building-atlas-format" disabled>
+                                <option value="png" selected>PNG</option>
+                                <option value="jpg">JPG</option>
+                            </select>
                         </label>
                         <label class="range-field">
                             <span>楼层高度 cm</span>

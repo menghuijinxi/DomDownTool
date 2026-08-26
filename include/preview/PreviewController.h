@@ -214,6 +214,8 @@ class PreviewController
     std::string exportTerrainSampleRateValue_ = "30";
     std::string exportBuildingWallTexturePathValue_ = "贴图/墙体";
     std::string exportBuildingRoofTexturePathValue_ = "贴图/房顶";
+    std::string exportBuildingTextureModeValue_ = "scattered";
+    std::string exportBuildingAtlasFormatValue_ = "png";
     std::string exportBuildingLayerHeightValue_ = "45";
     std::string exportBuildingMaxWallMaterialsValue_ = "1";
     std::string exportBuildingTextureSeedValue_ = "0";

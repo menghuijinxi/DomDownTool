@@ -73,6 +73,10 @@ struct ExportConfiguration
     bool exportBuildingFbx = false;
     std::filesystem::path buildingWallTexturePath = std::filesystem::u8path("贴图/墙体");
     std::filesystem::path buildingRoofTexturePath = std::filesystem::u8path("贴图/房顶");
+    DownTool::AmapBuildingFbxTextureMode buildingFbxTextureMode =
+        DownTool::AmapBuildingFbxTextureMode::Scattered;
+    DownTool::AmapBuildingFbxAtlasImageFormat buildingFbxAtlasImageFormat =
+        DownTool::AmapBuildingFbxAtlasImageFormat::Png;
     double buildingLayerHeightCentimeters = 45.;
     uint32_t buildingMaxWallMaterialsPerBucket = 1;
     uint32_t buildingTextureRandomSeed = 0;

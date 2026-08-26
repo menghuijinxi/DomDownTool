@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -55,6 +57,42 @@ namespace
             }
         }
         return false;
+    }
+
+    bool IsPowerOfTwo(int value)
+    {
+        return value > 0 && (value & (value - 1)) == 0;
+    }
+
+    bool RequirePowerOfTwoTexture(const std::filesystem::path& path)
+    {
+        const cv::Mat image = cv::imread(
+            postprocess_test::PathToUtf8String(path),
+            cv::IMREAD_COLOR);
+        return Require(!image.empty(),
+                "合并贴图无法读取：" + postprocess_test::PathToUtf8String(path)) &&
+            Require(IsPowerOfTwo(image.cols) && IsPowerOfTwo(image.rows),
+                "合并贴图宽高必须都是 2 的次幂：" +
+                    postprocess_test::PathToUtf8String(path));
+    }
+
+    bool IsVisibleAtlasSample(const cv::Mat& image, const aiVector3D& uv)
+    {
+        if (image.empty())
+        {
+            return false;
+        }
+        const int column = std::clamp(
+            static_cast<int>(std::lround(uv.x * static_cast<float>(image.cols - 1))),
+            0,
+            image.cols - 1);
+        const int row = std::clamp(
+            static_cast<int>(std::lround((1.f - uv.y) * static_cast<float>(image.rows - 1))),
+            0,
+            image.rows - 1);
+        const cv::Vec3b pixel = image.at<cv::Vec3b>(row, column);
+        return static_cast<int>(pixel[0]) + static_cast<int>(pixel[1]) +
+            static_cast<int>(pixel[2]) > 16;
     }
 
     bool TryGetPixelAtGcj02(
@@ -156,7 +194,9 @@ namespace
         const std::filesystem::path& fbxPath,
         const std::filesystem::path& fbxRoot,
         double minimumExpectedZ = 0.,
-        double minimumExpectedHeightRange = 0.)
+        double minimumExpectedHeightRange = 0.,
+        bool expectMergedAtlas = false,
+        const std::string& atlasExtension = ".png")
     {
         Assimp::Importer importer;
         const aiScene* scene = postprocess_test::ReadFbxScene(importer, fbxPath);
@@ -166,10 +206,19 @@ namespace
         {
             return false;
         }
+        if (expectMergedAtlas &&
+            !Require(scene->mNumMaterials == 2, "建筑合并贴图 FBX 应只有墙体和屋顶两个材质"))
+        {
+            return false;
+        }
 
         bool foundPositiveHeight = false;
         bool foundDiffuseTexture = false;
         bool foundRepeatingWallUv = false;
+        bool foundAtlasWallUv = false;
+        cv::Mat wallAtlasImage;
+        size_t atlasSampleCount = 0;
+        size_t visibleAtlasSampleCount = 0;
         float sceneMinimumZ = std::numeric_limits<float>::max();
         float sceneMaximumZ = std::numeric_limits<float>::lowest();
         for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; meshIndex++)
@@ -211,9 +260,31 @@ namespace
                 maximumU = std::max(maximumU, uv.x);
                 minimumV = std::min(minimumV, uv.y);
                 maximumV = std::max(maximumV, uv.y);
+                if (expectMergedAtlas)
+                {
+                    if (wallAtlasImage.empty())
+                    {
+                        wallAtlasImage = cv::imread(
+                            postprocess_test::PathToUtf8String(
+                                fbxRoot / std::filesystem::u8path(meshTexturePath.C_Str())),
+                            cv::IMREAD_COLOR);
+                        if (!Require(!wallAtlasImage.empty(),
+                                "建筑合并贴图 FBX 墙体 atlas 无法读取"))
+                        {
+                            return false;
+                        }
+                    }
+                    atlasSampleCount++;
+                    if (IsVisibleAtlasSample(wallAtlasImage, uv))
+                    {
+                        visibleAtlasSampleCount++;
+                    }
+                }
             }
             foundRepeatingWallUv = foundRepeatingWallUv ||
                 (maximumU > 1.1f && minimumV <= 0.01f && maximumV >= 0.99f);
+            foundAtlasWallUv = foundAtlasWallUv ||
+                (maximumU <= 1.001f && minimumV >= -0.001f && maximumV <= 1.001f);
         }
 
         for (unsigned int materialIndex = 0; materialIndex < scene->mNumMaterials;
@@ -258,17 +329,41 @@ namespace
             return false;
         }
 
+        if (expectMergedAtlas &&
+            (!Require(atlasSampleCount > 0, "建筑合并贴图 FBX 没有可检查的墙体 UV") ||
+             !Require(atlasSampleCount == visibleAtlasSampleCount,
+                 "建筑合并贴图 FBX 墙体 UV 会采样到 atlas 空白区")))
+        {
+            return false;
+        }
+
         return Require(foundPositiveHeight, "建筑 FBX 没有正高度顶点") &&
             Require(sceneMinimumZ >= minimumExpectedZ,
                 "建筑 FBX 没有按地形最低点抬高底部") &&
             Require(sceneMaximumZ - sceneMinimumZ >= minimumExpectedHeightRange,
                 "建筑 FBX 没有按地形最高点加建筑高度生成顶部") &&
             Require(foundDiffuseTexture, "建筑 FBX 没有 diffuse 贴图") &&
-            Require(foundRepeatingWallUv, "建筑 FBX 墙体 UV 没有横向重复或纵向完整映射") &&
-            Require(std::filesystem::exists(fbxRoot / "building_wall_0.jpg"),
-                "建筑 FBX 没有复制无后缀墙体 JPEG") &&
-            Require(std::filesystem::exists(fbxRoot / "building_roof_0.jpg"),
-                "建筑 FBX 没有复制屋顶 JPEG");
+            Require(expectMergedAtlas ? foundAtlasWallUv : foundRepeatingWallUv,
+                expectMergedAtlas ?
+                    "建筑合并贴图 FBX 墙体 UV 没有重映射到 atlas 范围" :
+                    "建筑 FBX 墙体 UV 没有横向重复或纵向完整映射") &&
+            Require(std::filesystem::exists(
+                    fbxRoot / (expectMergedAtlas ?
+                        ("building_wall_atlas" + atlasExtension) :
+                        "building_wall_0.jpg")),
+                expectMergedAtlas ? "建筑 FBX 没有生成墙体合并贴图" :
+                    "建筑 FBX 没有复制无后缀墙体 JPEG") &&
+            Require(std::filesystem::exists(
+                    fbxRoot / (expectMergedAtlas ?
+                        ("building_roof_atlas" + atlasExtension) :
+                        "building_roof_0.jpg")),
+                expectMergedAtlas ? "建筑 FBX 没有生成屋顶合并贴图" :
+                    "建筑 FBX 没有复制屋顶 JPEG") &&
+            (!expectMergedAtlas ||
+             (RequirePowerOfTwoTexture(
+                  fbxRoot / ("building_wall_atlas" + atlasExtension)) &&
+              RequirePowerOfTwoTexture(
+                  fbxRoot / ("building_roof_atlas" + atlasExtension))));
     }
 
     DownTool::AmapVectorFeature MakePolygon(
@@ -706,6 +801,70 @@ namespace
                 "后处理缺少建筑 FBX") ||
             !postprocess_test::RequireFbxAxisAndUnit(fbxRoot / "buildings.fbx") ||
             !RequireBuildingFbx(fbxRoot / "buildings.fbx", fbxRoot, 100., 1000.))
+        {
+            return false;
+        }
+
+        const std::filesystem::path atlasPostProcessRoot = outputRoot / "postprocess-atlas";
+        const std::filesystem::path atlasXyzRoot = atlasPostProcessRoot / "XYZ";
+        const std::filesystem::path atlasFbxRoot = atlasPostProcessRoot / "FBX";
+        renderOptions.buildingFbxTextureMode =
+            DownTool::AmapBuildingFbxTextureMode::MergedAtlas;
+        downloader.SetPostProcessOutputPath(atlasXyzRoot.string());
+        downloader.SetPostProcessMergedImageOutputPath(
+            (atlasPostProcessRoot / "merged.png").string());
+        downloader.SetFbxOutputPath(atlasFbxRoot.string());
+        renderResult = downloader.Render(fbxData, vectorOptions, renderOptions);
+        if (!Require(renderResult.success,
+                "PNG 后处理合并贴图建筑渲染失败：" + renderResult.error) ||
+            !Require(std::filesystem::exists(atlasFbxRoot / "buildings.fbx"),
+                "后处理缺少合并贴图建筑 FBX") ||
+            !Require(std::filesystem::exists(atlasFbxRoot / "building_wall_atlas.png"),
+                "后处理缺少墙体合并贴图") ||
+            !Require(std::filesystem::exists(atlasFbxRoot / "building_roof_atlas.png"),
+                "后处理缺少屋顶合并贴图") ||
+            !Require(!std::filesystem::exists(atlasFbxRoot / "building_wall_0.jpg"),
+                "合并贴图模式不应复制散落墙体贴图") ||
+            !Require(!std::filesystem::exists(atlasFbxRoot / "building_roof_0.jpg"),
+                "合并贴图模式不应复制散落屋顶贴图") ||
+            !postprocess_test::RequireFbxAxisAndUnit(atlasFbxRoot / "buildings.fbx") ||
+            !RequireBuildingFbx(
+                atlasFbxRoot / "buildings.fbx", atlasFbxRoot, 100., 1000., true))
+        {
+            return false;
+        }
+
+        const std::filesystem::path jpgAtlasPostProcessRoot =
+            outputRoot / "postprocess-atlas-jpg";
+        const std::filesystem::path jpgAtlasXyzRoot = jpgAtlasPostProcessRoot / "XYZ";
+        const std::filesystem::path jpgAtlasFbxRoot = jpgAtlasPostProcessRoot / "FBX";
+        renderOptions.buildingFbxAtlasImageFormat =
+            DownTool::AmapBuildingFbxAtlasImageFormat::Jpg;
+        downloader.SetPostProcessOutputPath(jpgAtlasXyzRoot.string());
+        downloader.SetPostProcessMergedImageOutputPath(
+            (jpgAtlasPostProcessRoot / "merged.png").string());
+        downloader.SetFbxOutputPath(jpgAtlasFbxRoot.string());
+        renderResult = downloader.Render(fbxData, vectorOptions, renderOptions);
+        if (!Require(renderResult.success,
+                "PNG 后处理 JPG 合并贴图建筑渲染失败：" + renderResult.error) ||
+            !Require(std::filesystem::exists(jpgAtlasFbxRoot / "buildings.fbx"),
+                "后处理缺少 JPG 合并贴图建筑 FBX") ||
+            !Require(std::filesystem::exists(jpgAtlasFbxRoot / "building_wall_atlas.jpg"),
+                "后处理缺少 JPG 墙体合并贴图") ||
+            !Require(std::filesystem::exists(jpgAtlasFbxRoot / "building_roof_atlas.jpg"),
+                "后处理缺少 JPG 屋顶合并贴图") ||
+            !Require(!std::filesystem::exists(jpgAtlasFbxRoot / "building_wall_atlas.png"),
+                "JPG 合并贴图模式不应生成 PNG 墙体 atlas") ||
+            !Require(!std::filesystem::exists(jpgAtlasFbxRoot / "building_roof_atlas.png"),
+                "JPG 合并贴图模式不应生成 PNG 屋顶 atlas") ||
+            !postprocess_test::RequireFbxAxisAndUnit(jpgAtlasFbxRoot / "buildings.fbx") ||
+            !RequireBuildingFbx(
+                jpgAtlasFbxRoot / "buildings.fbx",
+                jpgAtlasFbxRoot,
+                100.,
+                1000.,
+                true,
+                ".jpg"))
         {
             return false;
         }

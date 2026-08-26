@@ -44,6 +44,76 @@ using DomDownToolPreview::SatelliteExportSource;
 
 constexpr auto kProgressNotificationInterval = std::chrono::milliseconds(100);
 
+std::string BuildingFbxTextureModeValue(DownTool::AmapBuildingFbxTextureMode mode)
+{
+    switch (mode)
+    {
+    case DownTool::AmapBuildingFbxTextureMode::Scattered:
+        return "scattered";
+    case DownTool::AmapBuildingFbxTextureMode::MergedAtlas:
+        return "merged-atlas";
+    }
+    return "scattered";
+}
+
+std::string BuildingFbxTextureModeName(DownTool::AmapBuildingFbxTextureMode mode)
+{
+    switch (mode)
+    {
+    case DownTool::AmapBuildingFbxTextureMode::Scattered:
+        return "散图";
+    case DownTool::AmapBuildingFbxTextureMode::MergedAtlas:
+        return "合并贴图";
+    }
+    return "散图";
+}
+
+DownTool::AmapBuildingFbxTextureMode BuildingFbxTextureModeFromValue(
+    std::string_view value)
+{
+    if (value == "merged-atlas" || value == "合并贴图")
+    {
+        return DownTool::AmapBuildingFbxTextureMode::MergedAtlas;
+    }
+    return DownTool::AmapBuildingFbxTextureMode::Scattered;
+}
+
+std::string BuildingFbxAtlasImageFormatValue(
+    DownTool::AmapBuildingFbxAtlasImageFormat format)
+{
+    switch (format)
+    {
+    case DownTool::AmapBuildingFbxAtlasImageFormat::Png:
+        return "png";
+    case DownTool::AmapBuildingFbxAtlasImageFormat::Jpg:
+        return "jpg";
+    }
+    return "png";
+}
+
+std::string BuildingFbxAtlasImageFormatName(
+    DownTool::AmapBuildingFbxAtlasImageFormat format)
+{
+    switch (format)
+    {
+    case DownTool::AmapBuildingFbxAtlasImageFormat::Png:
+        return "PNG";
+    case DownTool::AmapBuildingFbxAtlasImageFormat::Jpg:
+        return "JPG";
+    }
+    return "PNG";
+}
+
+DownTool::AmapBuildingFbxAtlasImageFormat BuildingFbxAtlasImageFormatFromValue(
+    std::string_view value)
+{
+    if (value == "jpg" || value == "jpeg" || value == "JPG" || value == "JPEG")
+    {
+        return DownTool::AmapBuildingFbxAtlasImageFormat::Jpg;
+    }
+    return DownTool::AmapBuildingFbxAtlasImageFormat::Png;
+}
+
 std::string GetJsonString(const Json& object, const char* fieldName)
 {
     if (!object.is_object())
@@ -135,6 +205,10 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
         {"exportBuildingFbx", configuration.exportBuildingFbx},
         {"buildingWallTexturePath", PathToUtf8(configuration.buildingWallTexturePath)},
         {"buildingRoofTexturePath", PathToUtf8(configuration.buildingRoofTexturePath)},
+        {"buildingFbxTextureMode", BuildingFbxTextureModeValue(
+            configuration.buildingFbxTextureMode)},
+        {"buildingFbxAtlasImageFormat", BuildingFbxAtlasImageFormatValue(
+            configuration.buildingFbxAtlasImageFormat)},
         {"buildingLayerHeightCentimeters", configuration.buildingLayerHeightCentimeters},
         {"buildingMaxWallMaterialsPerBucket", configuration.buildingMaxWallMaterialsPerBucket},
         {"buildingTextureRandomSeed", configuration.buildingTextureRandomSeed},
@@ -183,6 +257,10 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
     {
         configuration.buildingRoofTexturePath = std::filesystem::u8path(roofTexturePath);
     }
+    configuration.buildingFbxTextureMode = BuildingFbxTextureModeFromValue(
+        GetJsonString(value, "buildingFbxTextureMode"));
+    configuration.buildingFbxAtlasImageFormat = BuildingFbxAtlasImageFormatFromValue(
+        GetJsonString(value, "buildingFbxAtlasImageFormat"));
     configuration.buildingLayerHeightCentimeters = GetJsonDouble(
         value, "buildingLayerHeightCentimeters", 45.);
     configuration.buildingMaxWallMaterialsPerBucket = static_cast<uint32_t>(
@@ -666,7 +744,9 @@ std::string BuildTaskDetailsText(const ExportConfiguration& configuration)
             "FBX 切片、网格与高度" : "FBX 切片与网格");
         if (configuration.exportBuildingFbx)
         {
-            outputs.emplace_back("建筑散图 FBX");
+            outputs.emplace_back(configuration.buildingFbxTextureMode ==
+                DownTool::AmapBuildingFbxTextureMode::MergedAtlas ?
+                "建筑合并贴图 FBX" : "建筑散图 FBX");
         }
     }
     if (configuration.exportGeoJson)
@@ -760,6 +840,11 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
            << (configuration.colorBuildingsByHeight ? "是" : "否") << "\n"
            << "建筑散图 FBX: "
            << (configuration.exportBuildingFbx ? "是" : "否") << "\n"
+           << "建筑 FBX 贴图模式: "
+           << BuildingFbxTextureModeName(configuration.buildingFbxTextureMode) << "\n"
+           << "建筑 FBX 合并贴图格式: "
+           << BuildingFbxAtlasImageFormatName(configuration.buildingFbxAtlasImageFormat)
+           << "\n"
            << "建筑墙体贴图目录: "
            << PathToUtf8(configuration.buildingWallTexturePath) << "\n"
            << "建筑屋顶贴图目录: "
@@ -1306,14 +1391,14 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
     }
     if (configuration.exportBuildingFbx && !configuration.exportFbx)
     {
-        error = "建筑散图 FBX 需要同时启用 FBX。";
+        error = "建筑 FBX 需要同时启用 FBX。";
         return false;
     }
     if (configuration.exportBuildingFbx &&
         !IsGisCategorySelected(
             configuration.gisCategories, DownTool::AmapVectorRenderCategory::Building))
     {
-        error = "建筑散图 FBX 需要选择 GIS 建筑图层。";
+        error = "建筑 FBX 需要选择 GIS 建筑图层。";
         return false;
     }
     const bool satelliteRequested = !configuration.satelliteSources.empty() &&
@@ -1636,6 +1721,9 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
     options.render.exportBuildingsToFbx = configuration.exportBuildingFbx;
     options.render.buildingWallTexturePath = configuration.buildingWallTexturePath;
     options.render.buildingRoofTexturePath = configuration.buildingRoofTexturePath;
+    options.render.buildingFbxTextureMode = configuration.buildingFbxTextureMode;
+    options.render.buildingFbxAtlasImageFormat =
+        configuration.buildingFbxAtlasImageFormat;
     options.render.buildingLayerHeightCentimeters =
         configuration.buildingLayerHeightCentimeters;
     options.render.buildingMaxWallMaterialsPerBucket =
@@ -1862,13 +1950,18 @@ bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
         return false;
     }
 
+    const bool mergedAtlas = configuration.buildingFbxTextureMode ==
+        DownTool::AmapBuildingFbxTextureMode::MergedAtlas;
+    const std::string outputModeName = mergedAtlas ? "建筑合并贴图 FBX" : "建筑散图 FBX";
     const std::filesystem::path outputRoot = GisOutputRoot(
-        configuration, queuedExport.taskId, "建筑散图 FBX", "建筑") / "FBX";
+        configuration, queuedExport.taskId, outputModeName, "建筑") / "FBX";
     DownTool::AmapBuildingFbxExportOptions exportOptions;
     exportOptions.outputPath = outputRoot / "buildings.fbx";
     exportOptions.centerWgs84 = configuration.centerWgs84;
     exportOptions.wallTexturePath = configuration.buildingWallTexturePath;
     exportOptions.roofTexturePath = configuration.buildingRoofTexturePath;
+    exportOptions.textureMode = configuration.buildingFbxTextureMode;
+    exportOptions.atlasImageFormat = configuration.buildingFbxAtlasImageFormat;
     exportOptions.layerHeightCentimeters = configuration.buildingLayerHeightCentimeters;
     exportOptions.maxWallMaterialsPerBucket =
         configuration.buildingMaxWallMaterialsPerBucket;
@@ -1885,7 +1978,7 @@ bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
     }
     exportOptions.cancellationRequested = cancellationRequested;
     UpdateProgress(
-        queuedExport.taskId, "导出建筑散图 FBX",
+        queuedExport.taskId, "导出" + outputModeName,
         (static_cast<double>(stepIndex) + 0.85) / static_cast<double>(stepCount),
         0, 1);
     const DownTool::AmapBuildingFbxExportResult exportResult =
@@ -1901,10 +1994,10 @@ bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
     }
     if (!std::filesystem::exists(exportOptions.outputPath))
     {
-        error = "建筑散图 FBX 没有生成有效网格。";
+        error = outputModeName + " 没有生成有效网格。";
         return false;
     }
-    UpdateProgress(queuedExport.taskId, "建筑散图 FBX 导出完成",
+    UpdateProgress(queuedExport.taskId, outputModeName + " 导出完成",
                    static_cast<double>(stepIndex + 1) / static_cast<double>(stepCount),
                    1, 1);
     return true;

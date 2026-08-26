@@ -313,8 +313,9 @@ bool runTest()
         "export-gis-combine-separate-item"};
     const std::vector<std::string> expectedBuildingFbxFields = {
         "export-building-wall-textures", "export-building-roof-textures",
-        "export-building-layer-height", "export-building-max-wall-materials",
-        "export-building-texture-seed"};
+        "export-building-texture-mode", "export-building-atlas-format",
+        "export-building-layer-height",
+        "export-building-max-wall-materials", "export-building-texture-seed"};
     if (!postprocess_test::Require(
             runtime.childElementIdsById("export-gis-groups") == expectedInitialGisItems,
             "GIS 数据初始结构没有使用单层两列网格") ||

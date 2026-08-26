@@ -10,6 +10,7 @@
 #include <thread>
 #include <utility>
 
+#include "AmapBuildingFbxExporter.h"
 #include "AmapVectorDownloader.h"
 #include "GoogleDownBase.h"
 
@@ -89,6 +90,10 @@ namespace DownTool
             std::filesystem::u8path("贴图/墙体");
         std::filesystem::path buildingRoofTexturePath =
             std::filesystem::u8path("贴图/房顶");
+        AmapBuildingFbxTextureMode buildingFbxTextureMode =
+            AmapBuildingFbxTextureMode::Scattered;
+        AmapBuildingFbxAtlasImageFormat buildingFbxAtlasImageFormat =
+            AmapBuildingFbxAtlasImageFormat::Png;
         double buildingLayerHeightCentimeters = 45.;
         double buildingTextureUnitLayer = 5.;
         uint32_t buildingTextureUnitPixelSize = 64;

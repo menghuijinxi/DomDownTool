@@ -995,6 +995,9 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
             buildingFbxOptions.centerWgs84 = vectorOptions.centerWgs84;
             buildingFbxOptions.wallTexturePath = renderOptions.buildingWallTexturePath;
             buildingFbxOptions.roofTexturePath = renderOptions.buildingRoofTexturePath;
+            buildingFbxOptions.textureMode = renderOptions.buildingFbxTextureMode;
+            buildingFbxOptions.atlasImageFormat =
+                renderOptions.buildingFbxAtlasImageFormat;
             buildingFbxOptions.layerHeightCentimeters =
                 renderOptions.buildingLayerHeightCentimeters;
             buildingFbxOptions.textureUnitLayer = renderOptions.buildingTextureUnitLayer;

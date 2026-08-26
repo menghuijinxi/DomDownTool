@@ -26,6 +26,7 @@
 #include "fmt/format.h"
 #include "mapbox/earcut.hpp"
 #include "opencv2/imgcodecs.hpp"
+#include "opencv2/imgproc.hpp"
 
 #include "GCJ02GoogleDownBase.h"
 
@@ -85,8 +86,17 @@ namespace
     {
         std::string name;
         std::filesystem::path texturePath;
+        bool wrapTextureU = false;
         std::vector<BuildingVertex> vertices;
         std::vector<uint32_t> indices;
+    };
+
+    struct AtlasRect
+    {
+        double u0 = 0.;
+        double v0 = 0.;
+        double u1 = 1.;
+        double v1 = 1.;
     };
 
     struct TextureInfo
@@ -105,6 +115,24 @@ namespace
             }
             return static_cast<double>(width) / static_cast<double>(height);
         }
+    };
+
+    struct AtlasSource
+    {
+        const TextureInfo* texture = nullptr;
+        cv::Mat image;
+        int32_t x = 0;
+        int32_t y = 0;
+        int32_t width = 0;
+        int32_t height = 0;
+    };
+
+    struct AtlasPackingRect
+    {
+        int32_t x = 0;
+        int32_t y = 0;
+        int32_t width = 0;
+        int32_t height = 0;
     };
 
     struct TextureLibrary
@@ -180,6 +208,25 @@ namespace
 
         fileStream.write(static_cast<const char*>(data), static_cast<std::streamsize>(dataSize));
         return fileStream.good();
+    }
+
+    bool WriteEncodedImage(
+        const std::filesystem::path& path,
+        const std::string& extension,
+        const cv::Mat& image)
+    {
+        std::vector<unsigned char> encodedImage;
+        std::vector<int> parameters;
+        if (extension == ".jpg" || extension == ".jpeg")
+        {
+            parameters = { cv::IMWRITE_JPEG_QUALITY, 95 };
+        }
+        if (!cv::imencode(extension, image, encodedImage, parameters) ||
+            encodedImage.empty())
+        {
+            return false;
+        }
+        return WriteBinaryFile(path, encodedImage.data(), encodedImage.size());
     }
 
     double LongitudeToWebMercatorX(double longitude)
@@ -511,6 +558,18 @@ namespace
         return ".jpg";
     }
 
+    std::string AtlasImageExtension(DownTool::AmapBuildingFbxAtlasImageFormat format)
+    {
+        switch (format)
+        {
+        case DownTool::AmapBuildingFbxAtlasImageFormat::Png:
+            return ".png";
+        case DownTool::AmapBuildingFbxAtlasImageFormat::Jpg:
+            return ".jpg";
+        }
+        return ".png";
+    }
+
     cv::Mat ReadTextureImage(const std::filesystem::path& path)
     {
         std::ifstream input(path, std::ios::binary);
@@ -829,13 +888,15 @@ namespace
 
     MeshBucket& GetMeshBucket(
         std::map<std::filesystem::path, MeshBucket>& buckets,
-        const TextureInfo& texture)
+        const TextureInfo& texture,
+        bool wrapTextureU)
     {
         MeshBucket& bucket = buckets[texture.outputPath];
         if (bucket.mesh.name.empty())
         {
             bucket.mesh.name = texture.materialName;
             bucket.mesh.texturePath = texture.outputPath;
+            bucket.mesh.wrapTextureU = wrapTextureU;
         }
         return bucket;
     }
@@ -863,6 +924,63 @@ namespace
         mesh.indices.push_back(third);
     }
 
+    void AppendWallQuad(
+        const Point2& first,
+        const Point2& second,
+        double lowerCentimeters,
+        double upperCentimeters,
+        double firstU,
+        double secondU,
+        double lowerV,
+        double upperV,
+        const std::array<double, 3>& normal,
+        bool useRightNormal,
+        BuildingMeshData& mesh)
+    {
+        uint32_t bottomFirst = 0;
+        uint32_t bottomSecond = 0;
+        uint32_t topFirst = 0;
+        uint32_t topSecond = 0;
+        if (!AppendVertex(
+                mesh,
+                { first.x, first.y, lowerCentimeters, firstU, lowerV, normal },
+                bottomFirst) ||
+            !AppendVertex(
+                mesh,
+                { second.x, second.y, lowerCentimeters, secondU, lowerV, normal },
+                bottomSecond) ||
+            !AppendVertex(
+                mesh,
+                { first.x, first.y, upperCentimeters, firstU, upperV, normal },
+                topFirst) ||
+            !AppendVertex(
+                mesh,
+                { second.x, second.y, upperCentimeters, secondU, upperV, normal },
+                topSecond))
+        {
+            return;
+        }
+
+        if (useRightNormal)
+        {
+            AppendTriangle(mesh, bottomFirst, bottomSecond, topFirst);
+            AppendTriangle(mesh, topFirst, bottomSecond, topSecond);
+        }
+        else
+        {
+            AppendTriangle(mesh, bottomFirst, topFirst, bottomSecond);
+            AppendTriangle(mesh, topFirst, topSecond, bottomSecond);
+        }
+    }
+
+    Point2 LerpPoint(const Point2& first, const Point2& second, double ratio)
+    {
+        return {
+            first.x + (second.x - first.x) * ratio,
+            first.y + (second.y - first.y) * ratio
+        };
+    }
+
     void AppendWallRingGeometry(
         const Ring& ring,
         bool hole,
@@ -870,6 +988,7 @@ namespace
         double bottomCentimeters,
         double topCentimeters,
         const TextureInfo& texture,
+        bool splitRepeatedUv,
         BuildingMeshData& mesh)
     {
         const double signedArea = SignedArea(ring);
@@ -895,42 +1014,70 @@ namespace
                 std::array<double, 3>{ -dy, dx, 0. };
             const double nextU = currentU + segmentLength / std::max(1., textureWallWidth);
 
-            uint32_t bottomFirst = 0;
-            uint32_t bottomSecond = 0;
-            uint32_t topFirst = 0;
-            uint32_t topSecond = 0;
             const double bottomV =
                 std::max(1., (topCentimeters - bottomCentimeters) /
                                 std::max(1., heightCentimeters));
-            if (!AppendVertex(
-                    mesh,
-                    { first.x, first.y, bottomCentimeters, currentU, bottomV, normal },
-                    bottomFirst) ||
-                !AppendVertex(
-                    mesh,
-                    { second.x, second.y, bottomCentimeters, nextU, bottomV, normal },
-                    bottomSecond) ||
-                !AppendVertex(
-                    mesh,
-                    { first.x, first.y, topCentimeters, currentU, 0., normal },
-                    topFirst) ||
-                !AppendVertex(
-                    mesh,
-                    { second.x, second.y, topCentimeters, nextU, 0., normal },
-                    topSecond))
+            if (!splitRepeatedUv)
             {
-                return;
-            }
-
-            if (useRightNormal)
-            {
-                AppendTriangle(mesh, bottomFirst, bottomSecond, topFirst);
-                AppendTriangle(mesh, topFirst, bottomSecond, topSecond);
+                AppendWallQuad(
+                    first,
+                    second,
+                    bottomCentimeters,
+                    topCentimeters,
+                    currentU,
+                    nextU,
+                    bottomV,
+                    0.,
+                    normal,
+                    useRightNormal,
+                    mesh);
             }
             else
             {
-                AppendTriangle(mesh, bottomFirst, topFirst, bottomSecond);
-                AppendTriangle(mesh, topFirst, topSecond, bottomSecond);
+                const double heightSpan = topCentimeters - bottomCentimeters;
+                double splitU = currentU;
+                while (splitU < nextU - 1.e-9)
+                {
+                    const double nextBoundary = std::floor(splitU) + 1.;
+                    const double chunkEndU = std::min(nextU, nextBoundary);
+                    const double startRatio = (splitU - currentU) /
+                        std::max(1.e-9, nextU - currentU);
+                    const double endRatio = (chunkEndU - currentU) /
+                        std::max(1.e-9, nextU - currentU);
+                    const double tileUOffset = std::floor(splitU);
+                    const Point2 chunkFirst = LerpPoint(first, second, startRatio);
+                    const Point2 chunkSecond = LerpPoint(first, second, endRatio);
+
+                    double splitV = 0.;
+                    while (splitV < bottomV - 1.e-9)
+                    {
+                        const double nextVBoundary = std::floor(splitV) + 1.;
+                        const double chunkEndV = std::min(bottomV, nextVBoundary);
+                        const double tileVOffset = std::floor(splitV);
+                        const double upperHeightRatio = splitV /
+                            std::max(1.e-9, bottomV);
+                        const double lowerHeightRatio = chunkEndV /
+                            std::max(1.e-9, bottomV);
+                        const double upperCentimeters = topCentimeters -
+                            heightSpan * upperHeightRatio;
+                        const double lowerCentimeters = topCentimeters -
+                            heightSpan * lowerHeightRatio;
+                        AppendWallQuad(
+                            chunkFirst,
+                            chunkSecond,
+                            lowerCentimeters,
+                            upperCentimeters,
+                            splitU - tileUOffset,
+                            chunkEndU - tileUOffset,
+                            chunkEndV - tileVOffset,
+                            splitV - tileVOffset,
+                            normal,
+                            useRightNormal,
+                            mesh);
+                        splitV = chunkEndV;
+                    }
+                    splitU = chunkEndU;
+                }
             }
             currentU = nextU;
         }
@@ -942,6 +1089,7 @@ namespace
         double bottomCentimeters,
         double topCentimeters,
         const TextureInfo& texture,
+        bool splitRepeatedUv,
         BuildingMeshData& mesh)
     {
         for (const BuildingPolygon& polygon : geometry.polygons)
@@ -955,6 +1103,7 @@ namespace
                     bottomCentimeters,
                     topCentimeters,
                     texture,
+                    splitRepeatedUv,
                     mesh);
             }
         }
@@ -1051,6 +1200,501 @@ namespace
         return true;
     }
 
+    cv::Mat ConvertAtlasImage(const cv::Mat& image)
+    {
+        if (image.empty())
+        {
+            return {};
+        }
+        cv::Mat converted;
+        if (image.channels() == 4)
+        {
+            cv::cvtColor(image, converted, cv::COLOR_BGRA2BGR);
+        }
+        else if (image.channels() == 1)
+        {
+            cv::cvtColor(image, converted, cv::COLOR_GRAY2BGR);
+        }
+        else if (image.channels() == 3)
+        {
+            converted = image;
+        }
+        else
+        {
+            return {};
+        }
+
+        if (converted.depth() != CV_8U)
+        {
+            cv::Mat normalized;
+            converted.convertTo(normalized, CV_8U);
+            return normalized;
+        }
+        return converted.clone();
+    }
+
+    int32_t NextPowerOfTwo(int32_t value)
+    {
+        value = std::max(1, value);
+        int32_t result = 1;
+        while (result < value && result <= (std::numeric_limits<int32_t>::max() / 2))
+        {
+            result *= 2;
+        }
+        return result;
+    }
+
+    std::unordered_map<std::string, const TextureInfo*> BuildTextureLookup(
+        const std::vector<TextureInfo>& textures)
+    {
+        std::unordered_map<std::string, const TextureInfo*> lookup;
+        lookup.reserve(textures.size());
+        for (const TextureInfo& texture : textures)
+        {
+            lookup.emplace(PathToUtf8String(texture.outputPath), &texture);
+        }
+        return lookup;
+    }
+
+    std::vector<const TextureInfo*> CollectUsedTextures(
+        const std::map<std::filesystem::path, MeshBucket>& meshBuckets,
+        const std::vector<TextureInfo>& textures,
+        bool wallTextures)
+    {
+        const std::unordered_map<std::string, const TextureInfo*> lookup =
+            BuildTextureLookup(textures);
+        std::vector<const TextureInfo*> usedTextures;
+        for (const auto& [texturePath, bucket] : meshBuckets)
+        {
+            if (bucket.mesh.vertices.empty() || bucket.mesh.indices.empty() ||
+                IsWallMeshTexturePath(texturePath) != wallTextures)
+            {
+                continue;
+            }
+            const auto found = lookup.find(PathToUtf8String(texturePath));
+            if (found != lookup.end())
+            {
+                usedTextures.push_back(found->second);
+            }
+        }
+        return usedTextures;
+    }
+
+    bool BuildAtlasSources(
+        const std::vector<const TextureInfo*>& textures,
+        std::vector<AtlasSource>& sources,
+        std::string& error)
+    {
+        sources.clear();
+        sources.reserve(textures.size());
+        for (const TextureInfo* texture : textures)
+        {
+            cv::Mat image = ConvertAtlasImage(ReadTextureImage(texture->sourcePath));
+            if (image.empty() || image.cols <= 0 || image.rows <= 0)
+            {
+                error = "无法读取待合并建筑贴图：" + PathToUtf8String(texture->sourcePath);
+                return false;
+            }
+            const int32_t width = image.cols;
+            const int32_t height = image.rows;
+            sources.push_back({ texture, std::move(image), 0, 0, width, height });
+        }
+        std::sort(
+            sources.begin(),
+            sources.end(),
+            [](const AtlasSource& left, const AtlasSource& right)
+            {
+                const int64_t leftArea = static_cast<int64_t>(left.width) * left.height;
+                const int64_t rightArea = static_cast<int64_t>(right.width) * right.height;
+                if (leftArea != rightArea)
+                {
+                    return leftArea > rightArea;
+                }
+                const int32_t leftMaxSide = std::max(left.width, left.height);
+                const int32_t rightMaxSide = std::max(right.width, right.height);
+                if (leftMaxSide != rightMaxSide)
+                {
+                    return leftMaxSide > rightMaxSide;
+                }
+                if (left.height != right.height)
+                {
+                    return left.height > right.height;
+                }
+                return PathToUtf8String(left.texture->sourcePath) <
+                    PathToUtf8String(right.texture->sourcePath);
+            });
+        return true;
+    }
+
+    bool ContainsRect(const AtlasPackingRect& outer, const AtlasPackingRect& inner)
+    {
+        return inner.x >= outer.x && inner.y >= outer.y &&
+            inner.x + inner.width <= outer.x + outer.width &&
+            inner.y + inner.height <= outer.y + outer.height;
+    }
+
+    bool IntersectsRect(const AtlasPackingRect& first, const AtlasPackingRect& second)
+    {
+        return first.x < second.x + second.width && first.x + first.width > second.x &&
+            first.y < second.y + second.height && first.y + first.height > second.y;
+    }
+
+    void PruneFreeAtlasRects(std::vector<AtlasPackingRect>& freeRects)
+    {
+        for (size_t index = 0; index < freeRects.size();)
+        {
+            bool removed = freeRects[index].width <= 0 || freeRects[index].height <= 0;
+            for (size_t otherIndex = 0; !removed && otherIndex < freeRects.size();
+                 otherIndex++)
+            {
+                if (index != otherIndex && ContainsRect(freeRects[otherIndex], freeRects[index]))
+                {
+                    removed = true;
+                }
+            }
+            if (removed)
+            {
+                freeRects.erase(freeRects.begin() + static_cast<std::ptrdiff_t>(index));
+            }
+            else
+            {
+                index++;
+            }
+        }
+    }
+
+    void SplitFreeAtlasRects(
+        std::vector<AtlasPackingRect>& freeRects,
+        const AtlasPackingRect& placedRect)
+    {
+        std::vector<AtlasPackingRect> nextFreeRects;
+        nextFreeRects.reserve(freeRects.size() + 4);
+        for (const AtlasPackingRect& freeRect : freeRects)
+        {
+            if (!IntersectsRect(freeRect, placedRect))
+            {
+                nextFreeRects.push_back(freeRect);
+                continue;
+            }
+
+            const int32_t freeRight = freeRect.x + freeRect.width;
+            const int32_t freeBottom = freeRect.y + freeRect.height;
+            const int32_t placedRight = placedRect.x + placedRect.width;
+            const int32_t placedBottom = placedRect.y + placedRect.height;
+            if (placedRect.x > freeRect.x)
+            {
+                nextFreeRects.push_back({
+                    freeRect.x,
+                    freeRect.y,
+                    placedRect.x - freeRect.x,
+                    freeRect.height});
+            }
+            if (placedRight < freeRight)
+            {
+                nextFreeRects.push_back({
+                    placedRight,
+                    freeRect.y,
+                    freeRight - placedRight,
+                    freeRect.height});
+            }
+            if (placedRect.y > freeRect.y)
+            {
+                nextFreeRects.push_back({
+                    freeRect.x,
+                    freeRect.y,
+                    freeRect.width,
+                    placedRect.y - freeRect.y});
+            }
+            if (placedBottom < freeBottom)
+            {
+                nextFreeRects.push_back({
+                    freeRect.x,
+                    placedBottom,
+                    freeRect.width,
+                    freeBottom - placedBottom});
+            }
+        }
+        freeRects = std::move(nextFreeRects);
+        PruneFreeAtlasRects(freeRects);
+    }
+
+    bool TryPackAtlasSources(
+        const std::vector<AtlasSource>& sources,
+        int32_t padding,
+        int32_t atlasWidth,
+        int32_t atlasHeight,
+        std::vector<AtlasSource>& packedSources)
+    {
+        std::vector<AtlasPackingRect> freeRects = {{0, 0, atlasWidth, atlasHeight}};
+        packedSources = sources;
+        for (AtlasSource& source : packedSources)
+        {
+            const int32_t paddedWidth = source.width + padding * 2;
+            const int32_t paddedHeight = source.height + padding * 2;
+            std::optional<size_t> bestFreeRectIndex;
+            int32_t bestShortSide = std::numeric_limits<int32_t>::max();
+            int32_t bestLongSide = std::numeric_limits<int32_t>::max();
+            for (size_t index = 0; index < freeRects.size(); index++)
+            {
+                const AtlasPackingRect& freeRect = freeRects[index];
+                if (paddedWidth > freeRect.width || paddedHeight > freeRect.height)
+                {
+                    continue;
+                }
+                const int32_t leftoverWidth = freeRect.width - paddedWidth;
+                const int32_t leftoverHeight = freeRect.height - paddedHeight;
+                const int32_t shortSide = std::min(leftoverWidth, leftoverHeight);
+                const int32_t longSide = std::max(leftoverWidth, leftoverHeight);
+                if (!bestFreeRectIndex || shortSide < bestShortSide ||
+                    (shortSide == bestShortSide && longSide < bestLongSide))
+                {
+                    bestFreeRectIndex = index;
+                    bestShortSide = shortSide;
+                    bestLongSide = longSide;
+                }
+            }
+            if (!bestFreeRectIndex)
+            {
+                return false;
+            }
+
+            const AtlasPackingRect freeRect = freeRects[*bestFreeRectIndex];
+            const AtlasPackingRect placedRect{
+                freeRect.x,
+                freeRect.y,
+                paddedWidth,
+                paddedHeight};
+            source.x = placedRect.x + padding;
+            source.y = placedRect.y + padding;
+            SplitFreeAtlasRects(freeRects, placedRect);
+        }
+        return true;
+    }
+
+    bool PackAtlasSources(std::vector<AtlasSource>& sources, int32_t padding,
+                          int32_t& atlasWidth, int32_t& atlasHeight)
+    {
+        if (sources.empty())
+        {
+            atlasWidth = 0;
+            atlasHeight = 0;
+            return true;
+        }
+
+        int64_t paddedArea = 0;
+        int32_t maximumPaddedWidth = 1;
+        int32_t maximumPaddedHeight = 1;
+        for (const AtlasSource& source : sources)
+        {
+            const int32_t paddedWidth = source.width + padding * 2;
+            const int32_t paddedHeight = source.height + padding * 2;
+            paddedArea += static_cast<int64_t>(paddedWidth) * paddedHeight;
+            maximumPaddedWidth = std::max(maximumPaddedWidth, paddedWidth);
+            maximumPaddedHeight = std::max(maximumPaddedHeight, paddedHeight);
+        }
+
+        constexpr int32_t maximumAtlasSize = 16384;
+        const int32_t minimumWidth = NextPowerOfTwo(maximumPaddedWidth);
+        const int32_t minimumHeight = NextPowerOfTwo(maximumPaddedHeight);
+        if (minimumWidth > maximumAtlasSize || minimumHeight > maximumAtlasSize)
+        {
+            return false;
+        }
+
+        int64_t bestArea = std::numeric_limits<int64_t>::max();
+        int32_t bestMaximumSide = std::numeric_limits<int32_t>::max();
+        int32_t bestAspectDelta = std::numeric_limits<int32_t>::max();
+        std::vector<AtlasSource> bestPackedSources;
+        for (int32_t candidateWidth = minimumWidth; candidateWidth <= maximumAtlasSize;
+             candidateWidth *= 2)
+        {
+            for (int32_t candidateHeight = minimumHeight; candidateHeight <= maximumAtlasSize;
+                 candidateHeight *= 2)
+            {
+                const int64_t candidateArea =
+                    static_cast<int64_t>(candidateWidth) * candidateHeight;
+                if (candidateArea < paddedArea || candidateArea > bestArea)
+                {
+                    continue;
+                }
+
+                std::vector<AtlasSource> packedSources;
+                if (!TryPackAtlasSources(
+                        sources,
+                        padding,
+                        candidateWidth,
+                        candidateHeight,
+                        packedSources))
+                {
+                    continue;
+                }
+
+                const int32_t candidateMaximumSide =
+                    std::max(candidateWidth, candidateHeight);
+                const int32_t candidateAspectDelta = std::abs(candidateWidth - candidateHeight);
+                if (candidateArea < bestArea ||
+                    (candidateArea == bestArea && candidateMaximumSide < bestMaximumSide) ||
+                    (candidateArea == bestArea && candidateMaximumSide == bestMaximumSide &&
+                     candidateAspectDelta < bestAspectDelta))
+                {
+                    bestArea = candidateArea;
+                    bestMaximumSide = candidateMaximumSide;
+                    bestAspectDelta = candidateAspectDelta;
+                    atlasWidth = candidateWidth;
+                    atlasHeight = candidateHeight;
+                    bestPackedSources = std::move(packedSources);
+                }
+            }
+        }
+        if (bestPackedSources.empty())
+        {
+            return false;
+        }
+        sources = std::move(bestPackedSources);
+        return true;
+    }
+
+    bool WriteTextureAtlas(
+        std::vector<AtlasSource>& sources,
+        const std::filesystem::path& outputPath,
+        std::unordered_map<std::string, AtlasRect>& atlasRects,
+        std::string& error)
+    {
+        constexpr int32_t padding = 2;
+        int32_t atlasWidth = 0;
+        int32_t atlasHeight = 0;
+        if (!PackAtlasSources(sources, padding, atlasWidth, atlasHeight))
+        {
+            error = "建筑贴图合并失败：atlas 尺寸无效。";
+            return false;
+        }
+
+        cv::Mat atlas(atlasHeight, atlasWidth, CV_8UC3, cv::Scalar(0, 0, 0));
+        atlasRects.clear();
+        atlasRects.reserve(sources.size());
+        for (const AtlasSource& source : sources)
+        {
+            cv::Mat paddedImage;
+            cv::copyMakeBorder(
+                source.image,
+                paddedImage,
+                padding,
+                padding,
+                padding,
+                padding,
+                cv::BORDER_REPLICATE);
+            paddedImage.copyTo(atlas(cv::Rect(
+                source.x - padding,
+                source.y - padding,
+                paddedImage.cols,
+                paddedImage.rows)));
+            atlasRects.emplace(
+                PathToUtf8String(source.texture->outputPath),
+                AtlasRect{
+                    static_cast<double>(source.x) / static_cast<double>(atlasWidth),
+                    1. - static_cast<double>(source.y + source.height) /
+                        static_cast<double>(atlasHeight),
+                    static_cast<double>(source.x + source.width) /
+                        static_cast<double>(atlasWidth),
+                    1. - static_cast<double>(source.y) / static_cast<double>(atlasHeight)
+                });
+        }
+
+        if (!WriteEncodedImage(outputPath, LowercaseExtension(outputPath), atlas))
+        {
+            error = "建筑合并贴图写入失败：" + PathToUtf8String(outputPath);
+            return false;
+        }
+        return true;
+    }
+
+    BuildingVertex RemapAtlasVertex(const BuildingVertex& vertex, const AtlasRect& rect)
+    {
+        BuildingVertex result = vertex;
+        const double u = std::clamp(vertex.u, 0., 1.);
+        const double v = std::clamp(vertex.v, 0., 1.);
+        result.u = rect.u0 + u * (rect.u1 - rect.u0);
+        result.v = rect.v0 + v * (rect.v1 - rect.v0);
+        return result;
+    }
+
+    bool AppendAtlasBucketMesh(
+        const MeshBucket& bucket,
+        const AtlasRect& rect,
+        BuildingMeshData& atlasMesh)
+    {
+        if (bucket.mesh.vertices.empty() || bucket.mesh.indices.empty())
+        {
+            return true;
+        }
+        if (atlasMesh.vertices.size() + bucket.mesh.vertices.size() >=
+            std::numeric_limits<uint32_t>::max())
+        {
+            return false;
+        }
+        const uint32_t vertexOffset = static_cast<uint32_t>(atlasMesh.vertices.size());
+        atlasMesh.vertices.reserve(atlasMesh.vertices.size() + bucket.mesh.vertices.size());
+        for (const BuildingVertex& vertex : bucket.mesh.vertices)
+        {
+            atlasMesh.vertices.push_back(RemapAtlasVertex(vertex, rect));
+        }
+        atlasMesh.indices.reserve(atlasMesh.indices.size() + bucket.mesh.indices.size());
+        for (const uint32_t index : bucket.mesh.indices)
+        {
+            atlasMesh.indices.push_back(vertexOffset + index);
+        }
+        return true;
+    }
+
+    bool BuildAtlasMesh(
+        const std::map<std::filesystem::path, MeshBucket>& meshBuckets,
+        const std::vector<TextureInfo>& textures,
+        bool wallTextures,
+        const std::filesystem::path& atlasPath,
+        const std::string& materialName,
+        BuildingMeshData& atlasMesh,
+        std::string& error)
+    {
+        std::vector<AtlasSource> sources;
+        if (!BuildAtlasSources(
+                CollectUsedTextures(meshBuckets, textures, wallTextures), sources, error))
+        {
+            return false;
+        }
+        if (sources.empty())
+        {
+            return true;
+        }
+
+        std::unordered_map<std::string, AtlasRect> atlasRects;
+        if (!WriteTextureAtlas(sources, atlasPath, atlasRects, error))
+        {
+            return false;
+        }
+
+        atlasMesh.name = materialName;
+        atlasMesh.texturePath = atlasPath;
+        atlasMesh.wrapTextureU = false;
+        for (const auto& [texturePath, bucket] : meshBuckets)
+        {
+            if (IsWallMeshTexturePath(texturePath) != wallTextures)
+            {
+                continue;
+            }
+            const auto rect = atlasRects.find(PathToUtf8String(texturePath));
+            if (rect == atlasRects.end())
+            {
+                continue;
+            }
+            if (!AppendAtlasBucketMesh(bucket, rect->second, atlasMesh))
+            {
+                error = "建筑合并贴图网格顶点数量超过 FBX 索引上限。";
+                return false;
+            }
+        }
+        return true;
+    }
+
     aiMesh* CreateAssimpMesh(const BuildingMeshData& meshData, unsigned int materialIndex)
     {
         aiMesh* mesh = new aiMesh();
@@ -1107,8 +1751,7 @@ namespace
         const aiString diffuseTexture(texturePath);
         material->AddProperty(&diffuseTexture, AI_MATKEY_TEXTURE_DIFFUSE(0));
 
-        const bool isWallTexture = IsWallMeshTexturePath(meshData.texturePath);
-        const aiTextureMapMode mapModeU = isWallTexture ?
+        const aiTextureMapMode mapModeU = meshData.wrapTextureU ?
             aiTextureMapMode_Wrap : aiTextureMapMode_Clamp;
         const aiTextureMapMode mapModeV = aiTextureMapMode_Clamp;
         material->AddProperty(&mapModeU, 1, AI_MATKEY_MAPPINGMODE_U_DIFFUSE(0));
@@ -1213,6 +1856,8 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
         return result;
     }
 
+    const bool useTextureAtlas =
+        options.textureMode == AmapBuildingFbxTextureMode::MergedAtlas;
     std::map<std::filesystem::path, MeshBucket> meshBuckets;
     std::unordered_map<std::string, WallMaterialBucketState> wallBucketStates;
     std::set<std::filesystem::path> copiedTextures;
@@ -1260,8 +1905,9 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
         const TextureInfo& wallTexture = textureLibrary.wallTextures[wallTextureIndex];
         const TextureInfo& roofTexture = textureLibrary.roofTextures[roofTextureIndex];
 
-        if (!CopyTexture(wallTexture, copiedTextures, result.error) ||
-            !CopyTexture(roofTexture, copiedTextures, result.error))
+        if (!useTextureAtlas &&
+            (!CopyTexture(wallTexture, copiedTextures, result.error) ||
+             !CopyTexture(roofTexture, copiedTextures, result.error)))
         {
             return result;
         }
@@ -1272,37 +1918,76 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
             bottomCentimeters,
             topCentimeters,
             wallTexture,
-            GetMeshBucket(meshBuckets, wallTexture).mesh);
+            useTextureAtlas,
+            GetMeshBucket(meshBuckets, wallTexture, !useTextureAtlas).mesh);
         AppendRoofGeometry(
             geometry,
             topCentimeters,
-            GetMeshBucket(meshBuckets, roofTexture).mesh);
+            GetMeshBucket(meshBuckets, roofTexture, false).mesh);
         result.buildingCount++;
     }
 
     std::vector<BuildingMeshData> meshDatas;
-    meshDatas.reserve(meshBuckets.size());
-    const auto appendMeshData = [&meshDatas](MeshBucket& bucket)
+    if (useTextureAtlas)
     {
-        if (!bucket.mesh.vertices.empty() && !bucket.mesh.indices.empty())
+        meshDatas.reserve(2);
+        BuildingMeshData wallAtlasMesh;
+        BuildingMeshData roofAtlasMesh;
+        const std::filesystem::path outputDirectory = options.outputPath.parent_path();
+        const std::string atlasExtension = AtlasImageExtension(options.atlasImageFormat);
+        if (!BuildAtlasMesh(
+                meshBuckets,
+                textureLibrary.wallTextures,
+                true,
+                outputDirectory / ("building_wall_atlas" + atlasExtension),
+                "building_wall_atlas",
+                wallAtlasMesh,
+                result.error) ||
+            !BuildAtlasMesh(
+                meshBuckets,
+                textureLibrary.roofTextures,
+                false,
+                outputDirectory / ("building_roof_atlas" + atlasExtension),
+                "building_roof_atlas",
+                roofAtlasMesh,
+                result.error))
         {
-            meshDatas.push_back(std::move(bucket.mesh));
+            return result;
         }
-    };
-
-    // 墙体优先输出，低角度检查和渐进加载时先看到建筑立面。
-    for (auto& [texturePath, bucket] : meshBuckets)
-    {
-        if (IsWallMeshTexturePath(texturePath))
+        if (!wallAtlasMesh.vertices.empty() && !wallAtlasMesh.indices.empty())
         {
-            appendMeshData(bucket);
+            meshDatas.push_back(std::move(wallAtlasMesh));
+        }
+        if (!roofAtlasMesh.vertices.empty() && !roofAtlasMesh.indices.empty())
+        {
+            meshDatas.push_back(std::move(roofAtlasMesh));
         }
     }
-    for (auto& [texturePath, bucket] : meshBuckets)
+    else
     {
-        if (!IsWallMeshTexturePath(texturePath))
+        meshDatas.reserve(meshBuckets.size());
+        const auto appendMeshData = [&meshDatas](MeshBucket& bucket)
         {
-            appendMeshData(bucket);
+            if (!bucket.mesh.vertices.empty() && !bucket.mesh.indices.empty())
+            {
+                meshDatas.push_back(std::move(bucket.mesh));
+            }
+        };
+
+        // 墙体优先输出，低角度检查和渐进加载时先看到建筑立面。
+        for (auto& [texturePath, bucket] : meshBuckets)
+        {
+            if (IsWallMeshTexturePath(texturePath))
+            {
+                appendMeshData(bucket);
+            }
+        }
+        for (auto& [texturePath, bucket] : meshBuckets)
+        {
+            if (!IsWallMeshTexturePath(texturePath))
+            {
+                appendMeshData(bucket);
+            }
         }
     }
 

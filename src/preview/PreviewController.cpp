@@ -103,6 +103,58 @@ std::string fbxInteractionSpeedText(double value)
     return fmt::format("{:.1f}x", value);
 }
 
+std::string buildingFbxTextureModeValue(DownTool::AmapBuildingFbxTextureMode mode)
+{
+    switch (mode)
+    {
+    case DownTool::AmapBuildingFbxTextureMode::Scattered:
+        return "scattered";
+    case DownTool::AmapBuildingFbxTextureMode::MergedAtlas:
+        return "merged-atlas";
+    }
+    return "scattered";
+}
+
+DownTool::AmapBuildingFbxTextureMode buildingFbxTextureModeFromValue(
+    std::string_view value)
+{
+    if (value == "merged-atlas" || value == "合并贴图")
+    {
+        return DownTool::AmapBuildingFbxTextureMode::MergedAtlas;
+    }
+    return DownTool::AmapBuildingFbxTextureMode::Scattered;
+}
+
+std::string buildingFbxTextureModeHint(std::string_view value)
+{
+    return value == "merged-atlas" ?
+        "合并贴图模式会只把本次随机用到的墙体/屋顶贴图合成 atlas，减少材质和 draw call。" :
+        "散图模式会额外生成 buildings.fbx，贴图通过 FBX 材质槽引用。";
+}
+
+std::string buildingFbxAtlasImageFormatValue(
+    DownTool::AmapBuildingFbxAtlasImageFormat format)
+{
+    switch (format)
+    {
+    case DownTool::AmapBuildingFbxAtlasImageFormat::Png:
+        return "png";
+    case DownTool::AmapBuildingFbxAtlasImageFormat::Jpg:
+        return "jpg";
+    }
+    return "png";
+}
+
+DownTool::AmapBuildingFbxAtlasImageFormat buildingFbxAtlasImageFormatFromValue(
+    std::string_view value)
+{
+    if (value == "jpg" || value == "jpeg" || value == "JPG" || value == "JPEG")
+    {
+        return DownTool::AmapBuildingFbxAtlasImageFormat::Jpg;
+    }
+    return DownTool::AmapBuildingFbxAtlasImageFormat::Png;
+}
+
 FbxPreviewInteractionSettings loadFbxInteractionSettings()
 {
     FbxPreviewInteractionSettings settings;
@@ -836,6 +888,22 @@ std::optional<ExportConfiguration> loadLegacyTaskConfiguration(
             configuration.exportBuildingFbx = buildingFbxValue == "是";
             continue;
         }
+        const std::string buildingFbxTextureModeValue = conversionRecordValue(
+            line, "建筑 FBX 贴图模式: ");
+        if (!buildingFbxTextureModeValue.empty())
+        {
+            configuration.buildingFbxTextureMode = buildingFbxTextureModeFromValue(
+                buildingFbxTextureModeValue);
+            continue;
+        }
+        const std::string buildingFbxAtlasFormatValue = conversionRecordValue(
+            line, "建筑 FBX 合并贴图格式: ");
+        if (!buildingFbxAtlasFormatValue.empty())
+        {
+            configuration.buildingFbxAtlasImageFormat = buildingFbxAtlasImageFormatFromValue(
+                buildingFbxAtlasFormatValue);
+            continue;
+        }
         const std::string wallTexturePath = conversionRecordValue(
             line, "建筑墙体贴图目录: ");
         if (!wallTexturePath.empty())
@@ -1463,6 +1531,18 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 if (event.id == "export-terrain-sample-rate")
                 {
                     exportTerrainSampleRateValue_ = event.value;
+                    return;
+                }
+                if (event.id == "export-building-texture-mode")
+                {
+                    exportBuildingTextureModeValue_ = event.value == "merged-atlas" ?
+                        "merged-atlas" : "scattered";
+                    UpdateExportUi(runtime);
+                    return;
+                }
+                if (event.id == "export-building-atlas-format")
+                {
+                    exportBuildingAtlasFormatValue_ = event.value == "jpg" ? "jpg" : "png";
                     return;
                 }
                 if (event.id == "export-satellite-tiles")
@@ -3424,6 +3504,10 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
         pathToUtf8(configuration->buildingWallTexturePath) : "贴图/墙体";
     exportBuildingRoofTexturePathValue_ = configuration ?
         pathToUtf8(configuration->buildingRoofTexturePath) : "贴图/房顶";
+    exportBuildingTextureModeValue_ = configuration ?
+        buildingFbxTextureModeValue(configuration->buildingFbxTextureMode) : "scattered";
+    exportBuildingAtlasFormatValue_ = configuration ?
+        buildingFbxAtlasImageFormatValue(configuration->buildingFbxAtlasImageFormat) : "png";
     exportBuildingLayerHeightValue_ = configuration ?
         fmt::format("{:.0f}", configuration->buildingLayerHeightCentimeters) : "45";
     exportBuildingMaxWallMaterialsValue_ = configuration ?
@@ -3483,6 +3567,10 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
                          exportBuildingWallTexturePathValue_);
     runtime.setValueById("export-building-roof-textures",
                          exportBuildingRoofTexturePathValue_);
+    runtime.setValueById("export-building-texture-mode",
+                         exportBuildingTextureModeValue_);
+    runtime.setValueById("export-building-atlas-format",
+                         exportBuildingAtlasFormatValue_);
     runtime.setValueById("export-building-layer-height",
                          exportBuildingLayerHeightValue_);
     runtime.setValueById("export-building-max-wall-materials",
@@ -3549,13 +3637,17 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
     setDisabled("export-terrain-sample-rate", !exportFbx_ || !exportTerrainHeight_);
     setDisabled("export-building-wall-textures", !exportBuildingFbx_);
     setDisabled("export-building-roof-textures", !exportBuildingFbx_);
+    setDisabled("export-building-texture-mode", !exportBuildingFbx_);
+    setDisabled(
+        "export-building-atlas-format",
+        !exportBuildingFbx_ || exportBuildingTextureModeValue_ != "merged-atlas");
     setDisabled("export-building-layer-height", !exportBuildingFbx_);
     setDisabled("export-building-max-wall-materials", !exportBuildingFbx_);
     setDisabled("export-building-texture-seed", !exportBuildingFbx_);
     runtime.setTextById(
         "export-building-fbx-hint",
         exportBuildingFbx_ && canExportBuildingFbx ?
-            "散图模式会额外生成 buildings.fbx，贴图通过 FBX 材质槽引用。" :
+            buildingFbxTextureModeHint(exportBuildingTextureModeValue_) :
             "默认关闭；启用后需要同时勾选 FBX 和 GIS 建筑图层。");
     runtime.setVisibleById("export-terrain-height-item", exportFbx_);
     setDisabled("export-merged-format", !exportMergedImage_);
@@ -3869,6 +3961,10 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
         exportBuildingWallTexturePathValue_);
     configuration.buildingRoofTexturePath = std::filesystem::u8path(
         exportBuildingRoofTexturePathValue_);
+    configuration.buildingFbxTextureMode = buildingFbxTextureModeFromValue(
+        exportBuildingTextureModeValue_);
+    configuration.buildingFbxAtlasImageFormat = buildingFbxAtlasImageFormatFromValue(
+        exportBuildingAtlasFormatValue_);
     configuration.buildingLayerHeightCentimeters = *buildingLayerHeight;
     configuration.buildingMaxWallMaterialsPerBucket = *buildingMaxWallMaterials;
     configuration.buildingTextureRandomSeed = *buildingTextureSeed;
@@ -3883,12 +3979,12 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
     }
     if (buildingFbxRequested && !exportFbx_)
     {
-        error = "建筑散图 FBX 需要同时选择 FBX 切片与网格。";
+        error = "建筑 FBX 需要同时选择 FBX 切片与网格。";
         return std::nullopt;
     }
     if (buildingFbxRequested && !hasSelectedBuildingExportGroup())
     {
-        error = "建筑散图 FBX 需要同时选择 GIS 建筑图层。";
+        error = "建筑 FBX 需要同时选择 GIS 建筑图层。";
         return std::nullopt;
     }
     for (const DownTool::AmapVectorRenderCategory category : kExportCategories)

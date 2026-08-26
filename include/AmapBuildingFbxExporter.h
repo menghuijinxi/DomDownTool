@@ -11,12 +11,27 @@
 
 namespace DownTool
 {
+    enum class AmapBuildingFbxTextureMode
+    {
+        Scattered,
+        MergedAtlas
+    };
+
+    enum class AmapBuildingFbxAtlasImageFormat
+    {
+        Png,
+        Jpg
+    };
+
     struct AmapBuildingFbxExportOptions
     {
         std::filesystem::path outputPath;
         LonLat centerWgs84;
         std::filesystem::path wallTexturePath = std::filesystem::u8path("贴图/墙体");
         std::filesystem::path roofTexturePath = std::filesystem::u8path("贴图/房顶");
+        AmapBuildingFbxTextureMode textureMode = AmapBuildingFbxTextureMode::Scattered;
+        AmapBuildingFbxAtlasImageFormat atlasImageFormat =
+            AmapBuildingFbxAtlasImageFormat::Png;
         double layerHeightCentimeters = 45.;
         double textureUnitLayer = 5.;
         uint32_t textureUnitPixelSize = 64;
