@@ -159,6 +159,7 @@ class ExportTaskManager
                       std::string& error);
 
     bool RunBuildingFbxExport(const QueuedExport& queuedExport,
+                              const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
                               size_t stepIndex, size_t stepCount,
                               std::string& error);
 

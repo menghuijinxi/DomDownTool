@@ -24,6 +24,7 @@ struct FbxPreviewInteractionSettings
     double rotateSpeed = 1.0;
     double zoomSpeed = 1.0;
     double panSpeed = 1.0;
+    double moveSpeed = 1.0;
 };
 
 class FbxPreviewRenderer

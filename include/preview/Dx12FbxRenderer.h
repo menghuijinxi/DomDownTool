@@ -49,6 +49,8 @@ class Dx12FbxRenderer
 
     void panBy(double deltaX, double deltaY);
 
+    void keyboardPanBy(double rightDelta, double forwardDelta, double upDelta);
+
     void verticalPanBy(double delta);
 
     void zoomBy(double delta);

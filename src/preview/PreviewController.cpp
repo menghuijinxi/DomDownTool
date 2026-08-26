@@ -81,7 +81,7 @@ constexpr int kFbxPreviewFooterHeight = 42;
 constexpr int kFbxSpeedPanelRight = 18;
 constexpr int kFbxSpeedPanelBottom = 60;
 constexpr int kFbxSpeedPanelWidth = 260;
-constexpr int kFbxSpeedPanelHeight = 146;
+constexpr int kFbxSpeedPanelHeight = 174;
 constexpr double kFbxKeyboardPanPixelsPerSecond = 720.0;
 
 std::filesystem::path fbxInteractionSettingsPath()
@@ -119,6 +119,7 @@ FbxPreviewInteractionSettings loadFbxInteractionSettings()
     settings.rotateSpeed = clampFbxInteractionSpeed(root.value("rotateSpeed", settings.rotateSpeed));
     settings.zoomSpeed = clampFbxInteractionSpeed(root.value("zoomSpeed", settings.zoomSpeed));
     settings.panSpeed = clampFbxInteractionSpeed(root.value("panSpeed", settings.panSpeed));
+    settings.moveSpeed = clampFbxInteractionSpeed(root.value("moveSpeed", settings.moveSpeed));
     return settings;
 }
 
@@ -135,6 +136,7 @@ bool saveFbxInteractionSettings(const FbxPreviewInteractionSettings& settings)
     root["rotateSpeed"] = settings.rotateSpeed;
     root["zoomSpeed"] = settings.zoomSpeed;
     root["panSpeed"] = settings.panSpeed;
+    root["moveSpeed"] = settings.moveSpeed;
 
     std::filesystem::path temporaryPath = path;
     temporaryPath += ".tmp";
@@ -172,6 +174,21 @@ POINT clientPoint(LPARAM lParam)
 {
     return POINT{static_cast<LONG>(static_cast<int16_t>(LOWORD(lParam))),
                  static_cast<LONG>(static_cast<int16_t>(HIWORD(lParam)))};
+}
+
+bool isFbxKeyboardPanKey(WPARAM key)
+{
+    return key == 'W' || key == 'A' || key == 'S' || key == 'D' ||
+        key == 'Q' || key == 'E';
+}
+
+bool isKeyDownAfterMessage(UINT message, WPARAM messageKey, WPARAM targetKey)
+{
+    if (messageKey == targetKey)
+    {
+        return message == WM_KEYDOWN;
+    }
+    return (GetAsyncKeyState(static_cast<int>(targetKey)) & 0x8000) != 0;
 }
 
 class ScreenDeviceContext
@@ -2209,7 +2226,9 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
     {
         stopFbxKeyboardPanFrame(window);
         stopFbxPreviewFrameLoop(window);
-        fbxVerticalPanDirection_ = 0;
+        fbxKeyboardRightDirection_ = 0;
+        fbxKeyboardForwardDirection_ = 0;
+        fbxKeyboardVerticalDirection_ = 0;
     }
     window_.store(destroyingWindow ? nullptr : window, std::memory_order_relaxed);
     if (destroyingWindow)
@@ -2231,14 +2250,14 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
     if (message == kPreviewImmediateFbxRedrawMessage)
     {
         immediateFbxRedrawPosted_ = false;
-        if (page_ == Page::FbxPreview && fbxVerticalPanDirection_ != 0)
+        if (page_ == Page::FbxPreview && hasFbxKeyboardPanDirection())
         {
             lastFbxKeyboardPanFrame_ = std::chrono::steady_clock::now();
-            applyFbxVerticalPanTick();
+            applyFbxKeyboardPanTick();
         }
         RedrawWindow(window, nullptr, nullptr,
                      RDW_INVALIDATE | RDW_NOCHILDREN | RDW_UPDATENOW);
-        if (page_ == Page::FbxPreview && fbxVerticalPanDirection_ != 0)
+        if (page_ == Page::FbxPreview && hasFbxKeyboardPanDirection())
         {
             scheduleFbxKeyboardPanFrame(window);
         }
@@ -2317,7 +2336,7 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
     {
         fbxKeyboardPanTimerActive_ = false;
         KillTimer(window, kPreviewFbxKeyboardPanTimerId);
-        if (page_ == Page::FbxPreview && fbxVerticalPanDirection_ != 0)
+        if (page_ == Page::FbxPreview && hasFbxKeyboardPanDirection())
         {
             scheduleImmediateFbxRedraw(window, false);
         }
@@ -2364,15 +2383,19 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
             OpenTaskPage(runtime);
             return true;
         }
-        if ((message == WM_KEYDOWN || message == WM_KEYUP) &&
-            (wParam == 'Q' || wParam == 'E'))
+        if ((message == WM_KEYDOWN || message == WM_KEYUP) && isFbxKeyboardPanKey(wParam))
         {
-            const bool qDown = wParam != 'Q' && (GetAsyncKeyState('Q') & 0x8000) != 0;
-            const bool eDown = wParam != 'E' && (GetAsyncKeyState('E') & 0x8000) != 0;
-            const bool nextQDown = message == WM_KEYDOWN && wParam == 'Q' ? true : qDown;
-            const bool nextEDown = message == WM_KEYDOWN && wParam == 'E' ? true : eDown;
-            const int direction = nextQDown == nextEDown ? 0 : (nextQDown ? 1 : -1);
-            setFbxVerticalPanDirection(window, direction);
+            const bool nextWDown = isKeyDownAfterMessage(message, wParam, 'W');
+            const bool nextADown = isKeyDownAfterMessage(message, wParam, 'A');
+            const bool nextSDown = isKeyDownAfterMessage(message, wParam, 'S');
+            const bool nextDDown = isKeyDownAfterMessage(message, wParam, 'D');
+            const bool nextQDown = isKeyDownAfterMessage(message, wParam, 'Q');
+            const bool nextEDown = isKeyDownAfterMessage(message, wParam, 'E');
+            const int rightDirection = (nextDDown ? 1 : 0) - (nextADown ? 1 : 0);
+            const int forwardDirection = (nextWDown ? 1 : 0) - (nextSDown ? 1 : 0);
+            const int verticalDirection = (nextEDown ? 1 : 0) - (nextQDown ? 1 : 0);
+            setFbxKeyboardPanDirection(window, rightDirection, forwardDirection,
+                                       verticalDirection);
             return true;
         }
         if (message == WM_CAPTURECHANGED || message == WM_CANCELMODE || message == WM_KILLFOCUS)
@@ -2380,7 +2403,7 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
             dragging_ = false;
             fbxDragMode_ = FbxDragMode::None;
             fbxDragRedrawThrottle_.reset();
-            setFbxVerticalPanDirection(window, 0);
+            setFbxKeyboardPanDirection(window, 0, 0, 0);
             return false;
         }
         if ((message == WM_LBUTTONUP || message == WM_RBUTTONUP || message == WM_MBUTTONUP) &&
@@ -3276,7 +3299,7 @@ void DomDownToolPreview::PreviewController::OpenExportPage(skui::Runtime& runtim
         immediateFbxRedrawPosted_ = false;
         fbxDragMode_ = FbxDragMode::None;
         fbxDragRedrawThrottle_.reset();
-        setFbxVerticalPanDirection(window_.load(std::memory_order_relaxed), 0);
+        setFbxKeyboardPanDirection(window_.load(std::memory_order_relaxed), 0, 0, 0);
         stopFbxPreviewFrameLoop(window_.load(std::memory_order_relaxed));
         resetFbxPreviewFrameRate();
     }
@@ -3302,7 +3325,7 @@ void DomDownToolPreview::PreviewController::OpenTaskPage(skui::Runtime& runtime)
         immediateFbxRedrawPosted_ = false;
         fbxDragMode_ = FbxDragMode::None;
         fbxDragRedrawThrottle_.reset();
-        setFbxVerticalPanDirection(window_.load(std::memory_order_relaxed), 0);
+        setFbxKeyboardPanDirection(window_.load(std::memory_order_relaxed), 0, 0, 0);
         stopFbxPreviewFrameLoop(window_.load(std::memory_order_relaxed));
         resetFbxPreviewFrameRate();
     }
@@ -3326,7 +3349,7 @@ void DomDownToolPreview::PreviewController::OpenPreviewPage(skui::Runtime& runti
         immediateFbxRedrawPosted_ = false;
         fbxDragMode_ = FbxDragMode::None;
         fbxDragRedrawThrottle_.reset();
-        setFbxVerticalPanDirection(window_.load(std::memory_order_relaxed), 0);
+        setFbxKeyboardPanDirection(window_.load(std::memory_order_relaxed), 0, 0, 0);
         stopFbxPreviewFrameLoop(window_.load(std::memory_order_relaxed));
         resetFbxPreviewFrameRate();
     }
@@ -3347,7 +3370,7 @@ void DomDownToolPreview::PreviewController::OpenFbxPreviewPage(
     fbxDragMode_ = FbxDragMode::None;
     fbxDragRedrawThrottle_.reset();
     const HWND window = window_.load(std::memory_order_relaxed);
-    setFbxVerticalPanDirection(window, 0);
+    setFbxKeyboardPanDirection(window, 0, 0, 0);
     resetFbxPreviewFrameRate();
     taskClearConfirmOpen_ = false;
     taskDeleteTargetId_.reset();
@@ -3988,53 +4011,67 @@ void DomDownToolPreview::PreviewController::scheduleImmediateFbxRedraw(HWND wind
     }
 }
 
-void DomDownToolPreview::PreviewController::setFbxVerticalPanDirection(HWND window,
-                                                                      int direction)
+bool DomDownToolPreview::PreviewController::hasFbxKeyboardPanDirection() const
 {
-    direction = std::clamp(direction, -1, 1);
-    if (direction == fbxVerticalPanDirection_)
+    return fbxKeyboardRightDirection_ != 0 || fbxKeyboardForwardDirection_ != 0 ||
+        fbxKeyboardVerticalDirection_ != 0;
+}
+
+void DomDownToolPreview::PreviewController::setFbxKeyboardPanDirection(
+    HWND window, int rightDirection, int forwardDirection, int verticalDirection)
+{
+    rightDirection = std::clamp(rightDirection, -1, 1);
+    forwardDirection = std::clamp(forwardDirection, -1, 1);
+    verticalDirection = std::clamp(verticalDirection, -1, 1);
+    if (rightDirection == fbxKeyboardRightDirection_ &&
+        forwardDirection == fbxKeyboardForwardDirection_ &&
+        verticalDirection == fbxKeyboardVerticalDirection_)
     {
         return;
     }
 
-    fbxVerticalPanDirection_ = direction;
-    if (direction == 0)
+    fbxKeyboardRightDirection_ = rightDirection;
+    fbxKeyboardForwardDirection_ = forwardDirection;
+    fbxKeyboardVerticalDirection_ = verticalDirection;
+    if (!hasFbxKeyboardPanDirection())
     {
         stopFbxKeyboardPanFrame(window);
         return;
     }
 
-    lastFbxVerticalPanTick_ = std::chrono::steady_clock::now() -
+    lastFbxKeyboardPanTick_ = std::chrono::steady_clock::now() -
         std::chrono::milliseconds(4);
     lastFbxKeyboardPanFrame_ = std::chrono::steady_clock::time_point{};
     scheduleFbxKeyboardPanFrame(window);
 }
 
-void DomDownToolPreview::PreviewController::applyFbxVerticalPanTick()
+void DomDownToolPreview::PreviewController::applyFbxKeyboardPanTick()
 {
-    if (fbxVerticalPanDirection_ == 0)
+    if (!hasFbxKeyboardPanDirection())
     {
         return;
     }
 
     const auto now = std::chrono::steady_clock::now();
     const double seconds = std::clamp(
-        std::chrono::duration<double>(now - lastFbxVerticalPanTick_).count(),
+        std::chrono::duration<double>(now - lastFbxKeyboardPanTick_).count(),
         0.0, 0.05);
-    lastFbxVerticalPanTick_ = now;
+    lastFbxKeyboardPanTick_ = now;
     if (seconds <= 0.0)
     {
         return;
     }
 
-    dx12FbxRenderer_.verticalPanBy(
-        static_cast<double>(fbxVerticalPanDirection_) *
-        kFbxKeyboardPanPixelsPerSecond * seconds);
+    const double pixels = kFbxKeyboardPanPixelsPerSecond * seconds;
+    dx12FbxRenderer_.keyboardPanBy(
+        static_cast<double>(fbxKeyboardRightDirection_) * pixels,
+        static_cast<double>(fbxKeyboardForwardDirection_) * pixels,
+        static_cast<double>(fbxKeyboardVerticalDirection_) * pixels);
 }
 
 void DomDownToolPreview::PreviewController::scheduleFbxKeyboardPanFrame(HWND window)
 {
-    if (!window || fbxVerticalPanDirection_ == 0 || immediateFbxRedrawPosted_ ||
+    if (!window || !hasFbxKeyboardPanDirection() || immediateFbxRedrawPosted_ ||
         fbxKeyboardPanTimerActive_)
     {
         return;
@@ -4218,6 +4255,7 @@ void DomDownToolPreview::PreviewController::applyFbxInteractionSettings(
     settings.rotateSpeed = clampFbxInteractionSpeed(settings.rotateSpeed);
     settings.zoomSpeed = clampFbxInteractionSpeed(settings.zoomSpeed);
     settings.panSpeed = clampFbxInteractionSpeed(settings.panSpeed);
+    settings.moveSpeed = clampFbxInteractionSpeed(settings.moveSpeed);
     fbxInteractionSettings_ = settings;
     dx12FbxRenderer_.setInteractionSettings(fbxInteractionSettings_);
 }
@@ -4229,7 +4267,7 @@ bool DomDownToolPreview::PreviewController::updateFbxInteractionSetting(
     if (!parsedValue.has_value())
     {
         return id == "fbx-rotate-speed" || id == "fbx-zoom-speed" ||
-            id == "fbx-pan-speed";
+            id == "fbx-pan-speed" || id == "fbx-move-speed";
     }
 
     FbxPreviewInteractionSettings nextSettings = fbxInteractionSettings_;
@@ -4244,6 +4282,10 @@ bool DomDownToolPreview::PreviewController::updateFbxInteractionSetting(
     else if (id == "fbx-pan-speed")
     {
         nextSettings.panSpeed = clampFbxInteractionSpeed(*parsedValue);
+    }
+    else if (id == "fbx-move-speed")
+    {
+        nextSettings.moveSpeed = clampFbxInteractionSpeed(*parsedValue);
     }
     else
     {
@@ -4268,12 +4310,16 @@ void DomDownToolPreview::PreviewController::syncFbxInteractionSettingsUi(
                          fmt::format("{:.1f}", fbxInteractionSettings_.zoomSpeed));
     runtime.setValueById("fbx-pan-speed",
                          fmt::format("{:.1f}", fbxInteractionSettings_.panSpeed));
+    runtime.setValueById("fbx-move-speed",
+                         fmt::format("{:.1f}", fbxInteractionSettings_.moveSpeed));
     runtime.setTextById("fbx-rotate-speed-value",
                         fbxInteractionSpeedText(fbxInteractionSettings_.rotateSpeed));
     runtime.setTextById("fbx-zoom-speed-value",
                         fbxInteractionSpeedText(fbxInteractionSettings_.zoomSpeed));
     runtime.setTextById("fbx-pan-speed-value",
                         fbxInteractionSpeedText(fbxInteractionSettings_.panSpeed));
+    runtime.setTextById("fbx-move-speed-value",
+                        fbxInteractionSpeedText(fbxInteractionSettings_.moveSpeed));
 }
 
 void DomDownToolPreview::PreviewController::scheduleUiRefresh()

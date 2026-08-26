@@ -1343,6 +1343,36 @@ void DomDownToolPreview::Dx12FbxRenderer::panBy(double deltaX, double deltaY)
                              -kMaximumTerrainPan, kMaximumTerrainPan);
 }
 
+void DomDownToolPreview::Dx12FbxRenderer::keyboardPanBy(double rightDelta,
+                                                        double forwardDelta,
+                                                        double upDelta)
+{
+    const double width = static_cast<double>(std::max<uint32_t>(impl_->viewportWidth, 1));
+    const double height = static_cast<double>(std::max<uint32_t>(impl_->viewportHeight, 1));
+    const double yawCos = std::cos(impl_->yaw);
+    const double yawSin = std::sin(impl_->yaw);
+    const double pitchCos = std::cos(impl_->pitch);
+    const double pitchSin = std::sin(impl_->pitch);
+    const CameraVector right{yawCos, 0.0, -yawSin};
+    const CameraVector forward{pitchCos * yawSin, -pitchSin, pitchCos * yawCos};
+    const double referenceDistance = std::max(cameraDistanceFromZoom(impl_->zoom),
+                                              kMinimumPanReferenceDistance);
+    const double horizontalUnits = rightDelta * 2.0 * referenceDistance *
+        impl_->interactionSettings.moveSpeed / (width * kPerspectiveScale);
+    const double forwardUnits = forwardDelta * 2.0 * referenceDistance *
+        impl_->interactionSettings.moveSpeed / (height * kPerspectiveScale);
+    const double upUnits = upDelta * 2.0 * referenceDistance *
+        impl_->interactionSettings.moveSpeed / (height * kPerspectiveScale);
+    impl_->panX = std::clamp(impl_->panX + right.x * horizontalUnits +
+                                 forward.x * forwardUnits,
+                             -kMaximumTerrainPan, kMaximumTerrainPan);
+    impl_->panY = std::clamp(impl_->panY + right.z * horizontalUnits +
+                                 forward.z * forwardUnits,
+                             -kMaximumTerrainPan, kMaximumTerrainPan);
+    impl_->panHeight = std::clamp(impl_->panHeight + forward.y * forwardUnits + upUnits,
+                                  -kMaximumTerrainPan, kMaximumTerrainPan);
+}
+
 void DomDownToolPreview::Dx12FbxRenderer::verticalPanBy(double delta)
 {
     const double height = static_cast<double>(std::max<uint32_t>(impl_->viewportHeight, 1));

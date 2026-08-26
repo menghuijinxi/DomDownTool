@@ -1461,7 +1461,7 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
             return false;
         }
         if (standaloneBuildingFbxRequested &&
-            !RunBuildingFbxExport(queuedExport, stepIndex++, stepCount, error))
+            !RunBuildingFbxExport(queuedExport, elevationData, stepIndex++, stepCount, error))
         {
             return false;
         }
@@ -1804,7 +1804,9 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
 }
 
 bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
-    const QueuedExport& queuedExport, size_t stepIndex, size_t stepCount,
+    const QueuedExport& queuedExport,
+    const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
+    size_t stepIndex, size_t stepCount,
     std::string& error)
 {
     const ExportConfiguration& configuration = queuedExport.configuration;
@@ -1871,6 +1873,16 @@ bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
     exportOptions.maxWallMaterialsPerBucket =
         configuration.buildingMaxWallMaterialsPerBucket;
     exportOptions.randomSeed = configuration.buildingTextureRandomSeed;
+    if (elevationData)
+    {
+        exportOptions.terrainHeightEnabled = true;
+        exportOptions.elevationReferenceMeters = elevationData->GetMinimumElevationMeters();
+        exportOptions.elevationSampler =
+            [elevationData](const DownTool::LonLat& lonLat)
+            {
+                return elevationData->Sample(lonLat);
+            };
+    }
     exportOptions.cancellationRequested = cancellationRequested;
     UpdateProgress(
         queuedExport.taskId, "导出建筑散图 FBX",

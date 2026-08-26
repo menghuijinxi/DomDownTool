@@ -120,12 +120,14 @@ bool runTest()
                 postprocess_test::ContainsText(documentPath, "id=\"fbx-rotate-speed\"") &&
                 postprocess_test::ContainsText(documentPath, "id=\"fbx-zoom-speed\"") &&
                 postprocess_test::ContainsText(documentPath, "id=\"fbx-pan-speed\"") &&
+                postprocess_test::ContainsText(documentPath, "id=\"fbx-move-speed\"") &&
                 postprocess_test::ContainsText(documentPath, "aria-label=\"预览显示模式\"") &&
                 postprocess_test::ContainsText(
                     documentPath, "data-action=\"set-fbx-preview-mode\"") &&
                 runtime.setValueById("fbx-rotate-speed", "1.0") &&
                 runtime.setValueById("fbx-zoom-speed", "1.0") &&
                 runtime.setValueById("fbx-pan-speed", "1.0") &&
+                runtime.setValueById("fbx-move-speed", "1.0") &&
                 runtime.setTextsById({
                     {"fbx-preview-title", "测试 FBX"},
                     {"fbx-preview-directory", "tmp/export"},
@@ -133,7 +135,8 @@ bool runTest()
                     {"fbx-preview-fps", "FPS 60"},
                     {"fbx-rotate-speed-value", "1.0x"},
                     {"fbx-zoom-speed-value", "1.0x"},
-                    {"fbx-pan-speed-value", "1.0x"}}),
+                    {"fbx-pan-speed-value", "1.0x"},
+                    {"fbx-move-speed-value", "1.0x"}}),
             "FBX 网格预览页缺少页面结构或动态状态字段"))
     {
         return false;
@@ -174,6 +177,8 @@ bool runTest()
 
     const std::filesystem::path controllerPath =
         sourceRoot / "src" / "preview" / "PreviewController.cpp";
+    const std::filesystem::path dx12FbxRendererPath =
+        sourceRoot / "src" / "preview" / "Dx12FbxRenderer.cpp";
     const std::filesystem::path cmakePath = sourceRoot / "CMakeLists.txt";
     if (!postprocess_test::Require(
             postprocess_test::ContainsText(controllerPath, "disableFbxInputMethod") &&
@@ -187,14 +192,26 @@ bool runTest()
     if (!postprocess_test::Require(
             postprocess_test::ContainsText(controllerPath,
                                            "scheduleFbxKeyboardPanFrame(window)") &&
+                postprocess_test::ContainsText(controllerPath, "isFbxKeyboardPanKey") &&
+                postprocess_test::ContainsText(controllerPath, "nextWDown") &&
+                postprocess_test::ContainsText(controllerPath, "nextADown") &&
+                postprocess_test::ContainsText(controllerPath, "nextSDown") &&
+                postprocess_test::ContainsText(controllerPath, "nextDDown") &&
+                postprocess_test::ContainsText(controllerPath,
+                                               "dx12FbxRenderer_.keyboardPanBy") &&
+                postprocess_test::ContainsText(controllerPath, "fbx-move-speed") &&
+                postprocess_test::ContainsText(controllerPath, "moveSpeed") &&
                 postprocess_test::ContainsText(
                     controllerPath, "kPreviewFbxKeyboardPanFrameIntervalMilliseconds") &&
                 postprocess_test::ContainsText(controllerPath, "startFbxPreviewFrameLoop") &&
                 postprocess_test::ContainsText(controllerPath, "kPreviewFbxFrameTimerId") &&
-                postprocess_test::ContainsText(controllerPath, "nextQDown ? 1 : -1") &&
+                postprocess_test::ContainsText(controllerPath, "nextQDown") &&
+                postprocess_test::ContainsText(controllerPath, "nextEDown") &&
+                postprocess_test::ContainsText(dx12FbxRendererPath,
+                                               "forward.y * forwardUnits") &&
                 !postprocess_test::ContainsText(controllerPath,
                                                 "kPreviewFbxVerticalPanTimerId"),
-            "FBX Q/E 连续平移没有使用独立帧调度器"))
+            "FBX WASD/QE 连续平移没有使用独立帧调度器"))
     {
         return false;
     }

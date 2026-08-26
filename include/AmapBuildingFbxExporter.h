@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 
 #include "AmapVectorDecoder.h"
@@ -21,6 +22,9 @@ namespace DownTool
         uint32_t textureUnitPixelSize = 64;
         uint32_t maxWallMaterialsPerBucket = 1;
         uint32_t randomSeed = 0;
+        bool terrainHeightEnabled = false;
+        double elevationReferenceMeters = 0.;
+        std::function<std::optional<double>(const LonLat&)> elevationSampler;
         std::function<bool()> cancellationRequested;
     };
 

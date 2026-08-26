@@ -150,9 +150,12 @@ class PreviewController
 
     void scheduleImmediateFbxRedraw(HWND window, bool throttle = true);
 
-    void setFbxVerticalPanDirection(HWND window, int direction);
+    [[nodiscard]] bool hasFbxKeyboardPanDirection() const;
 
-    void applyFbxVerticalPanTick();
+    void setFbxKeyboardPanDirection(HWND window, int rightDirection,
+                                    int forwardDirection, int verticalDirection);
+
+    void applyFbxKeyboardPanTick();
 
     void scheduleFbxKeyboardPanFrame(HWND window);
 
@@ -260,8 +263,10 @@ class PreviewController
     POINT lastDragPoint_{};
     bool immediateMapRedrawPosted_ = false;
     bool immediateFbxRedrawPosted_ = false;
-    int fbxVerticalPanDirection_ = 0;
-    std::chrono::steady_clock::time_point lastFbxVerticalPanTick_{};
+    int fbxKeyboardRightDirection_ = 0;
+    int fbxKeyboardForwardDirection_ = 0;
+    int fbxKeyboardVerticalDirection_ = 0;
+    std::chrono::steady_clock::time_point lastFbxKeyboardPanTick_{};
     std::chrono::steady_clock::time_point lastFbxKeyboardPanFrame_{};
     std::chrono::steady_clock::time_point lastFbxFrameTime_{};
     std::chrono::steady_clock::time_point fbxFrameRateWindowStart_{};

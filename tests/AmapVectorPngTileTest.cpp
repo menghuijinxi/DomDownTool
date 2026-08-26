@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -153,7 +154,9 @@ namespace
 
     bool RequireBuildingFbx(
         const std::filesystem::path& fbxPath,
-        const std::filesystem::path& fbxRoot)
+        const std::filesystem::path& fbxRoot,
+        double minimumExpectedZ = 0.,
+        double minimumExpectedHeightRange = 0.)
     {
         Assimp::Importer importer;
         const aiScene* scene = postprocess_test::ReadFbxScene(importer, fbxPath);
@@ -167,6 +170,8 @@ namespace
         bool foundPositiveHeight = false;
         bool foundDiffuseTexture = false;
         bool foundRepeatingWallUv = false;
+        float sceneMinimumZ = std::numeric_limits<float>::max();
+        float sceneMaximumZ = std::numeric_limits<float>::lowest();
         for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; meshIndex++)
         {
             const aiMesh* mesh = scene->mMeshes[meshIndex];
@@ -178,6 +183,8 @@ namespace
                  vertexIndex++)
             {
                 foundPositiveHeight = foundPositiveHeight || mesh->mVertices[vertexIndex].z > 1.f;
+                sceneMinimumZ = std::min(sceneMinimumZ, mesh->mVertices[vertexIndex].z);
+                sceneMaximumZ = std::max(sceneMaximumZ, mesh->mVertices[vertexIndex].z);
             }
 
             if (!mesh->HasTextureCoords(0) || mesh->mMaterialIndex >= scene->mNumMaterials)
@@ -252,6 +259,10 @@ namespace
         }
 
         return Require(foundPositiveHeight, "建筑 FBX 没有正高度顶点") &&
+            Require(sceneMinimumZ >= minimumExpectedZ,
+                "建筑 FBX 没有按地形最低点抬高底部") &&
+            Require(sceneMaximumZ - sceneMinimumZ >= minimumExpectedHeightRange,
+                "建筑 FBX 没有按地形最高点加建筑高度生成顶部") &&
             Require(foundDiffuseTexture, "建筑 FBX 没有 diffuse 贴图") &&
             Require(foundRepeatingWallUv, "建筑 FBX 墙体 UV 没有横向重复或纵向完整映射") &&
             Require(std::filesystem::exists(fbxRoot / "building_wall_0.jpg"),
@@ -665,6 +676,14 @@ namespace
         downloader.SetFbxTextureSize(256);
         downloader.SetFbxShape(DownTool::FbxPlanetShape::Plane);
         downloader.SetFbxMeshSubdivision(2);
+        downloader.SetFbxTerrainHeightEnabled(true);
+        downloader.SetFbxElevationReferenceMeters(100.);
+        downloader.SetFbxElevationSampler(
+            [centerWgs84](const DownTool::LonLat& lonLat)
+            {
+                return std::optional<double>(
+                    100. + (lonLat.lon - centerWgs84.lon) * 10000.);
+            });
         DownTool::AmapVectorDecodedData fbxData = decodedData;
         fbxData.features.push_back(
             MakeHeightBuilding({ centerGcj02.lon + 0.0015, centerGcj02.lat - 0.0015 },
@@ -686,7 +705,7 @@ namespace
                 fbxRoot / "buildings.fbx"),
                 "后处理缺少建筑 FBX") ||
             !postprocess_test::RequireFbxAxisAndUnit(fbxRoot / "buildings.fbx") ||
-            !RequireBuildingFbx(fbxRoot / "buildings.fbx", fbxRoot))
+            !RequireBuildingFbx(fbxRoot / "buildings.fbx", fbxRoot, 100., 1000.))
         {
             return false;
         }

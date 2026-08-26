@@ -11,6 +11,7 @@
 #include <limits>
 #include <map>
 #include <numbers>
+#include <optional>
 #include <random>
 #include <set>
 #include <string>
@@ -209,6 +210,13 @@ namespace
             (LongitudeToWebMercatorX(wgs84.lon) - centerMercatorX) * 100.,
             (LatitudeToWebMercatorY(wgs84.lat) - centerMercatorY) * 100.
         };
+    }
+
+    DownTool::LonLat Gcj02CoordinateToWgs84(
+        const DownTool::AmapVectorCoordinate& coordinate)
+    {
+        return DownTool::GCJ02GoogleDownBase::GCJ02ToWGS84(
+            { coordinate.longitude, coordinate.latitude });
     }
 
     double Distance(const Point2& first, const Point2& second)
@@ -416,6 +424,44 @@ namespace
             }
         }
         return geometry;
+    }
+
+    std::optional<std::pair<double, double>> SampleBuildingTerrainHeightRange(
+        const DownTool::AmapVectorFeature& feature,
+        const DownTool::AmapBuildingFbxExportOptions& options)
+    {
+        if (!options.terrainHeightEnabled || !options.elevationSampler)
+        {
+            return std::nullopt;
+        }
+
+        double minimumCentimeters = std::numeric_limits<double>::max();
+        double maximumCentimeters = std::numeric_limits<double>::lowest();
+        bool hasSample = false;
+        for (const std::vector<DownTool::AmapVectorCoordinate>& sourceRing :
+             feature.geometryParts)
+        {
+            for (const DownTool::AmapVectorCoordinate& coordinate : sourceRing)
+            {
+                const std::optional<double> elevationMeters = options.elevationSampler(
+                    Gcj02CoordinateToWgs84(coordinate));
+                if (!elevationMeters)
+                {
+                    continue;
+                }
+
+                const double relativeCentimeters =
+                    std::max(0., *elevationMeters - options.elevationReferenceMeters) * 100.;
+                minimumCentimeters = std::min(minimumCentimeters, relativeCentimeters);
+                maximumCentimeters = std::max(maximumCentimeters, relativeCentimeters);
+                hasSample = true;
+            }
+        }
+        if (!hasSample)
+        {
+            return std::nullopt;
+        }
+        return std::pair<double, double>{ minimumCentimeters, maximumCentimeters };
     }
 
     bool HasJpegSignature(const std::filesystem::path& path)
@@ -821,6 +867,8 @@ namespace
         const Ring& ring,
         bool hole,
         double heightCentimeters,
+        double bottomCentimeters,
+        double topCentimeters,
         const TextureInfo& texture,
         BuildingMeshData& mesh)
     {
@@ -851,21 +899,24 @@ namespace
             uint32_t bottomSecond = 0;
             uint32_t topFirst = 0;
             uint32_t topSecond = 0;
+            const double bottomV =
+                std::max(1., (topCentimeters - bottomCentimeters) /
+                                std::max(1., heightCentimeters));
             if (!AppendVertex(
                     mesh,
-                    { first.x, first.y, 0., currentU, 1., normal },
+                    { first.x, first.y, bottomCentimeters, currentU, bottomV, normal },
                     bottomFirst) ||
                 !AppendVertex(
                     mesh,
-                    { second.x, second.y, 0., nextU, 1., normal },
+                    { second.x, second.y, bottomCentimeters, nextU, bottomV, normal },
                     bottomSecond) ||
                 !AppendVertex(
                     mesh,
-                    { first.x, first.y, heightCentimeters, currentU, 0., normal },
+                    { first.x, first.y, topCentimeters, currentU, 0., normal },
                     topFirst) ||
                 !AppendVertex(
                     mesh,
-                    { second.x, second.y, heightCentimeters, nextU, 0., normal },
+                    { second.x, second.y, topCentimeters, nextU, 0., normal },
                     topSecond))
             {
                 return;
@@ -888,6 +939,8 @@ namespace
     void AppendWallGeometry(
         const BuildingGeometry& geometry,
         double heightCentimeters,
+        double bottomCentimeters,
+        double topCentimeters,
         const TextureInfo& texture,
         BuildingMeshData& mesh)
     {
@@ -899,6 +952,8 @@ namespace
                     polygonRing.ring,
                     polygonRing.hole,
                     heightCentimeters,
+                    bottomCentimeters,
+                    topCentimeters,
                     texture,
                     mesh);
             }
@@ -918,7 +973,7 @@ namespace
 
     void AppendRoofGeometry(
         const BuildingGeometry& geometry,
-        double heightCentimeters,
+        double topCentimeters,
         BuildingMeshData& mesh)
     {
         const double footprintWidth = std::max(1., geometry.bounds.maxX - geometry.bounds.minX);
@@ -938,7 +993,7 @@ namespace
                     mesh.vertices.push_back({
                         point.x,
                         point.y,
-                        heightCentimeters,
+                        topCentimeters,
                         (point.x - geometry.bounds.minX) / footprintWidth,
                         1. - (point.y - geometry.bounds.minY) / footprintHeight,
                         { 0., 0., 1. }
@@ -1185,6 +1240,11 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
 
         const double heightCentimeters =
             static_cast<double>(feature.height) * options.layerHeightCentimeters;
+        const std::optional<std::pair<double, double>> terrainHeightRange =
+            SampleBuildingTerrainHeightRange(feature, options);
+        const double bottomCentimeters = terrainHeightRange ? terrainHeightRange->first : 0.;
+        const double topCentimeters =
+            (terrainHeightRange ? terrainHeightRange->second : 0.) + heightCentimeters;
         const size_t wallTextureIndex = SelectWallTexture(
             textureLibrary.wallTextures,
             geometry,
@@ -1209,11 +1269,13 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
         AppendWallGeometry(
             geometry,
             heightCentimeters,
+            bottomCentimeters,
+            topCentimeters,
             wallTexture,
             GetMeshBucket(meshBuckets, wallTexture).mesh);
         AppendRoofGeometry(
             geometry,
-            heightCentimeters,
+            topCentimeters,
             GetMeshBucket(meshBuckets, roofTexture).mesh);
         result.buildingCount++;
     }

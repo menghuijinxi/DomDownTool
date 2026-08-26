@@ -1003,6 +1003,9 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
             buildingFbxOptions.maxWallMaterialsPerBucket =
                 renderOptions.buildingMaxWallMaterialsPerBucket;
             buildingFbxOptions.randomSeed = renderOptions.buildingTextureRandomSeed;
+            buildingFbxOptions.terrainHeightEnabled = GetFbxTerrainHeightEnabled();
+            buildingFbxOptions.elevationReferenceMeters = GetFbxElevationReferenceMeters();
+            buildingFbxOptions.elevationSampler = GetFbxElevationSampler();
             buildingFbxOptions.cancellationRequested = isCancellationRequested;
             const AmapBuildingFbxExportResult buildingFbxResult =
                 ExportAmapBuildingsToFbx(buildingData, buildingFbxOptions);
