@@ -80,6 +80,8 @@ namespace
         double u = 0.;
         double v = 0.;
         std::array<double, 3> normal = { 0., 0., 1. };
+        std::array<double, 2> atlasOffset = { 0., 0. };
+        std::array<double, 2> atlasMax = { 1., 1. };
     };
 
     struct BuildingMeshData
@@ -87,6 +89,7 @@ namespace
         std::string name;
         std::filesystem::path texturePath;
         bool wrapTextureU = false;
+        bool usesAtlasTransform = false;
         std::vector<BuildingVertex> vertices;
         std::vector<uint32_t> indices;
     };
@@ -973,14 +976,6 @@ namespace
         }
     }
 
-    Point2 LerpPoint(const Point2& first, const Point2& second, double ratio)
-    {
-        return {
-            first.x + (second.x - first.x) * ratio,
-            first.y + (second.y - first.y) * ratio
-        };
-    }
-
     void AppendWallRingGeometry(
         const Ring& ring,
         bool hole,
@@ -988,7 +983,6 @@ namespace
         double bottomCentimeters,
         double topCentimeters,
         const TextureInfo& texture,
-        bool splitRepeatedUv,
         BuildingMeshData& mesh)
     {
         const double signedArea = SignedArea(ring);
@@ -1017,68 +1011,18 @@ namespace
             const double bottomV =
                 std::max(1., (topCentimeters - bottomCentimeters) /
                                 std::max(1., heightCentimeters));
-            if (!splitRepeatedUv)
-            {
-                AppendWallQuad(
-                    first,
-                    second,
-                    bottomCentimeters,
-                    topCentimeters,
-                    currentU,
-                    nextU,
-                    bottomV,
-                    0.,
-                    normal,
-                    useRightNormal,
-                    mesh);
-            }
-            else
-            {
-                const double heightSpan = topCentimeters - bottomCentimeters;
-                double splitU = currentU;
-                while (splitU < nextU - 1.e-9)
-                {
-                    const double nextBoundary = std::floor(splitU) + 1.;
-                    const double chunkEndU = std::min(nextU, nextBoundary);
-                    const double startRatio = (splitU - currentU) /
-                        std::max(1.e-9, nextU - currentU);
-                    const double endRatio = (chunkEndU - currentU) /
-                        std::max(1.e-9, nextU - currentU);
-                    const double tileUOffset = std::floor(splitU);
-                    const Point2 chunkFirst = LerpPoint(first, second, startRatio);
-                    const Point2 chunkSecond = LerpPoint(first, second, endRatio);
-
-                    double splitV = 0.;
-                    while (splitV < bottomV - 1.e-9)
-                    {
-                        const double nextVBoundary = std::floor(splitV) + 1.;
-                        const double chunkEndV = std::min(bottomV, nextVBoundary);
-                        const double tileVOffset = std::floor(splitV);
-                        const double upperHeightRatio = splitV /
-                            std::max(1.e-9, bottomV);
-                        const double lowerHeightRatio = chunkEndV /
-                            std::max(1.e-9, bottomV);
-                        const double upperCentimeters = topCentimeters -
-                            heightSpan * upperHeightRatio;
-                        const double lowerCentimeters = topCentimeters -
-                            heightSpan * lowerHeightRatio;
-                        AppendWallQuad(
-                            chunkFirst,
-                            chunkSecond,
-                            lowerCentimeters,
-                            upperCentimeters,
-                            splitU - tileUOffset,
-                            chunkEndU - tileUOffset,
-                            chunkEndV - tileVOffset,
-                            splitV - tileVOffset,
-                            normal,
-                            useRightNormal,
-                            mesh);
-                        splitV = chunkEndV;
-                    }
-                    splitU = chunkEndU;
-                }
-            }
+            AppendWallQuad(
+                first,
+                second,
+                bottomCentimeters,
+                topCentimeters,
+                currentU,
+                nextU,
+                bottomV,
+                0.,
+                normal,
+                useRightNormal,
+                mesh);
             currentU = nextU;
         }
     }
@@ -1089,7 +1033,6 @@ namespace
         double bottomCentimeters,
         double topCentimeters,
         const TextureInfo& texture,
-        bool splitRepeatedUv,
         BuildingMeshData& mesh)
     {
         for (const BuildingPolygon& polygon : geometry.polygons)
@@ -1103,7 +1046,6 @@ namespace
                     bottomCentimeters,
                     topCentimeters,
                     texture,
-                    splitRepeatedUv,
                     mesh);
             }
         }
@@ -1608,13 +1550,11 @@ namespace
         return true;
     }
 
-    BuildingVertex RemapAtlasVertex(const BuildingVertex& vertex, const AtlasRect& rect)
+    BuildingVertex AddAtlasTransformToVertex(const BuildingVertex& vertex, const AtlasRect& rect)
     {
         BuildingVertex result = vertex;
-        const double u = std::clamp(vertex.u, 0., 1.);
-        const double v = std::clamp(vertex.v, 0., 1.);
-        result.u = rect.u0 + u * (rect.u1 - rect.u0);
-        result.v = rect.v0 + v * (rect.v1 - rect.v0);
+        result.atlasOffset = { rect.u0, rect.v0 };
+        result.atlasMax = { rect.u1, rect.v1 };
         return result;
     }
 
@@ -1636,7 +1576,7 @@ namespace
         atlasMesh.vertices.reserve(atlasMesh.vertices.size() + bucket.mesh.vertices.size());
         for (const BuildingVertex& vertex : bucket.mesh.vertices)
         {
-            atlasMesh.vertices.push_back(RemapAtlasVertex(vertex, rect));
+            atlasMesh.vertices.push_back(AddAtlasTransformToVertex(vertex, rect));
         }
         atlasMesh.indices.reserve(atlasMesh.indices.size() + bucket.mesh.indices.size());
         for (const uint32_t index : bucket.mesh.indices)
@@ -1675,6 +1615,7 @@ namespace
         atlasMesh.name = materialName;
         atlasMesh.texturePath = atlasPath;
         atlasMesh.wrapTextureU = false;
+        atlasMesh.usesAtlasTransform = true;
         for (const auto& [texturePath, bucket] : meshBuckets)
         {
             if (IsWallMeshTexturePath(texturePath) != wallTextures)
@@ -1706,6 +1647,13 @@ namespace
         mesh->mNormals = new aiVector3D[mesh->mNumVertices];
         mesh->mTextureCoords[0] = new aiVector3D[mesh->mNumVertices];
         mesh->mNumUVComponents[0] = 2;
+        if (meshData.usesAtlasTransform)
+        {
+            mesh->mTextureCoords[1] = new aiVector3D[mesh->mNumVertices];
+            mesh->mTextureCoords[2] = new aiVector3D[mesh->mNumVertices];
+            mesh->mNumUVComponents[1] = 2;
+            mesh->mNumUVComponents[2] = 2;
+        }
         for (unsigned int index = 0; index < mesh->mNumVertices; index++)
         {
             const BuildingVertex& vertex = meshData.vertices[index];
@@ -1721,6 +1669,17 @@ namespace
                 static_cast<float>(vertex.u),
                 static_cast<float>(vertex.v),
                 0.f);
+            if (meshData.usesAtlasTransform)
+            {
+                mesh->mTextureCoords[1][index] = aiVector3D(
+                    static_cast<float>(vertex.atlasOffset[0]),
+                    static_cast<float>(vertex.atlasOffset[1]),
+                    0.f);
+                mesh->mTextureCoords[2][index] = aiVector3D(
+                    static_cast<float>(vertex.atlasMax[0]),
+                    static_cast<float>(vertex.atlasMax[1]),
+                    0.f);
+            }
         }
 
         mesh->mNumFaces = static_cast<unsigned int>(meshData.indices.size() / 3);
@@ -1918,7 +1877,6 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
             bottomCentimeters,
             topCentimeters,
             wallTexture,
-            useTextureAtlas,
             GetMeshBucket(meshBuckets, wallTexture, !useTextureAtlas).mesh);
         AppendRoofGeometry(
             geometry,

@@ -70,6 +70,7 @@ constexpr unsigned int kReservedTextureWorkerCoreCount = 2;
 constexpr unsigned int kMaximumTextureWorkerCount = 32;
 constexpr std::size_t kMaximumTextureUploadsPerFrame = 16;
 constexpr std::size_t kMaximumTextureUploadBytesPerFrame = 96U * 1024U * 1024U;
+constexpr uint32_t kAtlasTextureTransformFlag = 1U;
 constexpr double kDefaultTerrainYaw = 0.0;
 constexpr double kDefaultTerrainPitch = 1.5707963267948966;
 constexpr double kMinimumTerrainPitch = 0.01;
@@ -102,6 +103,10 @@ struct GpuVertex
     float z = 0.F;
     float u = 0.F;
     float v = 0.F;
+    float atlasU = 0.F;
+    float atlasV = 0.F;
+    float atlasMaxU = 1.F;
+    float atlasMaxV = 1.F;
 };
 
 struct CpuBatch
@@ -111,6 +116,7 @@ struct CpuBatch
     std::vector<uint32_t> edgeIndices;
     Bounds bounds;
     uint32_t textureIndex = std::numeric_limits<uint32_t>::max();
+    bool usesAtlasTransform = false;
 };
 
 struct CpuTexture
@@ -629,12 +635,24 @@ cbuffer Constants : register(b0) {
     uint flags;
     float2 color;
 };
-struct Input { float3 position : POSITION; float2 uv : TEXCOORD0; };
-struct Output { float4 position : SV_POSITION; float2 uv : TEXCOORD0; };
+struct Input {
+    float3 position : POSITION;
+    float2 uv : TEXCOORD0;
+    float2 atlasOffset : TEXCOORD1;
+    float2 atlasMax : TEXCOORD2;
+};
+struct Output {
+    float4 position : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float2 atlasOffset : TEXCOORD1;
+    float2 atlasMax : TEXCOORD2;
+};
 Output main(Input input) {
     Output output;
     output.position = mul(float4(input.position, 1.0), transform);
-    output.uv = float2(input.uv.x, 1.0 - input.uv.y);
+    output.uv = input.uv;
+    output.atlasOffset = input.atlasOffset;
+    output.atlasMax = input.atlasMax;
     return output;
 }
 )";
@@ -648,10 +666,25 @@ cbuffer Constants : register(b0) {
     uint flags;
     float2 color;
 };
-struct Input { float4 position : SV_POSITION; float2 uv : TEXCOORD0; };
+struct Input {
+    float4 position : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float2 atlasOffset : TEXCOORD1;
+    float2 atlasMax : TEXCOORD2;
+};
+float RepeatCoordinate(float value) {
+    float repeated = value - floor(value);
+    return repeated < 0.00001 && value > 0.00001 ? 1.0 : repeated;
+}
 float4 main(Input input) : SV_TARGET {
     if (textureIndex == 0xffffffff) return float4(color.x, color.y, 0.42, 1.0);
-    return textureImage.Sample(samplerState, input.uv);
+    float2 bottomOriginUv = input.uv;
+    if ((flags & 1u) != 0u) {
+        float2 repeatedUv = float2(
+            RepeatCoordinate(input.uv.x), RepeatCoordinate(input.uv.y));
+        bottomOriginUv = lerp(input.atlasOffset, input.atlasMax, repeatedUv);
+    }
+    return textureImage.Sample(samplerState, float2(bottomOriginUv.x, 1.0 - bottomOriginUv.y));
 }
 )";
 
@@ -910,6 +943,10 @@ bool initializeState(Dx12FbxState& state, ID3D12Resource* target, ID3D12CommandQ
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
          D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12,
+         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT, 0, 20,
+         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 2, DXGI_FORMAT_R32G32_FLOAT, 0, 28,
          D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}};
     const auto makePipeline = [&](ID3DBlob* pixelShader, D3D12_PRIMITIVE_TOPOLOGY_TYPE topology,
                                   bool textured, ComPtr<ID3D12PipelineState>& result)
@@ -1178,6 +1215,8 @@ bool parseFbx(const std::vector<std::filesystem::path>& paths, std::stop_token s
                 CpuBatch batch;
                 batch.textureIndex = findTextureIndex(
                     *scene, mesh->mMaterialIndex, path, textureIndices, parsed.texturePaths);
+                batch.usesAtlasTransform = mesh->HasTextureCoords(1) &&
+                    mesh->HasTextureCoords(2);
                 batch.vertices.reserve(mesh->mNumVertices);
                 for (unsigned int vertexIndex = 0; vertexIndex < mesh->mNumVertices;
                      ++vertexIndex)
@@ -1185,9 +1224,22 @@ bool parseFbx(const std::vector<std::filesystem::path>& paths, std::stop_token s
                     const aiVector3D point = transform * mesh->mVertices[vertexIndex];
                     const aiVector3D uv = mesh->HasTextureCoords(0)
                         ? mesh->mTextureCoords[0][vertexIndex] : aiVector3D{};
+                    const aiVector3D atlasOffset = mesh->HasTextureCoords(1)
+                        ? mesh->mTextureCoords[1][vertexIndex] : aiVector3D{};
+                    const aiVector3D atlasMax = mesh->HasTextureCoords(2)
+                        ? mesh->mTextureCoords[2][vertexIndex] : aiVector3D{1.f, 1.f, 0.f};
                     includePoint(bounds, {point.x, point.y, point.z});
                     includePoint(batch.bounds, {point.x, point.y, point.z});
-                    batch.vertices.push_back({point.x, point.y, point.z, uv.x, uv.y});
+                    batch.vertices.push_back({
+                        point.x,
+                        point.y,
+                        point.z,
+                        uv.x,
+                        uv.y,
+                        atlasOffset.x,
+                        atlasOffset.y,
+                        atlasMax.x,
+                        atlasMax.y});
                 }
                 std::unordered_set<uint64_t> edges;
                 edges.reserve(static_cast<std::size_t>(mesh->mNumFaces) * 2U);
@@ -1842,6 +1894,7 @@ bool DomDownToolPreview::Dx12FbxRenderer::draw(SkCanvas& canvas, int width, int 
             batch.source->textureIndex < impl_->state.textures.size() &&
             impl_->state.textures[batch.source->textureIndex];
         constants.textureIndex = hasTexture ? 0 : std::numeric_limits<uint32_t>::max();
+        constants.flags = batch.source->usesAtlasTransform ? kAtlasTextureTransformFlag : 0U;
         commandList->SetGraphicsRoot32BitConstants(0, kRootConstantCount, &constants, 0);
         D3D12_GPU_DESCRIPTOR_HANDLE textureHandle =
             impl_->state.srvHeap->GetGPUDescriptorHandleForHeapStart();

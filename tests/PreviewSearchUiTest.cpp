@@ -379,6 +379,10 @@ bool runTest()
                                                "std::vector<std::jthread> textureWorkers") &&
                 postprocess_test::ContainsText(dx12RendererPath,
                                                "kRGBA_8888_SkColorType") &&
+                postprocess_test::ContainsText(dx12RendererPath,
+                                               "kAtlasTextureTransformFlag") &&
+                postprocess_test::ContainsText(dx12RendererPath,
+                                               "lerp(input.atlasOffset, input.atlasMax") &&
                 postprocess_test::ContainsText(skiaFbxRendererPath,
                                                "SkTileMode::kRepeat") &&
                 !postprocess_test::ContainsText(dx12RendererPath,

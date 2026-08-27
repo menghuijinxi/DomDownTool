@@ -95,6 +95,46 @@ namespace
             static_cast<int>(pixel[2]) > 16;
     }
 
+    float RepeatAtlasCoordinate(float value)
+    {
+        const float repeated = value - std::floor(value);
+        return repeated < 0.00001f && value > 0.00001f ? 1.f : repeated;
+    }
+
+    aiVector3D MakeAtlasSampleUv(
+        const aiVector3D& repeatUv,
+        const aiVector3D& atlasOffset,
+        const aiVector3D& atlasMax)
+    {
+        const float repeatedU = RepeatAtlasCoordinate(repeatUv.x);
+        const float repeatedV = RepeatAtlasCoordinate(repeatUv.y);
+        return aiVector3D(
+            atlasOffset.x + (atlasMax.x - atlasOffset.x) * repeatedU,
+            atlasOffset.y + (atlasMax.y - atlasOffset.y) * repeatedV,
+            0.f);
+    }
+
+    size_t CountFbxFaces(const std::filesystem::path& fbxPath)
+    {
+        Assimp::Importer importer;
+        const aiScene* scene = postprocess_test::ReadFbxScene(importer, fbxPath);
+        if (scene == nullptr)
+        {
+            return 0;
+        }
+
+        size_t faceCount = 0;
+        for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; meshIndex++)
+        {
+            const aiMesh* mesh = scene->mMeshes[meshIndex];
+            if (mesh != nullptr)
+            {
+                faceCount += mesh->mNumFaces;
+            }
+        }
+        return faceCount;
+    }
+
     bool TryGetPixelAtGcj02(
         const cv::Mat& image,
         const DownTool::LonLat& coordinate,
@@ -250,6 +290,15 @@ namespace
                 continue;
             }
 
+            const bool hasAtlasTransformUv = mesh->HasTextureCoords(1) &&
+                mesh->HasTextureCoords(2);
+            if (expectMergedAtlas &&
+                !Require(hasAtlasTransformUv,
+                    "建筑合并贴图 FBX 墙体缺少 UV1/UV2 atlas 变换通道"))
+            {
+                return false;
+            }
+
             float minimumV = std::numeric_limits<float>::max();
             float maximumV = std::numeric_limits<float>::lowest();
             float maximumU = 0.f;
@@ -262,6 +311,14 @@ namespace
                 maximumV = std::max(maximumV, uv.y);
                 if (expectMergedAtlas)
                 {
+                    const aiVector3D& atlasOffset = mesh->mTextureCoords[1][vertexIndex];
+                    const aiVector3D& atlasMax = mesh->mTextureCoords[2][vertexIndex];
+                    const aiVector3D atlasUv = MakeAtlasSampleUv(
+                        uv, atlasOffset, atlasMax);
+                    foundAtlasWallUv = foundAtlasWallUv ||
+                        (atlasOffset.x >= -0.001f && atlasOffset.y >= -0.001f &&
+                         atlasMax.x > atlasOffset.x && atlasMax.y > atlasOffset.y &&
+                         atlasMax.x <= 1.001f && atlasMax.y <= 1.001f);
                     if (wallAtlasImage.empty())
                     {
                         wallAtlasImage = cv::imread(
@@ -275,7 +332,7 @@ namespace
                         }
                     }
                     atlasSampleCount++;
-                    if (IsVisibleAtlasSample(wallAtlasImage, uv))
+                    if (IsVisibleAtlasSample(wallAtlasImage, atlasUv))
                     {
                         visibleAtlasSampleCount++;
                     }
@@ -283,8 +340,6 @@ namespace
             }
             foundRepeatingWallUv = foundRepeatingWallUv ||
                 (maximumU > 1.1f && minimumV <= 0.01f && maximumV >= 0.99f);
-            foundAtlasWallUv = foundAtlasWallUv ||
-                (maximumU <= 1.001f && minimumV >= -0.001f && maximumV <= 1.001f);
         }
 
         for (unsigned int materialIndex = 0; materialIndex < scene->mNumMaterials;
@@ -343,10 +398,13 @@ namespace
             Require(sceneMaximumZ - sceneMinimumZ >= minimumExpectedHeightRange,
                 "建筑 FBX 没有按地形最高点加建筑高度生成顶部") &&
             Require(foundDiffuseTexture, "建筑 FBX 没有 diffuse 贴图") &&
-            Require(expectMergedAtlas ? foundAtlasWallUv : foundRepeatingWallUv,
+            Require(foundRepeatingWallUv,
                 expectMergedAtlas ?
-                    "建筑合并贴图 FBX 墙体 UV 没有重映射到 atlas 范围" :
+                    "建筑合并贴图 FBX 墙体 UV0 没有保留横向重复坐标" :
                     "建筑 FBX 墙体 UV 没有横向重复或纵向完整映射") &&
+            (!expectMergedAtlas || Require(
+                foundAtlasWallUv,
+                "建筑合并贴图 FBX 墙体 UV1/UV2 没有提供有效 atlas 变换")) &&
             Require(std::filesystem::exists(
                     fbxRoot / (expectMergedAtlas ?
                         ("building_wall_atlas" + atlasExtension) :
@@ -804,6 +862,11 @@ namespace
         {
             return false;
         }
+        const size_t scatteredBuildingFaceCount = CountFbxFaces(fbxRoot / "buildings.fbx");
+        if (!Require(scatteredBuildingFaceCount > 0, "建筑散图 FBX 面数统计失败"))
+        {
+            return false;
+        }
 
         const std::filesystem::path atlasPostProcessRoot = outputRoot / "postprocess-atlas";
         const std::filesystem::path atlasXyzRoot = atlasPostProcessRoot / "XYZ";
@@ -830,6 +893,12 @@ namespace
             !postprocess_test::RequireFbxAxisAndUnit(atlasFbxRoot / "buildings.fbx") ||
             !RequireBuildingFbx(
                 atlasFbxRoot / "buildings.fbx", atlasFbxRoot, 100., 1000., true))
+        {
+            return false;
+        }
+        if (!Require(
+                CountFbxFaces(atlasFbxRoot / "buildings.fbx") <= scatteredBuildingFaceCount,
+                "建筑合并贴图 FBX 不应通过切分墙面增加总面数"))
         {
             return false;
         }
@@ -865,6 +934,12 @@ namespace
                 1000.,
                 true,
                 ".jpg"))
+        {
+            return false;
+        }
+        if (!Require(
+                CountFbxFaces(jpgAtlasFbxRoot / "buildings.fbx") <= scatteredBuildingFaceCount,
+                "JPG 建筑合并贴图 FBX 不应通过切分墙面增加总面数"))
         {
             return false;
         }
