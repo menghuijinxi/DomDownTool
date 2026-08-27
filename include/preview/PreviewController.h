@@ -108,6 +108,10 @@ class PreviewController
 
     void updateUi(skui::Runtime& runtime);
 
+    [[nodiscard]] std::string buildFbxPreviewStatsText() const;
+
+    void updateFbxPreviewFrameStatsUi(skui::Runtime& runtime);
+
     void schedulePageChange(Page page, skui::Runtime& runtime);
 
     void OpenExportPage(skui::Runtime& runtime);

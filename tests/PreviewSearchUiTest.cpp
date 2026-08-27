@@ -206,6 +206,10 @@ bool runTest()
                     controllerPath, "kPreviewFbxKeyboardPanFrameIntervalMilliseconds") &&
                 postprocess_test::ContainsText(controllerPath, "startFbxPreviewFrameLoop") &&
                 postprocess_test::ContainsText(controllerPath, "kPreviewFbxFrameTimerId") &&
+                postprocess_test::ContainsText(controllerPath,
+                                               "buildFbxPreviewStatsText") &&
+                postprocess_test::ContainsText(controllerPath,
+                                               "updateFbxPreviewFrameStatsUi(runtime)") &&
                 postprocess_test::ContainsText(controllerPath, "nextQDown") &&
                 postprocess_test::ContainsText(controllerPath, "nextEDown") &&
                 postprocess_test::ContainsText(dx12FbxRendererPath,
@@ -357,8 +361,24 @@ bool runTest()
     const std::filesystem::path skiaFbxRendererPath =
         sourceRoot / "src" / "preview" / "FbxPreviewRenderer.cpp";
     if (!postprocess_test::Require(
-            postprocess_test::ContainsText(dx12RendererPath,
-                                           "D3D12_TEXTURE_ADDRESS_MODE_WRAP") &&
+                postprocess_test::ContainsText(dx12RendererPath,
+                                               "D3D12_TEXTURE_ADDRESS_MODE_WRAP") &&
+                postprocess_test::ContainsText(dx12RendererPath,
+                                               "textureWorkerCountFor") &&
+                postprocess_test::ContainsText(dx12RendererPath,
+                                               "kReservedTextureWorkerCoreCount") &&
+                postprocess_test::ContainsText(dx12RendererPath,
+                                               "kMaximumTextureWorkerCount = 32") &&
+                postprocess_test::ContainsText(dx12RendererPath,
+                                               "kMaximumTextureUploadsPerFrame") &&
+                postprocess_test::ContainsText(dx12RendererPath,
+                                               "kMaximumTextureUploadBytesPerFrame") &&
+                postprocess_test::ContainsText(dx12RendererPath,
+                                               "std::atomic_size_t nextTextureIndex") &&
+                postprocess_test::ContainsText(dx12RendererPath,
+                                               "std::vector<std::jthread> textureWorkers") &&
+                postprocess_test::ContainsText(dx12RendererPath,
+                                               "kRGBA_8888_SkColorType") &&
                 postprocess_test::ContainsText(skiaFbxRendererPath,
                                                "SkTileMode::kRepeat") &&
                 !postprocess_test::ContainsText(dx12RendererPath,

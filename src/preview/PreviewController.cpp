@@ -3156,6 +3156,42 @@ bool DomDownToolPreview::PreviewController::sampleGisColorAtScreenCursor(skui::R
     return true;
 }
 
+std::string DomDownToolPreview::PreviewController::buildFbxPreviewStatsText() const
+{
+    const FbxPreviewLoadStatus loadStatus = dx12FbxRenderer_.loadStatus();
+    if (!loadStatus.error.empty())
+    {
+        return "加载失败：" + loadStatus.error;
+    }
+    if (!loadStatus.meshReady)
+    {
+        return "正在读取网格...";
+    }
+
+    const FbxPreviewRenderStats renderStats = dx12FbxRenderer_.renderStats();
+    std::string statsText = fmt::format(
+        "{} 个顶点 · 当前面数 {} · 总面数 {} · 当前 DrawCall {} · 总 DrawCall {}",
+        dx12FbxRenderer_.vertexCount(),
+        renderStats.currentTriangleCount,
+        renderStats.totalTriangleCount,
+        renderStats.currentDrawCallCount,
+        renderStats.totalDrawCallCount);
+    if (loadStatus.totalTextureCount > 0)
+    {
+        statsText += fmt::format(" · 贴图 {}/{}{}",
+                                 loadStatus.readyTextureCount,
+                                 loadStatus.totalTextureCount,
+                                 loadStatus.loading ? "（后台处理中）" : "");
+    }
+    return statsText;
+}
+
+void DomDownToolPreview::PreviewController::updateFbxPreviewFrameStatsUi(
+    skui::Runtime& runtime)
+{
+    runtime.setTextById("fbx-preview-stats", buildFbxPreviewStatsText());
+}
+
 void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
 {
     const skui::RuntimeUpdateBatch updateBatch(runtime);
@@ -3182,38 +3218,10 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
     }
     if (page_ == Page::FbxPreview)
     {
-        const FbxPreviewLoadStatus loadStatus = dx12FbxRenderer_.loadStatus();
-        std::string statsText;
-        if (!loadStatus.error.empty())
-        {
-            statsText = "加载失败：" + loadStatus.error;
-        }
-        else if (!loadStatus.meshReady)
-        {
-            statsText = "正在读取网格...";
-        }
-        else
-        {
-            const FbxPreviewRenderStats renderStats = dx12FbxRenderer_.renderStats();
-            statsText = fmt::format(
-                "{} 个顶点 · 当前面数 {} · 总面数 {} · 当前 DrawCall {} · 总 DrawCall {}",
-                dx12FbxRenderer_.vertexCount(),
-                renderStats.currentTriangleCount,
-                renderStats.totalTriangleCount,
-                renderStats.currentDrawCallCount,
-                renderStats.totalDrawCallCount);
-            if (loadStatus.totalTextureCount > 0)
-            {
-                statsText += fmt::format(" · 贴图 {}/{}{}",
-                                         loadStatus.readyTextureCount,
-                                         loadStatus.totalTextureCount,
-                                         loadStatus.loading ? "（后台处理中）" : "");
-            }
-        }
         runtime.setTextsById({
             {"fbx-preview-title", fbxPreviewTitle_},
             {"fbx-preview-directory", pathToUtf8(fbxPreviewTaskRoot_)},
-            {"fbx-preview-stats", std::move(statsText)},
+            {"fbx-preview-stats", buildFbxPreviewStatsText()},
             {"fbx-preview-fps", fbxFrameRateText_}});
         const std::array<std::pair<const char*, bool>, 3> modeButtons = {{
             {"fbx-preview-mode-textured", dx12FbxRenderer_.mode() == FbxPreviewMode::Textured},
@@ -4234,6 +4242,8 @@ void DomDownToolPreview::PreviewController::stopFbxPreviewFrameLoop(HWND window)
 
 void DomDownToolPreview::PreviewController::recordFbxPreviewFrame(skui::Runtime& runtime)
 {
+    updateFbxPreviewFrameStatsUi(runtime);
+
     const auto now = std::chrono::steady_clock::now();
     if (lastFbxFrameTime_ != std::chrono::steady_clock::time_point{} &&
         now - lastFbxFrameTime_ > kFbxFrameRateIdleResetInterval)

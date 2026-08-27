@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -26,7 +27,6 @@
 #include <map>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -66,6 +66,10 @@ constexpr UINT kFrameCount = 3;
 constexpr UINT kRootConstantCount = 20;
 constexpr UINT kNullTextureDescriptorIndex = static_cast<UINT>(kMaximumTextures);
 constexpr UINT kTextureDescriptorCount = kNullTextureDescriptorIndex + 1;
+constexpr unsigned int kReservedTextureWorkerCoreCount = 2;
+constexpr unsigned int kMaximumTextureWorkerCount = 32;
+constexpr std::size_t kMaximumTextureUploadsPerFrame = 16;
+constexpr std::size_t kMaximumTextureUploadBytesPerFrame = 96U * 1024U * 1024U;
 constexpr double kDefaultTerrainYaw = 0.0;
 constexpr double kDefaultTerrainPitch = 1.5707963267948966;
 constexpr double kMinimumTerrainPitch = 0.01;
@@ -212,6 +216,20 @@ std::size_t drawCallCountForMode(DomDownToolPreview::FbxPreviewMode mode,
         return batchCount * 2U;
     }
     return batchCount;
+}
+
+unsigned int textureWorkerCountFor(std::size_t textureCount)
+{
+    if (textureCount == 0)
+    {
+        return 0;
+    }
+    const unsigned int hardwareCount = std::max(1U, std::thread::hardware_concurrency());
+    const unsigned int usableHardwareCount = hardwareCount > kReservedTextureWorkerCoreCount
+        ? hardwareCount - kReservedTextureWorkerCoreCount : 1U;
+    const unsigned int cappedCount = std::clamp(
+        usableHardwareCount, 1U, kMaximumTextureWorkerCount);
+    return static_cast<unsigned int>(std::min<std::size_t>(textureCount, cappedCount));
 }
 
 void fillOrbitPerspectiveTransform(RootConstants& constants, UINT targetWidth,
@@ -525,14 +543,18 @@ std::pair<uint16_t, uint16_t> chooseBc1Endpoints(
 
 std::vector<uint8_t> encodeBc1(const SkImage& image, std::stop_token stopToken)
 {
-    SkBitmap bitmap;
-    const SkImageInfo info = SkImageInfo::MakeN32Premul(image.width(), image.height());
-    if (!bitmap.tryAllocPixels(info) || !image.readPixels(info, bitmap.getPixels(), bitmap.rowBytes(), 0, 0))
+    const int width = image.width();
+    const int height = image.height();
+    const std::size_t rowBytes = static_cast<std::size_t>(width) * 4U;
+    const SkImageInfo info = SkImageInfo::Make(
+        width, height, kRGBA_8888_SkColorType, kOpaque_SkAlphaType);
+    std::vector<uint8_t> rgbaPixels(rowBytes * static_cast<std::size_t>(height));
+    if (!image.readPixels(info, rgbaPixels.data(), rowBytes, 0, 0))
     {
         return {};
     }
-    const int blockWidth = (image.width() + 3) / 4;
-    const int blockHeight = (image.height() + 3) / 4;
+    const int blockWidth = (width + 3) / 4;
+    const int blockHeight = (height + 3) / 4;
     std::vector<uint8_t> output(static_cast<std::size_t>(blockWidth) * blockHeight * 8U);
     for (int blockY = 0; blockY < blockHeight; ++blockY)
     {
@@ -547,11 +569,13 @@ std::vector<uint8_t> encodeBc1(const SkImage& image, std::stop_token stopToken)
             {
                 for (int x = 0; x < 4; ++x)
                 {
-                    const int px = std::min(blockX * 4 + x, image.width() - 1);
-                    const int py = std::min(blockY * 4 + y, image.height() - 1);
-                    const SkColor color = bitmap.getColor(px, py);
+                    const int px = std::min(blockX * 4 + x, width - 1);
+                    const int py = std::min(blockY * 4 + y, height - 1);
+                    const uint8_t* pixel = rgbaPixels.data() +
+                        static_cast<std::size_t>(py) * rowBytes +
+                        static_cast<std::size_t>(px) * 4U;
                     pixels[static_cast<std::size_t>(y * 4 + x)] = {
-                        SkColorGetR(color), SkColorGetG(color), SkColorGetB(color)};
+                        pixel[0], pixel[1], pixel[2]};
                 }
             }
             const auto [endpoint0, endpoint1] = chooseBc1Endpoints(pixels);
@@ -1370,12 +1394,10 @@ bool DomDownToolPreview::Dx12FbxRenderer::load(
             {
                 impl->requestRedraw();
             }
-            for (std::size_t index = 0; index < parsed.texturePaths.size(); ++index)
+            std::atomic_size_t nextTextureIndex = 0;
+            const auto processTexture = [&parsed, impl, revision,
+                                         &stopToken](std::size_t index) -> bool
             {
-                if (stopToken.stop_requested())
-                {
-                    return;
-                }
                 CpuTexture texture;
                 texture.path = parsed.texturePaths[index];
                 const sk_sp<SkImage> image = loadImage(texture.path);
@@ -1387,13 +1409,13 @@ bool DomDownToolPreview::Dx12FbxRenderer::load(
                 }
                 if (stopToken.stop_requested())
                 {
-                    return;
+                    return false;
                 }
                 {
                     const std::lock_guard lock(impl->mutex);
                     if (impl->revision != revision)
                     {
-                        return;
+                        return false;
                     }
                     ++impl->completedTextureCount;
                     if (!texture.bc1.empty())
@@ -1406,6 +1428,35 @@ bool DomDownToolPreview::Dx12FbxRenderer::load(
                 {
                     impl->requestRedraw();
                 }
+                return true;
+            };
+            const unsigned int workerCount = textureWorkerCountFor(parsed.texturePaths.size());
+            std::vector<std::jthread> textureWorkers;
+            textureWorkers.reserve(workerCount);
+            for (unsigned int workerIndex = 0; workerIndex < workerCount; ++workerIndex)
+            {
+                textureWorkers.emplace_back(
+                    [&parsed, &nextTextureIndex, &processTexture, &stopToken]
+                    {
+                        while (!stopToken.stop_requested())
+                        {
+                            const std::size_t textureIndex = nextTextureIndex.fetch_add(
+                                1, std::memory_order_relaxed);
+                            if (textureIndex >= parsed.texturePaths.size())
+                            {
+                                return;
+                            }
+                            if (!processTexture(textureIndex))
+                            {
+                                return;
+                            }
+                        }
+                    });
+            }
+            textureWorkers.clear();
+            if (stopToken.stop_requested())
+            {
+                return;
             }
             {
                 const std::lock_guard lock(impl->mutex);
@@ -1671,27 +1722,42 @@ bool DomDownToolPreview::Dx12FbxRenderer::draw(SkCanvas& canvas, int width, int 
         }
         impl_->state.loadedMeshRevision = revision;
     }
-    std::optional<CompletedTexture> completedTexture;
+    std::vector<CompletedTexture> completedTextures;
     {
-        // DX12 资源只在 UI/渲染线程创建，每帧至多上传一张以控制帧耗时。
+        // DX12 资源只在 UI/渲染线程创建；每帧批量消费少量结果，兼顾加载速度和交互帧率。
         const std::lock_guard lock(impl_->mutex);
-        if (!impl_->completedTextures.empty() &&
-            impl_->completedTextures.front().revision == revision)
+        std::size_t textureUploadBytes = 0;
+        while (!impl_->completedTextures.empty() &&
+               impl_->completedTextures.front().revision == revision &&
+               completedTextures.size() < kMaximumTextureUploadsPerFrame)
         {
-            completedTexture = std::move(impl_->completedTextures.front());
+            const std::size_t nextTextureBytes =
+                impl_->completedTextures.front().texture.bc1.size();
+            if (!completedTextures.empty() &&
+                textureUploadBytes + nextTextureBytes > kMaximumTextureUploadBytesPerFrame)
+            {
+                break;
+            }
+            textureUploadBytes += nextTextureBytes;
+            completedTextures.push_back(std::move(impl_->completedTextures.front()));
             impl_->completedTextures.pop_front();
         }
     }
-    if (completedTexture && completedTexture->index < impl_->state.textures.size())
+    bool uploadedAnyTexture = false;
+    for (const CompletedTexture& completedTexture : completedTextures)
     {
+        if (completedTexture.index >= impl_->state.textures.size())
+        {
+            continue;
+        }
         ComPtr<ID3D12Resource> texture;
         ComPtr<ID3D12Resource> upload;
         if (!uploadTexture(impl_->state.device.Get(), commandList,
-                           completedTexture->texture, texture, upload))
+                           completedTexture.texture, texture, upload))
         {
             return false;
         }
-        const std::size_t textureIndex = completedTexture->index;
+        const std::size_t textureIndex = completedTexture.index;
         impl_->state.textures[textureIndex] = texture;
         frame.retainedUpload->uploads.push_back(upload);
         D3D12_SHADER_RESOURCE_VIEW_DESC view{};
@@ -1710,10 +1776,11 @@ bool DomDownToolPreview::Dx12FbxRenderer::draw(SkCanvas& canvas, int width, int 
                 ++impl_->readyTextureCount;
             }
         }
-        if (impl_->requestRedraw)
-        {
-            impl_->requestRedraw();
-        }
+        uploadedAnyTexture = true;
+    }
+    if (uploadedAnyTexture && impl_->requestRedraw)
+    {
+        impl_->requestRedraw();
     }
     D3D12_RESOURCE_STATES targetState = targetInfo.fResourceState;
     if (targetState != D3D12_RESOURCE_STATE_RENDER_TARGET)
