@@ -105,6 +105,7 @@ struct CpuBatch
     std::vector<GpuVertex> vertices;
     std::vector<uint32_t> indices;
     std::vector<uint32_t> edgeIndices;
+    Bounds bounds;
     uint32_t textureIndex = std::numeric_limits<uint32_t>::max();
 };
 
@@ -165,6 +166,14 @@ struct RootConstants
 
 static_assert(sizeof(RootConstants) == kRootConstantCount * sizeof(uint32_t));
 
+struct ClipPosition
+{
+    float x = 0.F;
+    float y = 0.F;
+    float z = 0.F;
+    float w = 0.F;
+};
+
 struct CameraVector
 {
     double x = 0.0;
@@ -189,6 +198,20 @@ double cameraDistanceFromZoom(double zoom)
     const double clampedZoom = std::clamp(zoom, kMinimumTerrainZoom, kMaximumTerrainZoom);
     return std::max(kMinimumRenderCameraDistance,
                     std::max(kMinimumCameraDistance, kCameraDistance / clampedZoom));
+}
+
+std::size_t drawCallCountForMode(DomDownToolPreview::FbxPreviewMode mode,
+                                 std::size_t batchCount)
+{
+    switch (mode)
+    {
+    case DomDownToolPreview::FbxPreviewMode::Textured:
+    case DomDownToolPreview::FbxPreviewMode::Wireframe:
+        return batchCount;
+    case DomDownToolPreview::FbxPreviewMode::TexturedWireframe:
+        return batchCount * 2U;
+    }
+    return batchCount;
 }
 
 void fillOrbitPerspectiveTransform(RootConstants& constants, UINT targetWidth,
@@ -249,6 +272,116 @@ void includePoint(Bounds& bounds, const std::array<float, 3>& point)
         bounds.minimum[index] = std::min(bounds.minimum[index], point[index]);
         bounds.maximum[index] = std::max(bounds.maximum[index], point[index]);
     }
+}
+
+bool hasValidBounds(const Bounds& bounds)
+{
+    for (std::size_t index = 0; index < bounds.minimum.size(); ++index)
+    {
+        if (bounds.minimum[index] > bounds.maximum[index])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+ClipPosition transformPointToClip(const RootConstants& constants,
+                                  const std::array<float, 3>& point)
+{
+    const float* matrix = constants.transform;
+    return {
+        point[0] * matrix[0] + point[1] * matrix[4] + point[2] * matrix[8] +
+            matrix[12],
+        point[0] * matrix[1] + point[1] * matrix[5] + point[2] * matrix[9] +
+            matrix[13],
+        point[0] * matrix[2] + point[1] * matrix[6] + point[2] * matrix[10] +
+            matrix[14],
+        point[0] * matrix[3] + point[1] * matrix[7] + point[2] * matrix[11] +
+            matrix[15]};
+}
+
+ClipPosition transformVertexToClip(const RootConstants& constants, const GpuVertex& vertex)
+{
+    return transformPointToClip(constants, {vertex.x, vertex.y, vertex.z});
+}
+
+bool isClipTriangleVisible(const ClipPosition& first, const ClipPosition& second,
+                           const ClipPosition& third)
+{
+    const auto outsideAll = [&](const auto& predicate)
+    {
+        return predicate(first) && predicate(second) && predicate(third);
+    };
+    return !outsideAll([](const ClipPosition& point) { return point.w <= 0.F; }) &&
+        !outsideAll([](const ClipPosition& point) { return point.x < -point.w; }) &&
+        !outsideAll([](const ClipPosition& point) { return point.x > point.w; }) &&
+        !outsideAll([](const ClipPosition& point) { return point.y < -point.w; }) &&
+        !outsideAll([](const ClipPosition& point) { return point.y > point.w; }) &&
+        !outsideAll([](const ClipPosition& point) { return point.z < 0.F; }) &&
+        !outsideAll([](const ClipPosition& point) { return point.z > point.w; });
+}
+
+bool isBoundsVisibleInFrustum(const Bounds& bounds, const RootConstants& constants)
+{
+    if (!hasValidBounds(bounds))
+    {
+        return false;
+    }
+    std::array<ClipPosition, 8> corners;
+    std::size_t cornerIndex = 0;
+    for (std::size_t xIndex = 0; xIndex < 2; ++xIndex)
+    {
+        const float x = xIndex == 0 ? bounds.minimum[0] : bounds.maximum[0];
+        for (std::size_t yIndex = 0; yIndex < 2; ++yIndex)
+        {
+            const float y = yIndex == 0 ? bounds.minimum[1] : bounds.maximum[1];
+            for (std::size_t zIndex = 0; zIndex < 2; ++zIndex)
+            {
+                const float z = zIndex == 0 ? bounds.minimum[2] : bounds.maximum[2];
+                corners[cornerIndex++] = transformPointToClip(constants, {x, y, z});
+            }
+        }
+    }
+    const auto outsideAll = [&corners](const auto& predicate)
+    {
+        return std::all_of(corners.begin(), corners.end(), predicate);
+    };
+    return !outsideAll([](const ClipPosition& point) { return point.w <= 0.F; }) &&
+        !outsideAll([](const ClipPosition& point) { return point.x < -point.w; }) &&
+        !outsideAll([](const ClipPosition& point) { return point.x > point.w; }) &&
+        !outsideAll([](const ClipPosition& point) { return point.y < -point.w; }) &&
+        !outsideAll([](const ClipPosition& point) { return point.y > point.w; }) &&
+        !outsideAll([](const ClipPosition& point) { return point.z < 0.F; }) &&
+        !outsideAll([](const ClipPosition& point) { return point.z > point.w; });
+}
+
+std::size_t visibleTriangleCountInFrustum(const CpuBatch& batch,
+                                          const RootConstants& constants)
+{
+    if (!isBoundsVisibleInFrustum(batch.bounds, constants))
+    {
+        return 0;
+    }
+    std::size_t visibleTriangleCount = 0;
+    for (std::size_t index = 0; index + 2 < batch.indices.size(); index += 3)
+    {
+        const uint32_t firstIndex = batch.indices[index];
+        const uint32_t secondIndex = batch.indices[index + 1];
+        const uint32_t thirdIndex = batch.indices[index + 2];
+        if (firstIndex >= batch.vertices.size() || secondIndex >= batch.vertices.size() ||
+            thirdIndex >= batch.vertices.size())
+        {
+            continue;
+        }
+        if (isClipTriangleVisible(transformVertexToClip(constants, batch.vertices[firstIndex]),
+                                  transformVertexToClip(constants, batch.vertices[secondIndex]),
+                                  transformVertexToClip(constants, batch.vertices[thirdIndex])))
+        {
+            ++visibleTriangleCount;
+        }
+    }
+    return visibleTriangleCount;
 }
 
 aiMatrix4x4 nodeTransform(const aiNode* node, const aiMatrix4x4& parent)
@@ -1029,6 +1162,7 @@ bool parseFbx(const std::vector<std::filesystem::path>& paths, std::stop_token s
                     const aiVector3D uv = mesh->HasTextureCoords(0)
                         ? mesh->mTextureCoords[0][vertexIndex] : aiVector3D{};
                     includePoint(bounds, {point.x, point.y, point.z});
+                    includePoint(batch.bounds, {point.x, point.y, point.z});
                     batch.vertices.push_back({point.x, point.y, point.z, uv.x, uv.y});
                 }
                 std::unordered_set<uint64_t> edges;
@@ -1085,12 +1219,15 @@ bool parseFbx(const std::vector<std::filesystem::path>& paths, std::stop_token s
                                   bounds.maximum[2] - bounds.minimum[2], 1e-3F});
     for (CpuBatch& batch : *batches)
     {
+        Bounds normalizedBounds;
         for (GpuVertex& vertex : batch.vertices)
         {
             vertex.x = (vertex.x - center[0]) / scale;
             vertex.y = (vertex.y - center[1]) / scale;
             vertex.z = (vertex.z - center[2]) / scale;
+            includePoint(normalizedBounds, {vertex.x, vertex.y, vertex.z});
         }
+        batch.bounds = normalizedBounds;
     }
     parsed.batches = std::move(batches);
     return true;
@@ -1124,6 +1261,8 @@ struct DomDownToolPreview::Dx12FbxRenderer::Impl
     std::size_t totalTextureCount = 0;
     std::size_t vertexCount = 0;
     std::size_t triangleCount = 0;
+    std::size_t visibleBatchCount = 0;
+    std::size_t visibleTriangleCount = 0;
     std::string error;
     Dx12FbxState state;
     // 工作线程只生产 CPU 网格和 BC1 数据；clear() 请求取消并 join 后才释放共享状态。
@@ -1158,6 +1297,8 @@ void DomDownToolPreview::Dx12FbxRenderer::clear()
     impl_->totalTextureCount = 0;
     impl_->vertexCount = 0;
     impl_->triangleCount = 0;
+    impl_->visibleBatchCount = 0;
+    impl_->visibleTriangleCount = 0;
     impl_->error.clear();
     impl_->yaw = kDefaultTerrainYaw;
     impl_->pitch = kDefaultTerrainPitch;
@@ -1409,6 +1550,18 @@ std::size_t DomDownToolPreview::Dx12FbxRenderer::triangleCount() const
     return impl_->triangleCount;
 }
 
+DomDownToolPreview::FbxPreviewRenderStats
+DomDownToolPreview::Dx12FbxRenderer::renderStats() const
+{
+    const std::lock_guard lock(impl_->mutex);
+    const std::size_t batchCount = impl_->batches ? impl_->batches->size() : 0;
+    return {
+        drawCallCountForMode(impl_->mode, impl_->visibleBatchCount),
+        impl_->visibleTriangleCount,
+        drawCallCountForMode(impl_->mode, batchCount),
+        impl_->triangleCount};
+}
+
 DomDownToolPreview::FbxPreviewLoadStatus
 DomDownToolPreview::Dx12FbxRenderer::loadStatus() const
 {
@@ -1423,11 +1576,13 @@ bool DomDownToolPreview::Dx12FbxRenderer::draw(SkCanvas& canvas, int width, int 
     std::shared_ptr<const std::vector<CpuBatch>> batches;
     std::size_t totalTextureCount = 0;
     uint64_t revision = 0;
+    FbxPreviewMode mode = FbxPreviewMode::Textured;
     {
         const std::lock_guard lock(impl_->mutex);
         batches = impl_->batches;
         totalTextureCount = impl_->totalTextureCount;
         revision = impl_->revision;
+        mode = impl_->mode;
     }
     if (!batches || batches->empty() || width <= 0 || height <= 0)
     {
@@ -1588,6 +1743,32 @@ bool DomDownToolPreview::Dx12FbxRenderer::draw(SkCanvas& canvas, int width, int 
     fillOrbitPerspectiveTransform(constants, targetWidth, targetHeight, impl_->yaw,
                                   impl_->pitch, impl_->panX, impl_->panHeight,
                                   impl_->panY, impl_->zoom);
+    std::vector<const GpuBatch*> visibleBatches;
+    visibleBatches.reserve(impl_->state.batches.size());
+    std::size_t visibleTriangleCount = 0;
+    for (const GpuBatch& batch : impl_->state.batches)
+    {
+        if (!batch.source)
+        {
+            continue;
+        }
+        const std::size_t batchVisibleTriangleCount =
+            visibleTriangleCountInFrustum(*batch.source, constants);
+        if (batchVisibleTriangleCount == 0)
+        {
+            continue;
+        }
+        visibleBatches.push_back(&batch);
+        visibleTriangleCount += batchVisibleTriangleCount;
+    }
+    {
+        const std::lock_guard lock(impl_->mutex);
+        if (impl_->revision == revision)
+        {
+            impl_->visibleBatchCount = visibleBatches.size();
+            impl_->visibleTriangleCount = visibleTriangleCount;
+        }
+    }
     const auto drawBatch = [&](const GpuBatch& batch, bool wire)
     {
         const bool hasTexture = !wire &&
@@ -1618,15 +1799,15 @@ bool DomDownToolPreview::Dx12FbxRenderer::draw(SkCanvas& canvas, int width, int 
         commandList->DrawIndexedInstanced(wire ? batch.edgeIndexCount : batch.indexCount,
                                           1, 0, 0, 0);
     };
-    for (const GpuBatch& batch : impl_->state.batches)
+    for (const GpuBatch* batch : visibleBatches)
     {
-        if (impl_->mode != FbxPreviewMode::Wireframe)
+        if (mode != FbxPreviewMode::Wireframe)
         {
-            drawBatch(batch, false);
+            drawBatch(*batch, false);
         }
-        if (impl_->mode != FbxPreviewMode::Textured)
+        if (mode != FbxPreviewMode::Textured)
         {
-            drawBatch(batch, true);
+            drawBatch(*batch, true);
         }
     }
     if (targetState != D3D12_RESOURCE_STATE_RENDER_TARGET)

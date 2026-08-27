@@ -3194,9 +3194,14 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
         }
         else
         {
-            statsText = fmt::format("{} 个顶点 · {} 个三角形",
-                                    dx12FbxRenderer_.vertexCount(),
-                                    dx12FbxRenderer_.triangleCount());
+            const FbxPreviewRenderStats renderStats = dx12FbxRenderer_.renderStats();
+            statsText = fmt::format(
+                "{} 个顶点 · 当前面数 {} · 总面数 {} · 当前 DrawCall {} · 总 DrawCall {}",
+                dx12FbxRenderer_.vertexCount(),
+                renderStats.currentTriangleCount,
+                renderStats.totalTriangleCount,
+                renderStats.currentDrawCallCount,
+                renderStats.totalDrawCallCount);
             if (loadStatus.totalTextureCount > 0)
             {
                 statsText += fmt::format(" · 贴图 {}/{}{}",

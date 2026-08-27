@@ -131,7 +131,8 @@ bool runTest()
                 runtime.setTextsById({
                     {"fbx-preview-title", "测试 FBX"},
                     {"fbx-preview-directory", "tmp/export"},
-                    {"fbx-preview-stats", "4 个顶点 · 2 个三角形"},
+                    {"fbx-preview-stats",
+                     "4 个顶点 · 当前面数 2 · 总面数 2 · 当前 DrawCall 1 · 总 DrawCall 1"},
                     {"fbx-preview-fps", "FPS 60"},
                     {"fbx-rotate-speed-value", "1.0x"},
                     {"fbx-zoom-speed-value", "1.0x"},

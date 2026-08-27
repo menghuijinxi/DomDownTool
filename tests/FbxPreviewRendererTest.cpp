@@ -163,6 +163,22 @@ bool runTest()
         std::cerr << "DX12 FBX 网格或贴图没有在后台完成加载。\n";
         return false;
     }
+    const DomDownToolPreview::FbxPreviewRenderStats texturedStats =
+        dx12Renderer.renderStats();
+    dx12Renderer.setMode(DomDownToolPreview::FbxPreviewMode::TexturedWireframe);
+    const DomDownToolPreview::FbxPreviewRenderStats combinedStats =
+        dx12Renderer.renderStats();
+    if (texturedStats.totalDrawCallCount == 0 ||
+        texturedStats.totalTriangleCount != dx12Renderer.triangleCount() ||
+        texturedStats.currentDrawCallCount > texturedStats.totalDrawCallCount ||
+        texturedStats.currentTriangleCount > texturedStats.totalTriangleCount ||
+        combinedStats.totalDrawCallCount != texturedStats.totalDrawCallCount * 2U ||
+        combinedStats.totalTriangleCount != texturedStats.totalTriangleCount ||
+        combinedStats.currentDrawCallCount > combinedStats.totalDrawCallCount)
+    {
+        std::cerr << "DX12 FBX 预览统计没有保留总量或当前模式 DrawCall。\n";
+        return false;
+    }
     dx12Renderer.rotateBy(24.0, -16.0);
     dx12Renderer.panBy(18.0, -12.0);
     dx12Renderer.verticalPanBy(1.0);

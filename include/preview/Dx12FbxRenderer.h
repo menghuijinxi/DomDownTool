@@ -22,6 +22,14 @@ struct FbxPreviewLoadStatus
     std::string error;
 };
 
+struct FbxPreviewRenderStats
+{
+    std::size_t currentDrawCallCount = 0;
+    std::size_t currentTriangleCount = 0;
+    std::size_t totalDrawCallCount = 0;
+    std::size_t totalTriangleCount = 0;
+};
+
 class Dx12FbxRenderer
 {
   public:
@@ -60,6 +68,8 @@ class Dx12FbxRenderer
     [[nodiscard]] std::size_t vertexCount() const;
 
     [[nodiscard]] std::size_t triangleCount() const;
+
+    [[nodiscard]] FbxPreviewRenderStats renderStats() const;
 
     [[nodiscard]] FbxPreviewLoadStatus loadStatus() const;
 
