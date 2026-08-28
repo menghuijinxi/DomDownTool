@@ -340,6 +340,10 @@ namespace
             }
             foundRepeatingWallUv = foundRepeatingWallUv ||
                 (maximumU > 1.1f && minimumV <= 0.01f && maximumV >= 0.99f);
+            if (!Require(maximumV <= 1.001f, "建筑墙体 UV 不应向下超过贴图底边"))
+            {
+                return false;
+            }
         }
 
         for (unsigned int materialIndex = 0; materialIndex < scene->mNumMaterials;

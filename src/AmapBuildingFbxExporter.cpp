@@ -1123,9 +1123,6 @@ namespace
                 std::array<double, 3>{ -dy, dx, 0. };
             const double nextU = currentU + segmentLength / std::max(1., textureWallWidth);
 
-            const double bottomV =
-                std::max(1., (topCentimeters - bottomCentimeters) /
-                                std::max(1., heightCentimeters));
             AppendWallQuad(
                 first,
                 second,
@@ -1133,7 +1130,7 @@ namespace
                 topCentimeters,
                 currentU,
                 nextU,
-                bottomV,
+                1.,
                 0.,
                 normal,
                 useRightNormal,
