@@ -50,6 +50,26 @@ namespace
         return postprocess_test::Require(foundTexture, "FBX has no diffuse texture");
     }
 
+    bool HasAnyJpg(const std::filesystem::path& path)
+    {
+        std::error_code existsError;
+        if (!std::filesystem::exists(path, existsError) || existsError)
+        {
+            return false;
+        }
+
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(path))
+        {
+            if (entry.is_regular_file() && entry.path().extension() == ".jpg")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     bool RequireFbxTerrainMesh(const std::filesystem::path& fbxPath)
     {
         Assimp::Importer importer;
@@ -608,6 +628,35 @@ namespace
         {
             return false;
         }
+
+        const std::filesystem::path jpgFbxRoot = outputRoot / "FBX-JPG";
+        tool.SetFbxOutputPath(postprocess_test::PathToUtf8String(jpgFbxRoot));
+        tool.SetFbxTextureFormat("jpg");
+        tool.SetFbxShape(DownTool::FbxPlanetShape::Plane);
+        tool.RunPostProcessForTest();
+        const std::filesystem::path jpgPlaneFbxPath = jpgFbxRoot / "plane.fbx";
+        if (!postprocess_test::RequireFileExists(jpgFbxRoot / "manifest.json") ||
+            !postprocess_test::Require(
+                postprocess_test::ContainsText(
+                    jpgFbxRoot / "manifest.json", "\"textureformat\":\"jpg\""),
+                "JPG FBX manifest does not record jpg texture format") ||
+            !postprocess_test::Require(
+                postprocess_test::ContainsText(
+                    jpgFbxRoot / "manifest.json", "\"texturecontenttype\":\"image/jpeg\""),
+                "JPG FBX manifest does not record image/jpeg content type") ||
+            !postprocess_test::Require(HasAnyJpg(jpgFbxRoot),
+                                      "FBX texture directory has no jpg output") ||
+            !postprocess_test::Require(
+                !postprocess_test::HasAnyPng(jpgFbxRoot),
+                "JPG FBX texture directory still contains png output") ||
+            !RequireFbxTexturesBesideModel(jpgPlaneFbxPath, jpgFbxRoot))
+        {
+            return false;
+        }
+
+        tool.SetFbxOutputPath(postprocess_test::PathToUtf8String(fbxRoot));
+        tool.SetFbxTextureFormat("png");
+        tool.SetFbxShape(DownTool::FbxPlanetShape::Both);
 
         tool.SetFbxTerrainHeightEnabled(true);
         tool.SetFbxElevationReferenceMeters(100.);

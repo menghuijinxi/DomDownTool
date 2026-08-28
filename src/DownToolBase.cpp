@@ -123,6 +123,7 @@ namespace
 		FbxGlobalPixelBounds pixelBounds;
 		DownTool::TileRange tileRange;
 		PostProcessBounds bounds;
+		std::string imageFormat = "png";
 		std::filesystem::path texturePath;
 		std::filesystem::path metadataPath;
 	};
@@ -420,6 +421,25 @@ namespace
 
 		return text;
 	}
+
+    std::string NormalizeFbxTextureFormat(std::string value)
+    {
+        value = ToLowerAscii(TrimAsciiWhitespace(value));
+        if (value == ".png")
+        {
+            return "png";
+        }
+        if (value == ".jpg" || value == ".jpeg" || value == "jpeg")
+        {
+            return "jpg";
+        }
+        return value;
+    }
+
+    std::string FbxTextureContentType(const std::string& format)
+    {
+        return format == "jpg" ? "image/jpeg" : "image/png";
+    }
 
 	size_t HashCombine(size_t seed, size_t value) noexcept
 	{
@@ -1120,6 +1140,8 @@ namespace
             {"distanceoffset", static_cast<int>(textureInfo.distanceOffset)},
             {"gridx", textureInfo.gridX},
             {"gridy", textureInfo.gridY},
+            {"contenttype", FbxTextureContentType(textureInfo.imageFormat)},
+            {"format", textureInfo.imageFormat},
             {"partial", textureInfo.partial},
             {"path", ToPortableRelativePath(textureInfo.texturePath, basePath)},
             {"pixelbounds", BuildFbxGlobalPixelBoundsJson(textureInfo.pixelBounds)},
@@ -1146,6 +1168,7 @@ namespace
         uint32_t textureSize,
         uint32_t zoom,
         uint32_t tileSize,
+        const std::string& textureFormat,
         bool terrainHeightEnabled,
         double elevationReferenceMeters,
         double terrainSampleRateMeters)
@@ -1159,6 +1182,8 @@ namespace
         const Json root = {
             {"meshmode", meshMode},
             {"texturecount", static_cast<int>(textureInfos.size())},
+            {"texturecontenttype", FbxTextureContentType(textureFormat)},
+            {"textureformat", textureFormat},
             {"textures", std::move(textures)},
             {"texturesize", static_cast<int>(textureSize)},
             {"tilesize", static_cast<int>(tileSize)},
@@ -4455,6 +4480,14 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 		return false;
 	}
 
+    const std::string textureFormat = NormalizeFbxTextureFormat(FbxTextureFormat);
+    if (textureFormat != "png" && textureFormat != "jpg")
+    {
+        fmt::print("FBX 导出失败：贴图格式只支持 png 或 jpg。\n");
+        return false;
+    }
+    const std::string textureExtension = "." + textureFormat;
+
 	Tile centerTile;
 	double centerTilePixelX = 0.;
 	double centerTilePixelY = 0.;
@@ -4629,7 +4662,9 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 				Tile(minTileX, minTileY, Zoom),
 				Tile(maxTileX, maxTileY, Zoom));
 			textureInfo.bounds = BoundsFromCorners(northWestLonLat, southEastLonLat);
-			textureInfo.texturePath = textureRoot / fmt::format("{}.png", textureName);
+			textureInfo.imageFormat = textureFormat;
+			textureInfo.texturePath = textureRoot / fmt::format(
+				"{}{}", textureName, textureExtension);
 			textureInfo.metadataPath = textureRoot / fmt::format("{}.json", textureName);
 			textureInfos.push_back(std::move(textureInfo));
 		}
@@ -4657,9 +4692,10 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 		return false;
 	}
 
-	fmt::print("FBX 贴图生成：{} 张，贴图尺寸 {}，输出目录 {}\n",
+	fmt::print("FBX 贴图生成：{} 张，贴图尺寸 {}，格式 {}，输出目录 {}\n",
 		textureInfos.size(),
 		FbxTextureSize,
+		textureFormat,
 		PathToUtf8String(textureRoot));
 
 	auto readTileImage = [&](const Tile& tile)
@@ -4734,6 +4770,7 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 			FbxTextureSize,
 			Zoom,
 			TileSize,
+			textureFormat,
 			FbxTerrainHeightEnabled,
 			FbxElevationReferenceMeters,
 			FbxTerrainSampleRateMeters)))

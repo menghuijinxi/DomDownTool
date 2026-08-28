@@ -4,6 +4,7 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <ctime>
 #include <fstream>
@@ -43,6 +44,20 @@ using DomDownToolPreview::GisExportMode;
 using DomDownToolPreview::SatelliteExportSource;
 
 constexpr auto kProgressNotificationInterval = std::chrono::milliseconds(100);
+
+std::string NormalizeImageFormat(std::string value)
+{
+    for (char& character : value)
+    {
+        character = static_cast<char>(
+            std::tolower(static_cast<unsigned char>(character)));
+    }
+    if (value == "jpeg")
+    {
+        return "jpg";
+    }
+    return value == "jpg" ? "jpg" : "png";
+}
 
 std::string BuildingFbxTextureModeValue(DownTool::AmapBuildingFbxTextureMode mode)
 {
@@ -274,6 +289,7 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
         {"mergedImageResolution", configuration.mergedImageResolution},
         {"mergedImageFormat", configuration.mergedImageFormat},
         {"fbxTextureSize", configuration.fbxTextureSize},
+        {"fbxTextureFormat", NormalizeImageFormat(configuration.fbxTextureFormat)},
         {"fbxTerrainSampleRateMeters", configuration.fbxTerrainSampleRateMeters}};
 }
 
@@ -344,6 +360,8 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
     }
     configuration.fbxTextureSize = static_cast<uint32_t>(
         std::max(0., GetJsonDouble(value, "fbxTextureSize")));
+    configuration.fbxTextureFormat = NormalizeImageFormat(
+        GetJsonString(value, "fbxTextureFormat"));
     configuration.fbxTerrainSampleRateMeters =
         GetJsonDouble(value, "fbxTerrainSampleRateMeters", 30.);
 
@@ -987,6 +1005,8 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
            << configuration.mergedImageResolution << "\n"
            << "GIS 透明大图格式: PNG\n"
            << "FBX 贴图尺寸: " << configuration.fbxTextureSize << "\n"
+           << "FBX 贴图格式: " << NormalizeImageFormat(configuration.fbxTextureFormat)
+           << "\n"
            << "FBX 导出高度: "
            << (configuration.exportTerrainHeight ? "是" : "否") << "\n"
            << "FBX 高度采样率 (米): "
@@ -1858,6 +1878,7 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
     downloader->SetPostProcessFbxEnabled(exportFbx);
     downloader->SetFbxOutputPath(PathToUtf8(fbxOutputRoot));
     downloader->SetFbxTextureSize(configuration.fbxTextureSize);
+    downloader->SetFbxTextureFormat(NormalizeImageFormat(configuration.fbxTextureFormat));
     downloader->SetFbxTerrainSampleRateMeters(
         configuration.fbxTerrainSampleRateMeters);
     ConfigureFbxElevation(*downloader, elevationData);
@@ -2026,6 +2047,8 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
     downloader.SetPostProcessFbxEnabled(exportFbx);
     downloader.SetFbxOutputPath(PathToUtf8(fbxOutputPath));
     downloader.SetFbxTextureSize(configuration.fbxTextureSize);
+    downloader.SetFbxTextureFormat(mode == GisExportMode::OverlayOnSatellite ?
+        "png" : NormalizeImageFormat(configuration.fbxTextureFormat));
     downloader.SetFbxTerrainSampleRateMeters(
         configuration.fbxTerrainSampleRateMeters);
     ConfigureFbxElevation(downloader, elevationData);

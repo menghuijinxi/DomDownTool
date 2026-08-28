@@ -215,6 +215,7 @@ class PreviewController
     std::string exportMergedFormat_ = "png";
     std::string exportMergedResolutionValue_ = "16384";
     std::string exportFbxSizeValue_ = "4096";
+    std::string exportFbxTextureFormatValue_ = "png";
     std::string exportTerrainSampleRateValue_ = "30";
     std::string exportBuildingWallTexturePathValue_ = "贴图/墙体";
     std::string exportBuildingRoofTexturePathValue_ = "贴图/房顶";

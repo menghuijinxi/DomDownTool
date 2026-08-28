@@ -155,6 +155,7 @@ DomDownToolPreview::ExportConfiguration makeCancelableConfiguration(
     configuration.radiusMeters = 1000.;
     configuration.outputRoot = outputRoot;
     configuration.exportTiles = true;
+    configuration.fbxTextureFormat = "jpg";
     configuration.fbxTerrainSampleRateMeters = 60.;
     configuration.satelliteSources.push_back(
         {"test.satellite", "测试卫星", outputRoot / "cache"});
@@ -393,6 +394,44 @@ bool runTest()
                 composedFbxPixel[1] == 70 && composedFbxPixel[2] == 80 &&
                 composedFbxPixel[3] == 255,
             "FBX 卫星贴图与 GIS 图层没有正确合成"))
+    {
+        return false;
+    }
+
+    const std::filesystem::path fbxJpgTextureRelativePath = "0_0.jpg";
+    const std::filesystem::path baseJpgFbxRoot =
+        testRoot / std::filesystem::u8path("FBX贴图/卫星图JPG");
+    const std::filesystem::path overlayJpgFbxRoot =
+        testRoot / std::filesystem::u8path("FBX贴图/GIS图层JPG");
+    std::filesystem::create_directories(baseJpgFbxRoot, fileError);
+    if (!fileError)
+    {
+        std::filesystem::copy_file(
+            asciiBaseTilePath,
+            baseJpgFbxRoot / fbxJpgTextureRelativePath,
+            std::filesystem::copy_options::overwrite_existing,
+            fileError);
+    }
+    std::filesystem::create_directories(overlayJpgFbxRoot, fileError);
+    if (!fileError)
+    {
+        std::filesystem::copy_file(
+            asciiOverlayImagePath,
+            overlayJpgFbxRoot / fbxTextureRelativePath,
+            std::filesystem::copy_options::overwrite_existing,
+            fileError);
+    }
+    if (!postprocess_test::Require(!fileError, "无法准备 JPG FBX 叠加图层"))
+    {
+        return false;
+    }
+    composeError.clear();
+    if (!postprocess_test::Require(
+            DomDownToolPreview::ExportImageComposer::CompositeTileTree(
+                baseJpgFbxRoot, overlayJpgFbxRoot, baseJpgFbxRoot, composeError),
+            "JPG FBX 卫星贴图无法叠加 GIS PNG 图层：" + composeError) ||
+        !postprocess_test::RequireJpegEncoding(
+            baseJpgFbxRoot / fbxJpgTextureRelativePath))
     {
         return false;
     }
@@ -669,6 +708,7 @@ bool runTest()
                     record->configuration->zoom == configuration.zoom &&
                     record->configuration->exportTiles == configuration.exportTiles &&
                     !record->configuration->exportBuildingFbx &&
+                    record->configuration->fbxTextureFormat == "jpg" &&
                     record->configuration->fbxTerrainSampleRateMeters == 60. &&
                     burstChangeCount.load(std::memory_order_relaxed) <= 10 &&
                     persistedHasConfiguration,
@@ -688,6 +728,7 @@ bool runTest()
                 configuration.has_value() && configuration->radiusMeters == 1000. &&
                     configuration->zoom == 15 && configuration->exportTiles &&
                     !configuration->exportBuildingFbx &&
+                    configuration->fbxTextureFormat == "jpg" &&
                     configuration->fbxTerrainSampleRateMeters == 60. &&
                     configuration->outputRoot == testRoot / "progress-burst-output" &&
                     configuration->satelliteSources.size() == 1 &&

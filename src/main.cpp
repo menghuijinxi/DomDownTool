@@ -63,6 +63,7 @@ namespace
         uint32_t mergedImageResolution = 16384;
         std::string mergedImageFormat = "png";
         uint32_t fbxTextureSize = 4096;
+        std::string fbxTextureFormat = "png";
         DownTool::FbxPlanetShape fbxShape = DownTool::FbxPlanetShape::Plane;
         uint32_t fbxSubdivision = 64;
         double fbxTerrainSampleRateMeters = 30.;
@@ -335,6 +336,11 @@ namespace
         {
             error = "FBX 贴图尺寸必须是 256 到 16384 之间的 2 的次幂。";
         }
+        else if (options.outputMode == OutputMode::Fbx &&
+            options.fbxTextureFormat != "png" && options.fbxTextureFormat != "jpg")
+        {
+            error = "FBX 贴图格式只支持 png 或 jpg。";
+        }
         else if (options.outputMode == OutputMode::Fbx && options.fbxSubdivision == 0)
         {
             error = "FBX 球面细分数必须大于 0。";
@@ -491,6 +497,20 @@ namespace
                 if (!ParseUint32(value, options.fbxTextureSize))
                 {
                     error = "--fbx-texture-size 必须是非负整数。";
+                    return false;
+                }
+            }
+            else if (argument == "--fbx-texture-format")
+            {
+                options.fbxTextureFormat = ToLowerAscii(value);
+                if (options.fbxTextureFormat == "jpeg")
+                {
+                    options.fbxTextureFormat = "jpg";
+                }
+                if (options.fbxTextureFormat != "png" &&
+                    options.fbxTextureFormat != "jpg")
+                {
+                    error = "--fbx-texture-format 只支持 png 或 jpg。";
                     return false;
                 }
             }
@@ -652,6 +672,7 @@ namespace
 
         downloader.SetFbxOutputPath(PathToUtf8String(outputRoot / "FBX"));
         downloader.SetFbxTextureSize(options.fbxTextureSize);
+        downloader.SetFbxTextureFormat(options.fbxTextureFormat);
         downloader.SetFbxShape(options.fbxShape);
         downloader.SetFbxMeshSubdivision(options.fbxSubdivision);
         downloader.SetFbxTerrainSampleRateMeters(options.fbxTerrainSampleRateMeters);
@@ -707,6 +728,7 @@ namespace
             "  --merged-resolution <像素>    合并大图最大边，默认 16384\n"
             "  --merged-format <png|jpg>     合并大图格式，默认 png\n"
             "  --fbx-texture-size <像素>     FBX 贴图边长，默认 4096\n"
+            "  --fbx-texture-format <png|jpg> FBX 贴图格式，默认 png\n"
             "  --fbx-shape <形态>            plane,sphere,both\n"
             "  --fbx-subdivision <数量>      球面网格细分数，默认 64\n"
             "  --fbx-terrain-sample-rate <米> 高度采样间距，默认 30\n"

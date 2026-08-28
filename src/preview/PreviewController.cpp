@@ -188,6 +188,15 @@ DownTool::AmapBuildingFbxAtlasImageFormat buildingFbxAtlasImageFormatFromValue(
     return DownTool::AmapBuildingFbxAtlasImageFormat::Png;
 }
 
+std::string imageFormatValue(std::string_view value)
+{
+    if (value == "jpg" || value == "jpeg" || value == "JPG" || value == "JPEG")
+    {
+        return "jpg";
+    }
+    return "png";
+}
+
 FbxPreviewInteractionSettings loadFbxInteractionSettings()
 {
     FbxPreviewInteractionSettings settings;
@@ -891,6 +900,13 @@ std::optional<ExportConfiguration> loadLegacyTaskConfiguration(
             }
             continue;
         }
+        const std::string fbxTextureFormatValue = conversionRecordValue(
+            line, "FBX 贴图格式: ");
+        if (!fbxTextureFormatValue.empty())
+        {
+            configuration.fbxTextureFormat = imageFormatValue(fbxTextureFormatValue);
+            continue;
+        }
         const std::string terrainHeightValue = conversionRecordValue(
             line, "FBX 导出高度: ");
         if (!terrainHeightValue.empty())
@@ -1583,6 +1599,11 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 if (event.id == "export-fbx-size")
                 {
                     exportFbxSizeValue_ = event.value;
+                    return;
+                }
+                if (event.id == "export-fbx-texture-format")
+                {
+                    exportFbxTextureFormatValue_ = imageFormatValue(event.value);
                     return;
                 }
                 if (event.id == "export-terrain-sample-rate")
@@ -3606,12 +3627,14 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
         exportMergedFormat_ = configuration->mergedImageFormat;
         exportMergedResolutionValue_ = std::to_string(configuration->mergedImageResolution);
         exportFbxSizeValue_ = std::to_string(configuration->fbxTextureSize);
+        exportFbxTextureFormatValue_ = imageFormatValue(configuration->fbxTextureFormat);
         exportTerrainSampleRateValue_ = fmt::format(
             "{:.0f}", configuration->fbxTerrainSampleRateMeters);
         exportGisColors_ = configuration->gisColors;
     }
     else
     {
+        exportFbxTextureFormatValue_ = "png";
         exportGisColors_.clear();
         for (const DownTool::AmapVectorRenderCategory category : kExportCategories)
         {
@@ -3642,6 +3665,7 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
     runtime.setValueById("export-merged-format", exportMergedFormat_);
     runtime.setValueById("export-merged-resolution", exportMergedResolutionValue_);
     runtime.setValueById("export-fbx-size", exportFbxSizeValue_);
+    runtime.setValueById("export-fbx-texture-format", exportFbxTextureFormatValue_);
     runtime.setValueById(
         "export-terrain-sample-rate", exportTerrainSampleRateValue_);
     runtime.setValueById("export-building-wall-textures",
@@ -3716,6 +3740,7 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
     setDisabled("export-gis-combine-overlay",
                 !hasGisData || exportMapSourceIds_.empty());
     setDisabled("export-fbx-size", !exportFbx_);
+    setDisabled("export-fbx-texture-format", !exportFbx_);
     setDisabled("export-terrain-height", !exportFbx_);
     setDisabled("export-terrain-sample-rate", !exportFbx_ || !exportTerrainHeight_);
     setDisabled("export-building-wall-textures", !exportBuildingFbx_);
@@ -4062,6 +4087,7 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
     configuration.mergedImageResolution = *mergedResolution;
     configuration.mergedImageFormat = exportMergedFormat_ == "jpg" ? "jpg" : "png";
     configuration.fbxTextureSize = *fbxSize;
+    configuration.fbxTextureFormat = imageFormatValue(exportFbxTextureFormatValue_);
     configuration.fbxTerrainSampleRateMeters = *terrainSampleRate;
     if (exportTerrainHeight_ && !exportFbx_)
     {

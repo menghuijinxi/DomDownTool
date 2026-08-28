@@ -85,6 +85,7 @@ struct ExportConfiguration
     uint32_t mergedImageResolution = 16384;
     std::string mergedImageFormat = "png";
     uint32_t fbxTextureSize = 4096;
+    std::string fbxTextureFormat = "png";
     double fbxTerrainSampleRateMeters = 30.;
 };
 

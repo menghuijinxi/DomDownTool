@@ -82,6 +82,8 @@ bool runTest()
                     documentPath,
                     "grid-template-columns: minmax(0, 1fr)") &&
                 postprocess_test::ContainsText(documentPath, ".param-field select") &&
+                postprocess_test::ContainsText(
+                    documentPath, "id=\"export-fbx-texture-format\"") &&
                 postprocess_test::ContainsText(documentPath, "min-width: 0"),
             "导出参数行没有提供窗口变窄时的换行和收缩布局"))
     {

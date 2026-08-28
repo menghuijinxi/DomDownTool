@@ -301,12 +301,18 @@ bool CompositeTileTreeWithEncoding(
         {
             break;
         }
-        const std::filesystem::path basePath = baseRoot / relativePath;
+        std::filesystem::path baseRelativePath = relativePath;
+        std::filesystem::path basePath = baseRoot / baseRelativePath;
+        if (!std::filesystem::exists(basePath) && relativePath.extension() == ".png")
+        {
+            baseRelativePath.replace_extension(".jpg");
+            basePath = baseRoot / baseRelativePath;
+        }
         if (std::filesystem::exists(basePath) &&
             !CompositeImageWithEncoding(
                 basePath,
                 iterator->path(),
-                outputRoot / relativePath,
+                outputRoot / baseRelativePath,
                 encodingPolicy,
                 error,
                 cancellationRequested))

@@ -138,6 +138,9 @@ namespace DownTool
 		//FBX 贴图目标边长，必须是 2 的次幂，最大 16384
 		uint32_t FbxTextureSize = 4096;
 
+        //FBX 贴图输出格式，支持 png 或 jpg
+        std::string FbxTextureFormat = "png";
+
 		//FBX 模型、贴图和清单的同级输出根路径，空字符串时默认输出到
 		//GetPostProcessRootPath()
 		std::string FbxOutputPath = "";
@@ -389,7 +392,7 @@ namespace DownTool
 			double pixelY,
 			LonLat& lonLat) const;
 
-        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Proxy, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTerrainHeightEnabled, FbxElevationReferenceMeters, FbxTerrainSampleRateMeters, FbxElevationSampler, FbxTextureDistanceOffsets, TileSize, ProgressCallback)
+        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Proxy, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxTextureFormat, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTerrainHeightEnabled, FbxElevationReferenceMeters, FbxTerrainSampleRateMeters, FbxElevationSampler, FbxTextureDistanceOffsets, TileSize, ProgressCallback)
 
 		const DownToolCancellationCallback& GetCancellationRequestedCallback()
 		{
