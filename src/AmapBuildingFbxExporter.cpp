@@ -84,9 +84,16 @@ namespace
         std::array<double, 2> atlasMax = { 1., 1. };
     };
 
+    enum class BuildingMeshKind
+    {
+        Wall,
+        Roof
+    };
+
     struct BuildingMeshData
     {
         std::string name;
+        BuildingMeshKind kind = BuildingMeshKind::Roof;
         std::filesystem::path texturePath;
         bool wrapTextureU = false;
         bool usesAtlasTransform = false;
@@ -142,6 +149,12 @@ namespace
     {
         std::vector<TextureInfo> wallTextures;
         std::vector<TextureInfo> roofTextures;
+    };
+
+    struct SatelliteRoofTextureInfo
+    {
+        TextureInfo texture;
+        Bounds2 planeBounds;
     };
 
     struct MeshBucket
@@ -259,6 +272,17 @@ namespace
         return {
             (LongitudeToWebMercatorX(wgs84.lon) - centerMercatorX) * 100.,
             (LatitudeToWebMercatorY(wgs84.lat) - centerMercatorY) * 100.
+        };
+    }
+
+    Point2 ProjectWgs84ToFbxPlane(
+        const DownTool::LonLat& lonLat,
+        double centerMercatorX,
+        double centerMercatorY)
+    {
+        return {
+            (LongitudeToWebMercatorX(lonLat.lon) - centerMercatorX) * 100.,
+            (LatitudeToWebMercatorY(lonLat.lat) - centerMercatorY) * 100.
         };
     }
 
@@ -701,18 +725,94 @@ namespace
         std::string& error)
     {
         const std::filesystem::path outputDirectory = options.outputPath.parent_path();
-        return LoadTextureList(
-            options.wallTexturePath,
-            outputDirectory,
-            "building_wall",
-            library.wallTextures,
-            error) &&
-            LoadTextureList(
-                options.roofTexturePath,
+        if (!LoadTextureList(
+                options.wallTexturePath,
                 outputDirectory,
-                "building_roof",
-                library.roofTextures,
-                error);
+                "building_wall",
+                library.wallTextures,
+                error))
+        {
+            return false;
+        }
+        if (options.roofTextureMode == DownTool::AmapBuildingFbxRoofTextureMode::Satellite)
+        {
+            return true;
+        }
+        return LoadTextureList(
+            options.roofTexturePath,
+            outputDirectory,
+            "building_roof",
+            library.roofTextures,
+            error);
+    }
+
+    bool IsFiniteSatelliteRoofBounds(
+        const DownTool::AmapBuildingFbxSatelliteRoofTexture& source)
+    {
+        return std::isfinite(source.west) && std::isfinite(source.south) &&
+            std::isfinite(source.east) && std::isfinite(source.north) &&
+            source.west < source.east && source.south < source.north;
+    }
+
+    bool BuildSatelliteRoofTextureList(
+        const DownTool::AmapBuildingFbxExportOptions& options,
+        std::vector<SatelliteRoofTextureInfo>& textures,
+        std::string& error)
+    {
+        textures.clear();
+        if (options.roofTextureMode != DownTool::AmapBuildingFbxRoofTextureMode::Satellite)
+        {
+            return true;
+        }
+        if (options.satelliteRoofTextures.empty())
+        {
+            error = "屋顶卫星图模式缺少卫星 FBX 贴图清单。";
+            return false;
+        }
+
+        const double centerMercatorX = LongitudeToWebMercatorX(options.centerWgs84.lon);
+        const double centerMercatorY = LatitudeToWebMercatorY(options.centerWgs84.lat);
+        textures.reserve(options.satelliteRoofTextures.size());
+        for (const DownTool::AmapBuildingFbxSatelliteRoofTexture& source :
+             options.satelliteRoofTextures)
+        {
+            if (source.texturePath.empty() || !IsFiniteSatelliteRoofBounds(source))
+            {
+                continue;
+            }
+
+            const cv::Mat image = ReadTextureImage(source.texturePath);
+            if (image.empty() || image.cols <= 0 || image.rows <= 0)
+            {
+                continue;
+            }
+
+            Bounds2 planeBounds;
+            planeBounds.Add(ProjectWgs84ToFbxPlane(
+                { source.west, source.south }, centerMercatorX, centerMercatorY));
+            planeBounds.Add(ProjectWgs84ToFbxPlane(
+                { source.east, source.north }, centerMercatorX, centerMercatorY));
+            if (!planeBounds.IsValid())
+            {
+                continue;
+            }
+
+            const size_t textureIndex = textures.size();
+            textures.push_back({
+                TextureInfo{
+                    source.texturePath,
+                    source.texturePath,
+                    fmt::format("building_roof_satellite_{}", textureIndex),
+                    image.cols,
+                    image.rows},
+                planeBounds});
+        }
+        if (textures.empty())
+        {
+            error = "屋顶卫星图模式没有可读取的卫星 FBX 贴图。";
+            return false;
+        }
+        return true;
     }
 
     int32_t WallTextureUnit(const TextureInfo& texture, uint32_t unitPixelSize)
@@ -889,24 +989,39 @@ namespace
         return candidates[distribution(randomEngine)];
     }
 
+    bool ContainsPoint(const Bounds2& bounds, const Point2& point)
+    {
+        return point.x >= bounds.minX && point.x <= bounds.maxX &&
+            point.y >= bounds.minY && point.y <= bounds.maxY;
+    }
+
+    bool IntersectsBounds(const Bounds2& first, const Bounds2& second)
+    {
+        return first.minX <= second.maxX && first.maxX >= second.minX &&
+            first.minY <= second.maxY && first.maxY >= second.minY;
+    }
+
+    double BoundsArea(const Bounds2& bounds)
+    {
+        return std::max(0., bounds.maxX - bounds.minX) *
+            std::max(0., bounds.maxY - bounds.minY);
+    }
+
     MeshBucket& GetMeshBucket(
         std::map<std::filesystem::path, MeshBucket>& buckets,
         const TextureInfo& texture,
+        BuildingMeshKind kind,
         bool wrapTextureU)
     {
         MeshBucket& bucket = buckets[texture.outputPath];
         if (bucket.mesh.name.empty())
         {
             bucket.mesh.name = texture.materialName;
+            bucket.mesh.kind = kind;
             bucket.mesh.texturePath = texture.outputPath;
             bucket.mesh.wrapTextureU = wrapTextureU;
         }
         return bucket;
-    }
-
-    bool IsWallMeshTexturePath(const std::filesystem::path& texturePath)
-    {
-        return PathToUtf8String(texturePath.filename()).starts_with("building_wall_");
     }
 
     bool AppendVertex(BuildingMeshData& mesh, const BuildingVertex& vertex, uint32_t& index)
@@ -1065,10 +1180,11 @@ namespace
     void AppendRoofGeometry(
         const BuildingGeometry& geometry,
         double topCentimeters,
+        const Bounds2& uvBounds,
         BuildingMeshData& mesh)
     {
-        const double footprintWidth = std::max(1., geometry.bounds.maxX - geometry.bounds.minX);
-        const double footprintHeight = std::max(1., geometry.bounds.maxY - geometry.bounds.minY);
+        const double footprintWidth = std::max(1., uvBounds.maxX - uvBounds.minX);
+        const double footprintHeight = std::max(1., uvBounds.maxY - uvBounds.minY);
         for (const BuildingPolygon& polygon : geometry.polygons)
         {
             const size_t vertexOffset = mesh.vertices.size();
@@ -1085,8 +1201,8 @@ namespace
                         point.x,
                         point.y,
                         topCentimeters,
-                        (point.x - geometry.bounds.minX) / footprintWidth,
-                        1. - (point.y - geometry.bounds.minY) / footprintHeight,
+                        (point.x - uvBounds.minX) / footprintWidth,
+                        1. - (point.y - uvBounds.minY) / footprintHeight,
                         { 0., 0., 1. }
                     });
                 }
@@ -1108,6 +1224,14 @@ namespace
         }
     }
 
+    void AppendRoofGeometry(
+        const BuildingGeometry& geometry,
+        double topCentimeters,
+        BuildingMeshData& mesh)
+    {
+        AppendRoofGeometry(geometry, topCentimeters, geometry.bounds, mesh);
+    }
+
     bool CopyTexture(
         const TextureInfo& texture,
         std::set<std::filesystem::path>& copiedTextures,
@@ -1115,6 +1239,12 @@ namespace
     {
         if (copiedTextures.contains(texture.outputPath))
         {
+            return true;
+        }
+        if (std::filesystem::absolute(texture.sourcePath).lexically_normal() ==
+            std::filesystem::absolute(texture.outputPath).lexically_normal())
+        {
+            copiedTextures.insert(texture.outputPath);
             return true;
         }
 
@@ -1139,6 +1269,350 @@ namespace
             return false;
         }
         copiedTextures.insert(texture.outputPath);
+        return true;
+    }
+
+    enum class RectClipEdge
+    {
+        Left,
+        Right,
+        Bottom,
+        Top
+    };
+
+    bool PointsNearlyEqual(const Point2& first, const Point2& second)
+    {
+        constexpr double epsilon = 1.e-4;
+        return std::abs(first.x - second.x) <= epsilon &&
+            std::abs(first.y - second.y) <= epsilon;
+    }
+
+    Ring CleanClippedRing(Ring ring)
+    {
+        Ring cleaned;
+        cleaned.reserve(ring.size());
+        for (const Point2& point : ring)
+        {
+            if (cleaned.empty() || !PointsNearlyEqual(cleaned.back(), point))
+            {
+                cleaned.push_back(point);
+            }
+        }
+        while (cleaned.size() > 1 && PointsNearlyEqual(cleaned.front(), cleaned.back()))
+        {
+            cleaned.pop_back();
+        }
+        if (cleaned.size() < 3 || std::abs(SignedArea(cleaned)) <= 1.e-4)
+        {
+            cleaned.clear();
+        }
+        return cleaned;
+    }
+
+    bool IsInsideClipEdge(const Point2& point, const Bounds2& bounds, RectClipEdge edge)
+    {
+        constexpr double epsilon = 1.e-4;
+        switch (edge)
+        {
+        case RectClipEdge::Left:
+            return point.x >= bounds.minX - epsilon;
+        case RectClipEdge::Right:
+            return point.x <= bounds.maxX + epsilon;
+        case RectClipEdge::Bottom:
+            return point.y >= bounds.minY - epsilon;
+        case RectClipEdge::Top:
+            return point.y <= bounds.maxY + epsilon;
+        }
+        return false;
+    }
+
+    Point2 ClipSegmentIntersection(
+        const Point2& start,
+        const Point2& end,
+        const Bounds2& bounds,
+        RectClipEdge edge)
+    {
+        constexpr double epsilon = 1.e-9;
+        if (edge == RectClipEdge::Left || edge == RectClipEdge::Right)
+        {
+            const double clipX = edge == RectClipEdge::Left ? bounds.minX : bounds.maxX;
+            const double denominator = end.x - start.x;
+            if (std::abs(denominator) <= epsilon)
+            {
+                return { clipX, start.y };
+            }
+            const double t = std::clamp((clipX - start.x) / denominator, 0., 1.);
+            return { clipX, start.y + (end.y - start.y) * t };
+        }
+
+        const double clipY = edge == RectClipEdge::Bottom ? bounds.minY : bounds.maxY;
+        const double denominator = end.y - start.y;
+        if (std::abs(denominator) <= epsilon)
+        {
+            return { start.x, clipY };
+        }
+        const double t = std::clamp((clipY - start.y) / denominator, 0., 1.);
+        return { start.x + (end.x - start.x) * t, clipY };
+    }
+
+    Ring ClipRingByEdge(const Ring& input, const Bounds2& bounds, RectClipEdge edge)
+    {
+        if (input.empty())
+        {
+            return {};
+        }
+
+        Ring output;
+        output.reserve(input.size() + 1);
+        Point2 previous = input.back();
+        bool previousInside = IsInsideClipEdge(previous, bounds, edge);
+        for (const Point2& current : input)
+        {
+            const bool currentInside = IsInsideClipEdge(current, bounds, edge);
+            if (currentInside)
+            {
+                if (!previousInside)
+                {
+                    output.push_back(ClipSegmentIntersection(previous, current, bounds, edge));
+                }
+                output.push_back(current);
+            }
+            else if (previousInside)
+            {
+                output.push_back(ClipSegmentIntersection(previous, current, bounds, edge));
+            }
+
+            previous = current;
+            previousInside = currentInside;
+        }
+        return CleanClippedRing(std::move(output));
+    }
+
+    Ring ClipRingToBounds(Ring ring, const Bounds2& bounds)
+    {
+        for (const RectClipEdge edge : {
+                 RectClipEdge::Left,
+                 RectClipEdge::Right,
+                 RectClipEdge::Bottom,
+                 RectClipEdge::Top})
+        {
+            ring = ClipRingByEdge(ring, bounds, edge);
+            if (ring.empty())
+            {
+                return {};
+            }
+        }
+        return ring;
+    }
+
+    Bounds2 BuildTriangleBounds(const std::array<Point2, 3>& triangle)
+    {
+        Bounds2 bounds;
+        for (const Point2& point : triangle)
+        {
+            bounds.Add(point);
+        }
+        return bounds;
+    }
+
+    std::optional<size_t> SelectTextureContainingTriangle(
+        const std::vector<SatelliteRoofTextureInfo>& textures,
+        const std::array<Point2, 3>& triangle)
+    {
+        std::optional<size_t> selectedIndex;
+        double selectedArea = std::numeric_limits<double>::max();
+        for (size_t index = 0; index < textures.size(); index++)
+        {
+            const Bounds2& bounds = textures[index].planeBounds;
+            if (!ContainsPoint(bounds, triangle[0]) || !ContainsPoint(bounds, triangle[1]) ||
+                !ContainsPoint(bounds, triangle[2]))
+            {
+                continue;
+            }
+            const double area = BoundsArea(bounds);
+            if (area < selectedArea)
+            {
+                selectedArea = area;
+                selectedIndex = index;
+            }
+        }
+        return selectedIndex;
+    }
+
+    bool AppendSatelliteRoofPolygon(
+        const Ring& polygon,
+        double topCentimeters,
+        const SatelliteRoofTextureInfo& roofTexture,
+        std::map<std::filesystem::path, MeshBucket>& roofMeshBuckets,
+        std::set<std::filesystem::path>& copiedTextures,
+        bool& appended,
+        std::string& error)
+    {
+        const Ring cleanPolygon = CleanClippedRing(polygon);
+        if (cleanPolygon.empty())
+        {
+            return true;
+        }
+        if (!CopyTexture(roofTexture.texture, copiedTextures, error))
+        {
+            return false;
+        }
+
+        BuildingMeshData& mesh = GetMeshBucket(
+            roofMeshBuckets,
+            roofTexture.texture,
+            BuildingMeshKind::Roof,
+            false).mesh;
+        const double width = std::max(1., roofTexture.planeBounds.maxX -
+                                          roofTexture.planeBounds.minX);
+        const double height = std::max(1., roofTexture.planeBounds.maxY -
+                                           roofTexture.planeBounds.minY);
+        std::vector<uint32_t> vertexIndices;
+        vertexIndices.reserve(cleanPolygon.size());
+        for (const Point2& point : cleanPolygon)
+        {
+            uint32_t vertexIndex = 0;
+            if (!AppendVertex(
+                    mesh,
+                    { point.x,
+                      point.y,
+                      topCentimeters,
+                      (point.x - roofTexture.planeBounds.minX) / width,
+                      (point.y - roofTexture.planeBounds.minY) / height,
+                      { 0., 0., 1. } },
+                    vertexIndex))
+            {
+                error = "卫星屋顶 FBX 顶点数量超过索引上限。";
+                return false;
+            }
+            vertexIndices.push_back(vertexIndex);
+        }
+
+        for (size_t index = 1; index + 1 < vertexIndices.size(); index++)
+        {
+            uint32_t first = vertexIndices[0];
+            uint32_t second = vertexIndices[index];
+            uint32_t third = vertexIndices[index + 1];
+            const double cross = TriangleCrossZ(mesh.vertices, first, second, third);
+            if (std::abs(cross) <= 1.e-4)
+            {
+                continue;
+            }
+            if (cross < 0.)
+            {
+                std::swap(second, third);
+            }
+            AppendTriangle(mesh, first, second, third);
+            appended = true;
+        }
+        return true;
+    }
+
+    bool AppendSatelliteRoofTriangle(
+        const std::array<Point2, 3>& triangle,
+        double topCentimeters,
+        const std::vector<SatelliteRoofTextureInfo>& roofTextures,
+        std::map<std::filesystem::path, MeshBucket>& roofMeshBuckets,
+        std::set<std::filesystem::path>& copiedTextures,
+        std::string& error)
+    {
+        const Ring triangleRing = { triangle[0], triangle[1], triangle[2] };
+        bool appended = false;
+        const std::optional<size_t> containingTextureIndex = SelectTextureContainingTriangle(
+            roofTextures,
+            triangle);
+        if (containingTextureIndex)
+        {
+            return AppendSatelliteRoofPolygon(
+                triangleRing,
+                topCentimeters,
+                roofTextures[*containingTextureIndex],
+                roofMeshBuckets,
+                copiedTextures,
+                appended,
+                error);
+        }
+
+        const Bounds2 triangleBounds = BuildTriangleBounds(triangle);
+        for (const SatelliteRoofTextureInfo& roofTexture : roofTextures)
+        {
+            if (!IntersectsBounds(roofTexture.planeBounds, triangleBounds))
+            {
+                continue;
+            }
+            const Ring clippedPolygon = ClipRingToBounds(triangleRing, roofTexture.planeBounds);
+            if (!AppendSatelliteRoofPolygon(
+                    clippedPolygon,
+                    topCentimeters,
+                    roofTexture,
+                    roofMeshBuckets,
+                    copiedTextures,
+                    appended,
+                    error))
+            {
+                return false;
+            }
+        }
+        if (!appended)
+        {
+            error = "建筑屋顶没有匹配的卫星 FBX 贴图范围。";
+            return false;
+        }
+        return true;
+    }
+
+    bool AppendSatelliteRoofGeometry(
+        const BuildingGeometry& geometry,
+        double topCentimeters,
+        const std::vector<SatelliteRoofTextureInfo>& roofTextures,
+        std::map<std::filesystem::path, MeshBucket>& roofMeshBuckets,
+        std::set<std::filesystem::path>& copiedTextures,
+        std::string& error)
+    {
+        for (const BuildingPolygon& polygon : geometry.polygons)
+        {
+            std::vector<Point2> sourcePoints;
+            std::vector<std::vector<std::array<double, 2>>> earcutPolygon;
+            earcutPolygon.reserve(polygon.rings.size());
+            for (const PolygonRing& polygonRing : polygon.rings)
+            {
+                std::vector<std::array<double, 2>> earcutRing;
+                earcutRing.reserve(polygonRing.ring.size());
+                for (const Point2& point : polygonRing.ring)
+                {
+                    sourcePoints.push_back(point);
+                    earcutRing.push_back({ point.x, point.y });
+                }
+                earcutPolygon.push_back(std::move(earcutRing));
+            }
+
+            const std::vector<uint32_t> indices = mapbox::earcut<uint32_t>(earcutPolygon);
+            for (size_t index = 0; index + 2 < indices.size(); index += 3)
+            {
+                if (indices[index] >= sourcePoints.size() ||
+                    indices[index + 1] >= sourcePoints.size() ||
+                    indices[index + 2] >= sourcePoints.size())
+                {
+                    error = "卫星屋顶三角化索引越界。";
+                    return false;
+                }
+                const std::array<Point2, 3> triangle{
+                    sourcePoints[indices[index]],
+                    sourcePoints[indices[index + 1]],
+                    sourcePoints[indices[index + 2]]
+                };
+                if (!AppendSatelliteRoofTriangle(
+                        triangle,
+                        topCentimeters,
+                        roofTextures,
+                        roofMeshBuckets,
+                        copiedTextures,
+                        error))
+                {
+                    return false;
+                }
+            }
+        }
         return true;
     }
 
@@ -1200,16 +1674,14 @@ namespace
 
     std::vector<const TextureInfo*> CollectUsedTextures(
         const std::map<std::filesystem::path, MeshBucket>& meshBuckets,
-        const std::vector<TextureInfo>& textures,
-        bool wallTextures)
+        const std::vector<TextureInfo>& textures)
     {
         const std::unordered_map<std::string, const TextureInfo*> lookup =
             BuildTextureLookup(textures);
         std::vector<const TextureInfo*> usedTextures;
         for (const auto& [texturePath, bucket] : meshBuckets)
         {
-            if (bucket.mesh.vertices.empty() || bucket.mesh.indices.empty() ||
-                IsWallMeshTexturePath(texturePath) != wallTextures)
+            if (bucket.mesh.vertices.empty() || bucket.mesh.indices.empty())
             {
                 continue;
             }
@@ -1589,15 +2061,14 @@ namespace
     bool BuildAtlasMesh(
         const std::map<std::filesystem::path, MeshBucket>& meshBuckets,
         const std::vector<TextureInfo>& textures,
-        bool wallTextures,
         const std::filesystem::path& atlasPath,
         const std::string& materialName,
+        BuildingMeshKind meshKind,
         BuildingMeshData& atlasMesh,
         std::string& error)
     {
         std::vector<AtlasSource> sources;
-        if (!BuildAtlasSources(
-                CollectUsedTextures(meshBuckets, textures, wallTextures), sources, error))
+        if (!BuildAtlasSources(CollectUsedTextures(meshBuckets, textures), sources, error))
         {
             return false;
         }
@@ -1613,15 +2084,12 @@ namespace
         }
 
         atlasMesh.name = materialName;
+        atlasMesh.kind = meshKind;
         atlasMesh.texturePath = atlasPath;
         atlasMesh.wrapTextureU = false;
         atlasMesh.usesAtlasTransform = true;
         for (const auto& [texturePath, bucket] : meshBuckets)
         {
-            if (IsWallMeshTexturePath(texturePath) != wallTextures)
-            {
-                continue;
-            }
             const auto rect = atlasRects.find(PathToUtf8String(texturePath));
             if (rect == atlasRects.end())
             {
@@ -1815,9 +2283,20 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
         return result;
     }
 
-    const bool useTextureAtlas =
-        options.textureMode == AmapBuildingFbxTextureMode::MergedAtlas;
-    std::map<std::filesystem::path, MeshBucket> meshBuckets;
+    std::vector<SatelliteRoofTextureInfo> satelliteRoofTextures;
+    if (!BuildSatelliteRoofTextureList(options, satelliteRoofTextures, result.error))
+    {
+        return result;
+    }
+
+    const bool useWallAtlas =
+        options.wallTextureMode == AmapBuildingFbxTextureMode::MergedAtlas;
+    const bool useRoofAtlas =
+        options.roofTextureMode == AmapBuildingFbxRoofTextureMode::MergedAtlas;
+    const bool useSatelliteRoof =
+        options.roofTextureMode == AmapBuildingFbxRoofTextureMode::Satellite;
+    std::map<std::filesystem::path, MeshBucket> wallMeshBuckets;
+    std::map<std::filesystem::path, MeshBucket> roofMeshBuckets;
     std::unordered_map<std::string, WallMaterialBucketState> wallBucketStates;
     std::set<std::filesystem::path> copiedTextures;
     std::mt19937 randomEngine(options.randomSeed);
@@ -1857,16 +2336,9 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
             options,
             wallBucketStates,
             randomEngine);
-        const size_t roofTextureIndex = SelectRoofTexture(
-            textureLibrary.roofTextures,
-            geometry,
-            randomEngine);
         const TextureInfo& wallTexture = textureLibrary.wallTextures[wallTextureIndex];
-        const TextureInfo& roofTexture = textureLibrary.roofTextures[roofTextureIndex];
 
-        if (!useTextureAtlas &&
-            (!CopyTexture(wallTexture, copiedTextures, result.error) ||
-             !CopyTexture(roofTexture, copiedTextures, result.error)))
+        if (!useWallAtlas && !CopyTexture(wallTexture, copiedTextures, result.error))
         {
             return result;
         }
@@ -1877,53 +2349,114 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
             bottomCentimeters,
             topCentimeters,
             wallTexture,
-            GetMeshBucket(meshBuckets, wallTexture, !useTextureAtlas).mesh);
-        AppendRoofGeometry(
-            geometry,
-            topCentimeters,
-            GetMeshBucket(meshBuckets, roofTexture, false).mesh);
+            GetMeshBucket(
+                wallMeshBuckets, wallTexture, BuildingMeshKind::Wall, !useWallAtlas).mesh);
+        if (useSatelliteRoof)
+        {
+            if (!AppendSatelliteRoofGeometry(
+                geometry,
+                topCentimeters,
+                satelliteRoofTextures,
+                roofMeshBuckets,
+                copiedTextures,
+                result.error))
+            {
+                return result;
+            }
+        }
+        else
+        {
+            const size_t roofTextureIndex = SelectRoofTexture(
+                textureLibrary.roofTextures,
+                geometry,
+                randomEngine);
+            const TextureInfo& roofTexture = textureLibrary.roofTextures[roofTextureIndex];
+            if (!useRoofAtlas && !CopyTexture(roofTexture, copiedTextures, result.error))
+            {
+                return result;
+            }
+            AppendRoofGeometry(
+                geometry,
+                topCentimeters,
+                GetMeshBucket(
+                    roofMeshBuckets,
+                    roofTexture,
+                    BuildingMeshKind::Roof,
+                    false).mesh);
+        }
         result.buildingCount++;
     }
 
     std::vector<BuildingMeshData> meshDatas;
-    if (useTextureAtlas)
+    if (useWallAtlas || useRoofAtlas)
     {
         meshDatas.reserve(2);
-        BuildingMeshData wallAtlasMesh;
-        BuildingMeshData roofAtlasMesh;
         const std::filesystem::path outputDirectory = options.outputPath.parent_path();
         const std::string atlasExtension = AtlasImageExtension(options.atlasImageFormat);
-        if (!BuildAtlasMesh(
-                meshBuckets,
-                textureLibrary.wallTextures,
-                true,
-                outputDirectory / ("building_wall_atlas" + atlasExtension),
-                "building_wall_atlas",
-                wallAtlasMesh,
-                result.error) ||
-            !BuildAtlasMesh(
-                meshBuckets,
-                textureLibrary.roofTextures,
-                false,
-                outputDirectory / ("building_roof_atlas" + atlasExtension),
-                "building_roof_atlas",
-                roofAtlasMesh,
-                result.error))
+        if (useWallAtlas)
         {
-            return result;
+            BuildingMeshData wallAtlasMesh;
+            if (!BuildAtlasMesh(
+                    wallMeshBuckets,
+                    textureLibrary.wallTextures,
+                    outputDirectory / ("building_wall_atlas" + atlasExtension),
+                    "building_wall_atlas",
+                    BuildingMeshKind::Wall,
+                    wallAtlasMesh,
+                    result.error))
+            {
+                return result;
+            }
+            if (!wallAtlasMesh.vertices.empty() && !wallAtlasMesh.indices.empty())
+            {
+                meshDatas.push_back(std::move(wallAtlasMesh));
+            }
         }
-        if (!wallAtlasMesh.vertices.empty() && !wallAtlasMesh.indices.empty())
+        else
         {
-            meshDatas.push_back(std::move(wallAtlasMesh));
+            meshDatas.reserve(meshDatas.size() + wallMeshBuckets.size());
+            for (auto& [texturePath, bucket] : wallMeshBuckets)
+            {
+                if (!bucket.mesh.vertices.empty() && !bucket.mesh.indices.empty())
+                {
+                    meshDatas.push_back(std::move(bucket.mesh));
+                }
+            }
         }
-        if (!roofAtlasMesh.vertices.empty() && !roofAtlasMesh.indices.empty())
+        if (useRoofAtlas)
         {
-            meshDatas.push_back(std::move(roofAtlasMesh));
+            BuildingMeshData roofAtlasMesh;
+            if (!BuildAtlasMesh(
+                    roofMeshBuckets,
+                    textureLibrary.roofTextures,
+                    outputDirectory / ("building_roof_atlas" + atlasExtension),
+                    "building_roof_atlas",
+                    BuildingMeshKind::Roof,
+                    roofAtlasMesh,
+                    result.error))
+            {
+                return result;
+            }
+            if (!roofAtlasMesh.vertices.empty() && !roofAtlasMesh.indices.empty())
+            {
+                meshDatas.push_back(std::move(roofAtlasMesh));
+            }
+        }
+        else
+        {
+            meshDatas.reserve(meshDatas.size() + roofMeshBuckets.size());
+            for (auto& [texturePath, bucket] : roofMeshBuckets)
+            {
+                if (!bucket.mesh.vertices.empty() && !bucket.mesh.indices.empty())
+                {
+                    meshDatas.push_back(std::move(bucket.mesh));
+                }
+            }
         }
     }
     else
     {
-        meshDatas.reserve(meshBuckets.size());
+        meshDatas.reserve(wallMeshBuckets.size() + roofMeshBuckets.size());
         const auto appendMeshData = [&meshDatas](MeshBucket& bucket)
         {
             if (!bucket.mesh.vertices.empty() && !bucket.mesh.indices.empty())
@@ -1933,19 +2466,13 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
         };
 
         // 墙体优先输出，低角度检查和渐进加载时先看到建筑立面。
-        for (auto& [texturePath, bucket] : meshBuckets)
+        for (auto& [texturePath, bucket] : wallMeshBuckets)
         {
-            if (IsWallMeshTexturePath(texturePath))
-            {
-                appendMeshData(bucket);
-            }
+            appendMeshData(bucket);
         }
-        for (auto& [texturePath, bucket] : meshBuckets)
+        for (auto& [texturePath, bucket] : roofMeshBuckets)
         {
-            if (!IsWallMeshTexturePath(texturePath))
-            {
-                appendMeshData(bucket);
-            }
+            appendMeshData(bucket);
         }
     }
 

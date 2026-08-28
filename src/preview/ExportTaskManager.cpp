@@ -68,6 +68,34 @@ std::string BuildingFbxTextureModeName(DownTool::AmapBuildingFbxTextureMode mode
     return "散图";
 }
 
+std::string BuildingFbxRoofTextureModeValue(DownTool::AmapBuildingFbxRoofTextureMode mode)
+{
+    switch (mode)
+    {
+    case DownTool::AmapBuildingFbxRoofTextureMode::Scattered:
+        return "scattered";
+    case DownTool::AmapBuildingFbxRoofTextureMode::MergedAtlas:
+        return "merged-atlas";
+    case DownTool::AmapBuildingFbxRoofTextureMode::Satellite:
+        return "satellite";
+    }
+    return "scattered";
+}
+
+std::string BuildingFbxRoofTextureModeName(DownTool::AmapBuildingFbxRoofTextureMode mode)
+{
+    switch (mode)
+    {
+    case DownTool::AmapBuildingFbxRoofTextureMode::Scattered:
+        return "散图";
+    case DownTool::AmapBuildingFbxRoofTextureMode::MergedAtlas:
+        return "合并贴图";
+    case DownTool::AmapBuildingFbxRoofTextureMode::Satellite:
+        return "卫星图";
+    }
+    return "散图";
+}
+
 DownTool::AmapBuildingFbxTextureMode BuildingFbxTextureModeFromValue(
     std::string_view value)
 {
@@ -76,6 +104,29 @@ DownTool::AmapBuildingFbxTextureMode BuildingFbxTextureModeFromValue(
         return DownTool::AmapBuildingFbxTextureMode::MergedAtlas;
     }
     return DownTool::AmapBuildingFbxTextureMode::Scattered;
+}
+
+DownTool::AmapBuildingFbxRoofTextureMode BuildingFbxRoofTextureModeFromValue(
+    std::string_view value)
+{
+    if (value == "merged-atlas" || value == "合并贴图")
+    {
+        return DownTool::AmapBuildingFbxRoofTextureMode::MergedAtlas;
+    }
+    if (value == "satellite" || value == "卫星图")
+    {
+        return DownTool::AmapBuildingFbxRoofTextureMode::Satellite;
+    }
+    return DownTool::AmapBuildingFbxRoofTextureMode::Scattered;
+}
+
+std::string BuildingFbxModeName(const ExportConfiguration& configuration)
+{
+    return "建筑 FBX（墙体" +
+        BuildingFbxTextureModeName(configuration.buildingFbxWallTextureMode) +
+        " + 屋顶" +
+        BuildingFbxRoofTextureModeName(configuration.buildingFbxRoofTextureMode) +
+        "）";
 }
 
 std::string BuildingFbxAtlasImageFormatValue(
@@ -112,6 +163,12 @@ DownTool::AmapBuildingFbxAtlasImageFormat BuildingFbxAtlasImageFormatFromValue(
         return DownTool::AmapBuildingFbxAtlasImageFormat::Jpg;
     }
     return DownTool::AmapBuildingFbxAtlasImageFormat::Png;
+}
+
+bool UsesSatelliteRoofTexture(const ExportConfiguration& configuration)
+{
+    return configuration.buildingFbxRoofTextureMode ==
+        DownTool::AmapBuildingFbxRoofTextureMode::Satellite;
 }
 
 std::string GetJsonString(const Json& object, const char* fieldName)
@@ -205,8 +262,10 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
         {"exportBuildingFbx", configuration.exportBuildingFbx},
         {"buildingWallTexturePath", PathToUtf8(configuration.buildingWallTexturePath)},
         {"buildingRoofTexturePath", PathToUtf8(configuration.buildingRoofTexturePath)},
-        {"buildingFbxTextureMode", BuildingFbxTextureModeValue(
-            configuration.buildingFbxTextureMode)},
+        {"buildingFbxWallTextureMode", BuildingFbxTextureModeValue(
+            configuration.buildingFbxWallTextureMode)},
+        {"buildingFbxRoofTextureMode", BuildingFbxRoofTextureModeValue(
+            configuration.buildingFbxRoofTextureMode)},
         {"buildingFbxAtlasImageFormat", BuildingFbxAtlasImageFormatValue(
             configuration.buildingFbxAtlasImageFormat)},
         {"buildingLayerHeightCentimeters", configuration.buildingLayerHeightCentimeters},
@@ -257,8 +316,16 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
     {
         configuration.buildingRoofTexturePath = std::filesystem::u8path(roofTexturePath);
     }
-    configuration.buildingFbxTextureMode = BuildingFbxTextureModeFromValue(
-        GetJsonString(value, "buildingFbxTextureMode"));
+    const std::string legacyBuildingTextureMode = GetJsonString(
+        value, "buildingFbxTextureMode");
+    const std::string wallTextureMode = GetJsonString(
+        value, "buildingFbxWallTextureMode");
+    const std::string roofTextureMode = GetJsonString(
+        value, "buildingFbxRoofTextureMode");
+    configuration.buildingFbxWallTextureMode = BuildingFbxTextureModeFromValue(
+        wallTextureMode.empty() ? legacyBuildingTextureMode : wallTextureMode);
+    configuration.buildingFbxRoofTextureMode = BuildingFbxRoofTextureModeFromValue(
+        roofTextureMode.empty() ? legacyBuildingTextureMode : roofTextureMode);
     configuration.buildingFbxAtlasImageFormat = BuildingFbxAtlasImageFormatFromValue(
         GetJsonString(value, "buildingFbxAtlasImageFormat"));
     configuration.buildingLayerHeightCentimeters = GetJsonDouble(
@@ -604,16 +671,106 @@ std::filesystem::path TaskOutputRoot(const ExportConfiguration& configuration,
 }
 
 std::filesystem::path SatelliteOutputRoot(const ExportConfiguration& configuration,
-                                          const std::string& taskId,
-                                          const SatelliteExportSource& source)
+                                           const std::string& taskId,
+                                           const SatelliteExportSource& source)
 {
     const std::filesystem::path root = TaskOutputRoot(configuration, taskId);
     return root / std::filesystem::u8path("卫星图") /
         std::filesystem::u8path(SanitizeFileName(source.name));
 }
 
+std::optional<double> TryGetJsonDouble(const Json& object, const char* fieldName)
+{
+    if (!object.is_object())
+    {
+        return std::nullopt;
+    }
+    const auto iterator = object.find(fieldName);
+    if (iterator == object.end() || !iterator->is_number())
+    {
+        return std::nullopt;
+    }
+    return iterator->get<double>();
+}
+
+std::filesystem::path ResolveManifestTexturePath(
+    const std::filesystem::path& fbxRoot,
+    std::string_view pathText)
+{
+    std::filesystem::path texturePath = std::filesystem::u8path(std::string(pathText));
+    if (texturePath.is_absolute())
+    {
+        return texturePath;
+    }
+    return fbxRoot / texturePath;
+}
+
+std::vector<DownTool::AmapBuildingFbxSatelliteRoofTexture>
+CollectSatelliteRoofTexturesFromFbxRoot(const std::filesystem::path& fbxRoot)
+{
+    std::vector<DownTool::AmapBuildingFbxSatelliteRoofTexture> textures;
+    std::ifstream input(fbxRoot / "manifest.json", std::ios::binary);
+    if (!input.is_open())
+    {
+        return textures;
+    }
+    const Json manifest = Json::parse(input, nullptr, false);
+    if (!manifest.is_object() || !manifest.contains("textures") ||
+        !manifest.at("textures").is_array())
+    {
+        return textures;
+    }
+
+    for (const Json& texture : manifest.at("textures"))
+    {
+        const std::string texturePathText = GetJsonString(texture, "path");
+        const auto boundsIterator = texture.find("bounds");
+        if (texturePathText.empty() || boundsIterator == texture.end() ||
+            !boundsIterator->is_object())
+        {
+            continue;
+        }
+        const std::optional<double> west = TryGetJsonDouble(*boundsIterator, "west");
+        const std::optional<double> south = TryGetJsonDouble(*boundsIterator, "south");
+        const std::optional<double> east = TryGetJsonDouble(*boundsIterator, "east");
+        const std::optional<double> north = TryGetJsonDouble(*boundsIterator, "north");
+        if (!west || !south || !east || !north)
+        {
+            continue;
+        }
+        textures.push_back({
+            ResolveManifestTexturePath(fbxRoot, texturePathText),
+            *west,
+            *south,
+            *east,
+            *north});
+    }
+    return textures;
+}
+
+std::vector<DownTool::AmapBuildingFbxSatelliteRoofTexture> CollectSatelliteRoofTextures(
+    const ExportConfiguration& configuration,
+    const std::string& taskId)
+{
+    std::vector<DownTool::AmapBuildingFbxSatelliteRoofTexture> textures;
+    for (const SatelliteExportSource& source : configuration.satelliteSources)
+    {
+        const std::filesystem::path fbxRoot = SatelliteOutputRoot(
+            configuration,
+            taskId,
+            source) / "FBX";
+        std::vector<DownTool::AmapBuildingFbxSatelliteRoofTexture> sourceTextures =
+            CollectSatelliteRoofTexturesFromFbxRoot(fbxRoot);
+        textures.insert(
+            textures.end(),
+            std::make_move_iterator(sourceTextures.begin()),
+            std::make_move_iterator(sourceTextures.end()));
+    }
+    return textures;
+}
+
 std::filesystem::path GisOutputRoot(const ExportConfiguration& configuration,
-                                    const std::string& taskId,
+                                     const std::string& taskId,
                                     std::string_view modeName,
                                     std::string_view categoryName)
 {
@@ -744,9 +901,7 @@ std::string BuildTaskDetailsText(const ExportConfiguration& configuration)
             "FBX 切片、网格与高度" : "FBX 切片与网格");
         if (configuration.exportBuildingFbx)
         {
-            outputs.emplace_back(configuration.buildingFbxTextureMode ==
-                DownTool::AmapBuildingFbxTextureMode::MergedAtlas ?
-                "建筑合并贴图 FBX" : "建筑散图 FBX");
+            outputs.emplace_back(BuildingFbxModeName(configuration));
         }
     }
     if (configuration.exportGeoJson)
@@ -838,12 +993,18 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
            << configuration.fbxTerrainSampleRateMeters << "\n"
            << "建筑按高度着色: "
            << (configuration.colorBuildingsByHeight ? "是" : "否") << "\n"
-           << "建筑散图 FBX: "
-           << (configuration.exportBuildingFbx ? "是" : "否") << "\n"
-           << "建筑 FBX 贴图模式: "
-           << BuildingFbxTextureModeName(configuration.buildingFbxTextureMode) << "\n"
-           << "建筑 FBX 合并贴图格式: "
-           << BuildingFbxAtlasImageFormatName(configuration.buildingFbxAtlasImageFormat)
+            << "建筑 FBX: "
+            << (configuration.exportBuildingFbx ? "是" : "否") << "\n"
+            << "建筑 FBX 墙体贴图模式: "
+            << BuildingFbxTextureModeName(configuration.buildingFbxWallTextureMode) << "\n"
+            << "建筑 FBX 屋顶贴图模式: "
+            << BuildingFbxRoofTextureModeName(configuration.buildingFbxRoofTextureMode) << "\n"
+            << "建筑 FBX 合并贴图格式: "
+            << BuildingFbxAtlasImageFormatName(configuration.buildingFbxAtlasImageFormat)
+           << "\n"
+           << "建筑 FBX 卫星屋顶输出: "
+           << (UsesSatelliteRoofTexture(configuration) ?
+               "写入对应卫星或叠加卫星 FBX 目录，复用 manifest 贴图" : "否")
            << "\n"
            << "建筑墙体贴图目录: "
            << PathToUtf8(configuration.buildingWallTexturePath) << "\n"
@@ -947,6 +1108,89 @@ DownTool::AmapVectorDecodedData FilterBuildingFbxData(
         }
     }
     return filteredData;
+}
+
+void ApplyBuildingFbxElevation(
+    DownTool::AmapBuildingFbxExportOptions& exportOptions,
+    const std::shared_ptr<DownTool::CopernicusDemData>& elevationData)
+{
+    if (!elevationData)
+    {
+        return;
+    }
+    exportOptions.terrainHeightEnabled = true;
+    exportOptions.elevationReferenceMeters = elevationData->GetMinimumElevationMeters();
+    exportOptions.elevationSampler =
+        [elevationData](const DownTool::LonLat& lonLat)
+        {
+            return elevationData->Sample(lonLat);
+        };
+}
+
+bool ExportBuildingFbxDataToRoot(
+    const ExportConfiguration& configuration,
+    const DownTool::AmapVectorDecodedData& buildingData,
+    const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
+    const std::filesystem::path& fbxRoot,
+    const std::vector<DownTool::AmapBuildingFbxSatelliteRoofTexture>& satelliteRoofTextures,
+    const std::function<bool()>& cancellationRequested,
+    std::string& error)
+{
+    DownTool::AmapBuildingFbxExportOptions exportOptions;
+    exportOptions.outputPath = fbxRoot / "buildings.fbx";
+    exportOptions.centerWgs84 = configuration.centerWgs84;
+    exportOptions.wallTexturePath = configuration.buildingWallTexturePath;
+    exportOptions.roofTexturePath = configuration.buildingRoofTexturePath;
+    exportOptions.wallTextureMode = configuration.buildingFbxWallTextureMode;
+    exportOptions.roofTextureMode = configuration.buildingFbxRoofTextureMode;
+    exportOptions.atlasImageFormat = configuration.buildingFbxAtlasImageFormat;
+    exportOptions.satelliteRoofTextures = satelliteRoofTextures;
+    exportOptions.layerHeightCentimeters = configuration.buildingLayerHeightCentimeters;
+    exportOptions.maxWallMaterialsPerBucket =
+        configuration.buildingMaxWallMaterialsPerBucket;
+    exportOptions.randomSeed = configuration.buildingTextureRandomSeed;
+    exportOptions.cancellationRequested = cancellationRequested;
+    ApplyBuildingFbxElevation(exportOptions, elevationData);
+
+    const DownTool::AmapBuildingFbxExportResult exportResult =
+        DownTool::ExportAmapBuildingsToFbx(buildingData, exportOptions);
+    if (!exportResult.success)
+    {
+        error = exportResult.error;
+        return false;
+    }
+    if (!std::filesystem::exists(exportOptions.outputPath))
+    {
+        error = BuildingFbxModeName(configuration) + " 没有生成有效网格。";
+        return false;
+    }
+    return true;
+}
+
+bool ExportSatelliteRoofBuildingFbxToRoot(
+    const ExportConfiguration& configuration,
+    const DownTool::AmapVectorDecodedData& buildingData,
+    const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
+    const std::filesystem::path& fbxRoot,
+    const std::function<bool()>& cancellationRequested,
+    std::string& error)
+{
+    std::vector<DownTool::AmapBuildingFbxSatelliteRoofTexture> satelliteRoofTextures =
+        CollectSatelliteRoofTexturesFromFbxRoot(fbxRoot);
+    if (satelliteRoofTextures.empty())
+    {
+        error = "屋顶卫星图模式没有找到同目录卫星 FBX 贴图清单：" +
+            PathToUtf8(fbxRoot / "manifest.json");
+        return false;
+    }
+    return ExportBuildingFbxDataToRoot(
+        configuration,
+        buildingData,
+        elevationData,
+        fbxRoot,
+        satelliteRoofTextures,
+        cancellationRequested,
+        error);
 }
 
 std::string BuildTaskTitle(const ExportConfiguration& configuration)
@@ -1401,6 +1645,14 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
         error = "建筑 FBX 需要选择 GIS 建筑图层。";
         return false;
     }
+    if (configuration.exportBuildingFbx &&
+        configuration.buildingFbxRoofTextureMode ==
+            DownTool::AmapBuildingFbxRoofTextureMode::Satellite &&
+        configuration.satelliteSources.empty())
+    {
+        error = "屋顶卫星图模式需要至少选择一个卫星图来源。";
+        return false;
+    }
     const bool satelliteRequested = !configuration.satelliteSources.empty() &&
         (configuration.exportTiles || configuration.exportMergedImage ||
          configuration.exportFbx);
@@ -1718,12 +1970,19 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
     options.render.categories = categories;
     options.render.colors = configuration.gisColors;
     options.render.colorBuildingsByHeight = configuration.colorBuildingsByHeight;
-    options.render.exportBuildingsToFbx = configuration.exportBuildingFbx;
+    const bool satelliteRoofBuildingFbx = configuration.exportBuildingFbx &&
+        UsesSatelliteRoofTexture(configuration);
+    options.render.exportBuildingsToFbx =
+        configuration.exportBuildingFbx && !satelliteRoofBuildingFbx;
     options.render.buildingWallTexturePath = configuration.buildingWallTexturePath;
     options.render.buildingRoofTexturePath = configuration.buildingRoofTexturePath;
-    options.render.buildingFbxTextureMode = configuration.buildingFbxTextureMode;
+    options.render.buildingFbxWallTextureMode = configuration.buildingFbxWallTextureMode;
+    options.render.buildingFbxRoofTextureMode = configuration.buildingFbxRoofTextureMode;
     options.render.buildingFbxAtlasImageFormat =
         configuration.buildingFbxAtlasImageFormat;
+    options.render.buildingFbxSatelliteRoofTextures = CollectSatelliteRoofTextures(
+        configuration,
+        queuedExport.taskId);
     options.render.buildingLayerHeightCentimeters =
         configuration.buildingLayerHeightCentimeters;
     options.render.buildingMaxWallMaterialsPerBucket =
@@ -1819,6 +2078,19 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
         return false;
     }
 
+    DownTool::AmapVectorDecodedData satelliteRoofBuildingData;
+    if (satelliteRoofBuildingFbx)
+    {
+        satelliteRoofBuildingData = FilterBuildingFbxData(
+            result.vectorDownload.decodedData,
+            categories,
+            [this] { return IsCancellationRequested(); });
+        if (IsCancellationRequested())
+        {
+            return false;
+        }
+    }
+
     if (mode == GisExportMode::OverlayOnSatellite)
     {
         const ExportCancellationCallback cancellationRequested =
@@ -1854,7 +2126,20 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
             {
                 return false;
             }
+            if (configuration.exportFbx && satelliteRoofBuildingFbx &&
+                !satelliteRoofBuildingData.features.empty() &&
+                !ExportSatelliteRoofBuildingFbxToRoot(
+                    configuration,
+                    satelliteRoofBuildingData,
+                    elevationData,
+                    compositeRoot / "FBX",
+                    cancellationRequested,
+                    error))
+            {
+                return false;
+            }
             if (configuration.exportFbx && configuration.exportBuildingFbx &&
+                !satelliteRoofBuildingFbx &&
                 !CopyBuildingFbxArtifacts(fbxOutputPath, compositeRoot / "FBX", error))
             {
                 return false;
@@ -1881,6 +2166,32 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
                                 "merged." + configuration.mergedImageFormat),
                         removeError);
                 }
+            }
+        }
+    }
+    else if (satelliteRoofBuildingFbx && !satelliteRoofBuildingData.features.empty())
+    {
+        const ExportCancellationCallback cancellationRequested =
+            [this] { return IsCancellationRequested(); };
+        for (const SatelliteExportSource& source : configuration.satelliteSources)
+        {
+            if (IsCancellationRequested())
+            {
+                return false;
+            }
+            const std::filesystem::path satelliteFbxRoot = SatelliteOutputRoot(
+                configuration,
+                queuedExport.taskId,
+                source) / "FBX";
+            if (!ExportSatelliteRoofBuildingFbxToRoot(
+                    configuration,
+                    satelliteRoofBuildingData,
+                    elevationData,
+                    satelliteFbxRoot,
+                    cancellationRequested,
+                    error))
+            {
+                return false;
             }
         }
     }
@@ -1950,52 +2261,51 @@ bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
         return false;
     }
 
-    const bool mergedAtlas = configuration.buildingFbxTextureMode ==
-        DownTool::AmapBuildingFbxTextureMode::MergedAtlas;
-    const std::string outputModeName = mergedAtlas ? "建筑合并贴图 FBX" : "建筑散图 FBX";
-    const std::filesystem::path outputRoot = GisOutputRoot(
-        configuration, queuedExport.taskId, outputModeName, "建筑") / "FBX";
-    DownTool::AmapBuildingFbxExportOptions exportOptions;
-    exportOptions.outputPath = outputRoot / "buildings.fbx";
-    exportOptions.centerWgs84 = configuration.centerWgs84;
-    exportOptions.wallTexturePath = configuration.buildingWallTexturePath;
-    exportOptions.roofTexturePath = configuration.buildingRoofTexturePath;
-    exportOptions.textureMode = configuration.buildingFbxTextureMode;
-    exportOptions.atlasImageFormat = configuration.buildingFbxAtlasImageFormat;
-    exportOptions.layerHeightCentimeters = configuration.buildingLayerHeightCentimeters;
-    exportOptions.maxWallMaterialsPerBucket =
-        configuration.buildingMaxWallMaterialsPerBucket;
-    exportOptions.randomSeed = configuration.buildingTextureRandomSeed;
-    if (elevationData)
-    {
-        exportOptions.terrainHeightEnabled = true;
-        exportOptions.elevationReferenceMeters = elevationData->GetMinimumElevationMeters();
-        exportOptions.elevationSampler =
-            [elevationData](const DownTool::LonLat& lonLat)
-            {
-                return elevationData->Sample(lonLat);
-            };
-    }
-    exportOptions.cancellationRequested = cancellationRequested;
+    const std::string outputModeName = BuildingFbxModeName(configuration);
     UpdateProgress(
         queuedExport.taskId, "导出" + outputModeName,
         (static_cast<double>(stepIndex) + 0.85) / static_cast<double>(stepCount),
         0, 1);
-    const DownTool::AmapBuildingFbxExportResult exportResult =
-        DownTool::ExportAmapBuildingsToFbx(buildingData, exportOptions);
-    if (IsCancellationRequested())
+
+    if (UsesSatelliteRoofTexture(configuration))
     {
-        return false;
+        for (const SatelliteExportSource& source : configuration.satelliteSources)
+        {
+            if (IsCancellationRequested())
+            {
+                return false;
+            }
+            const std::filesystem::path satelliteFbxRoot = SatelliteOutputRoot(
+                configuration,
+                queuedExport.taskId,
+                source) / "FBX";
+            if (!ExportSatelliteRoofBuildingFbxToRoot(
+                    configuration,
+                    buildingData,
+                    elevationData,
+                    satelliteFbxRoot,
+                    cancellationRequested,
+                    error))
+            {
+                return false;
+            }
+        }
     }
-    if (!exportResult.success)
+    else
     {
-        error = exportResult.error;
-        return false;
-    }
-    if (!std::filesystem::exists(exportOptions.outputPath))
-    {
-        error = outputModeName + " 没有生成有效网格。";
-        return false;
+        const std::filesystem::path outputRoot = GisOutputRoot(
+            configuration, queuedExport.taskId, outputModeName, "建筑") / "FBX";
+        if (!ExportBuildingFbxDataToRoot(
+                configuration,
+                buildingData,
+                elevationData,
+                outputRoot,
+                {},
+                cancellationRequested,
+                error))
+        {
+            return false;
+        }
     }
     UpdateProgress(queuedExport.taskId, outputModeName + " 导出完成",
                    static_cast<double>(stepIndex + 1) / static_cast<double>(stepCount),

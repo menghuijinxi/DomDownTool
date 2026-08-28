@@ -90,10 +90,13 @@ namespace DownTool
             std::filesystem::u8path("贴图/墙体");
         std::filesystem::path buildingRoofTexturePath =
             std::filesystem::u8path("贴图/房顶");
-        AmapBuildingFbxTextureMode buildingFbxTextureMode =
+        AmapBuildingFbxTextureMode buildingFbxWallTextureMode =
             AmapBuildingFbxTextureMode::Scattered;
+        AmapBuildingFbxRoofTextureMode buildingFbxRoofTextureMode =
+            AmapBuildingFbxRoofTextureMode::Scattered;
         AmapBuildingFbxAtlasImageFormat buildingFbxAtlasImageFormat =
             AmapBuildingFbxAtlasImageFormat::Png;
+        std::vector<AmapBuildingFbxSatelliteRoofTexture> buildingFbxSatelliteRoofTextures;
         double buildingLayerHeightCentimeters = 45.;
         double buildingTextureUnitLayer = 5.;
         uint32_t buildingTextureUnitPixelSize = 64;

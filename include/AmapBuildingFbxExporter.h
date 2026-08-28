@@ -5,6 +5,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "AmapVectorDecoder.h"
 #include "DataType.h"
@@ -17,10 +18,26 @@ namespace DownTool
         MergedAtlas
     };
 
+    enum class AmapBuildingFbxRoofTextureMode
+    {
+        Scattered,
+        MergedAtlas,
+        Satellite
+    };
+
     enum class AmapBuildingFbxAtlasImageFormat
     {
         Png,
         Jpg
+    };
+
+    struct AmapBuildingFbxSatelliteRoofTexture
+    {
+        std::filesystem::path texturePath;
+        double west = 0.;
+        double south = 0.;
+        double east = 0.;
+        double north = 0.;
     };
 
     struct AmapBuildingFbxExportOptions
@@ -29,9 +46,12 @@ namespace DownTool
         LonLat centerWgs84;
         std::filesystem::path wallTexturePath = std::filesystem::u8path("贴图/墙体");
         std::filesystem::path roofTexturePath = std::filesystem::u8path("贴图/房顶");
-        AmapBuildingFbxTextureMode textureMode = AmapBuildingFbxTextureMode::Scattered;
+        AmapBuildingFbxTextureMode wallTextureMode = AmapBuildingFbxTextureMode::Scattered;
+        AmapBuildingFbxRoofTextureMode roofTextureMode =
+            AmapBuildingFbxRoofTextureMode::Scattered;
         AmapBuildingFbxAtlasImageFormat atlasImageFormat =
             AmapBuildingFbxAtlasImageFormat::Png;
+        std::vector<AmapBuildingFbxSatelliteRoofTexture> satelliteRoofTextures;
         double layerHeightCentimeters = 45.;
         double textureUnitLayer = 5.;
         uint32_t textureUnitPixelSize = 64;

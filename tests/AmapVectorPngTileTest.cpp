@@ -418,10 +418,122 @@ namespace
                 expectMergedAtlas ? "建筑 FBX 没有生成屋顶合并贴图" :
                     "建筑 FBX 没有复制屋顶 JPEG") &&
             (!expectMergedAtlas ||
-             (RequirePowerOfTwoTexture(
-                  fbxRoot / ("building_wall_atlas" + atlasExtension)) &&
-              RequirePowerOfTwoTexture(
-                  fbxRoot / ("building_roof_atlas" + atlasExtension))));
+              (RequirePowerOfTwoTexture(
+                   fbxRoot / ("building_wall_atlas" + atlasExtension)) &&
+               RequirePowerOfTwoTexture(
+                   fbxRoot / ("building_roof_atlas" + atlasExtension))));
+    }
+
+    bool RequireSatelliteRoofFbx(
+        const std::filesystem::path& fbxPath,
+        size_t minimumSatelliteRoofMaterialCount)
+    {
+        Assimp::Importer importer;
+        const aiScene* scene = postprocess_test::ReadFbxScene(importer, fbxPath);
+        if (!Require(scene != nullptr, "卫星屋顶建筑 FBX 无法读取") ||
+            !Require(scene->HasMeshes(), "卫星屋顶建筑 FBX 没有网格"))
+        {
+            return false;
+        }
+
+        size_t satelliteRoofMaterialCount = 0;
+        bool foundTerrainAlignedRoofUv = false;
+        for (unsigned int materialIndex = 0; materialIndex < scene->mNumMaterials;
+             materialIndex++)
+        {
+            const aiMaterial* material = scene->mMaterials[materialIndex];
+            if (material == nullptr)
+            {
+                continue;
+            }
+            aiString materialName;
+            aiString texturePath;
+            if (material->Get(AI_MATKEY_NAME, materialName) == AI_SUCCESS &&
+                material->GetTexture(aiTextureType_DIFFUSE, 0, &texturePath) == AI_SUCCESS &&
+                std::string(materialName.C_Str()).starts_with("building_roof_satellite_"))
+            {
+                if (std::string(texturePath.C_Str()).find("building_roof_satellite_") !=
+                    std::string::npos)
+                {
+                    std::cerr << "卫星屋顶材质不应引用额外复制贴图："
+                              << texturePath.C_Str() << '\n';
+                    return false;
+                }
+                satelliteRoofMaterialCount++;
+            }
+        }
+        for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; meshIndex++)
+        {
+            const aiMesh* mesh = scene->mMeshes[meshIndex];
+            if (mesh == nullptr || mesh->mMaterialIndex >= scene->mNumMaterials ||
+                mesh->mTextureCoords[0] == nullptr)
+            {
+                continue;
+            }
+            const aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
+            aiString materialName;
+            if (material == nullptr || material->Get(AI_MATKEY_NAME, materialName) !=
+                    AI_SUCCESS ||
+                !std::string(materialName.C_Str()).starts_with("building_roof_satellite_"))
+            {
+                continue;
+            }
+
+            double minimumX = std::numeric_limits<double>::max();
+            double maximumX = std::numeric_limits<double>::lowest();
+            double minimumY = std::numeric_limits<double>::max();
+            double maximumY = std::numeric_limits<double>::lowest();
+            double minimumXU = 0.;
+            double maximumXU = 0.;
+            double minimumYV = 0.;
+            double maximumYV = 0.;
+            for (unsigned int vertexIndex = 0; vertexIndex < mesh->mNumVertices;
+                 vertexIndex++)
+            {
+                const double x = mesh->mVertices[vertexIndex].x;
+                const double y = mesh->mVertices[vertexIndex].y;
+                const double u = mesh->mTextureCoords[0][vertexIndex].x;
+                const double v = mesh->mTextureCoords[0][vertexIndex].y;
+                if (!Require(
+                        u >= -1.e-5 && u <= 1. + 1.e-5 &&
+                            v >= -1.e-5 && v <= 1. + 1.e-5,
+                        "卫星屋顶 UV 超出卫星贴图范围"))
+                {
+                    return false;
+                }
+                if (x < minimumX)
+                {
+                    minimumX = x;
+                    minimumXU = u;
+                }
+                if (x > maximumX)
+                {
+                    maximumX = x;
+                    maximumXU = u;
+                }
+                if (y < minimumY)
+                {
+                    minimumY = y;
+                    minimumYV = v;
+                }
+                if (y > maximumY)
+                {
+                    maximumY = y;
+                    maximumYV = v;
+                }
+            }
+            if (maximumX > minimumX + 1.e-4 && maximumXU > minimumXU + 1.e-5 &&
+                maximumY > minimumY + 1.e-4 && maximumYV > minimumYV + 1.e-5)
+            {
+                foundTerrainAlignedRoofUv = true;
+            }
+        }
+        return Require(
+            satelliteRoofMaterialCount >= minimumSatelliteRoofMaterialCount,
+            "卫星屋顶 FBX 没有按卫星图范围拆分屋顶 mesh") &&
+            Require(
+                foundTerrainAlignedRoofUv,
+                "卫星屋顶 UV 方向没有和地形 FBX 保持一致");
     }
 
     DownTool::AmapVectorFeature MakePolygon(
@@ -871,8 +983,10 @@ namespace
         const std::filesystem::path atlasPostProcessRoot = outputRoot / "postprocess-atlas";
         const std::filesystem::path atlasXyzRoot = atlasPostProcessRoot / "XYZ";
         const std::filesystem::path atlasFbxRoot = atlasPostProcessRoot / "FBX";
-        renderOptions.buildingFbxTextureMode =
+        renderOptions.buildingFbxWallTextureMode =
             DownTool::AmapBuildingFbxTextureMode::MergedAtlas;
+        renderOptions.buildingFbxRoofTextureMode =
+            DownTool::AmapBuildingFbxRoofTextureMode::MergedAtlas;
         downloader.SetPostProcessOutputPath(atlasXyzRoot.string());
         downloader.SetPostProcessMergedImageOutputPath(
             (atlasPostProcessRoot / "merged.png").string());
@@ -940,6 +1054,90 @@ namespace
         if (!Require(
                 CountFbxFaces(jpgAtlasFbxRoot / "buildings.fbx") <= scatteredBuildingFaceCount,
                 "JPG 建筑合并贴图 FBX 不应通过切分墙面增加总面数"))
+        {
+            return false;
+        }
+
+        const std::filesystem::path satelliteRoofFbxRoot = outputRoot / "satellite-roof-fbx";
+        const std::filesystem::path satelliteRoofLeftTexture =
+            satelliteRoofFbxRoot / "satellite_roof_left.jpg";
+        const std::filesystem::path satelliteRoofRightTexture =
+            satelliteRoofFbxRoot / "satellite_roof_right.jpg";
+        if (!Require(
+                WriteJpegTexture(
+                    satelliteRoofLeftTexture,
+                    256,
+                    256,
+                    cv::Scalar(20, 140, 220)),
+                "无法写入左侧卫星屋顶测试贴图") ||
+            !Require(
+                WriteJpegTexture(
+                    satelliteRoofRightTexture,
+                    256,
+                    256,
+                    cv::Scalar(120, 80, 40)),
+                "无法写入右侧卫星屋顶测试贴图"))
+        {
+            return false;
+        }
+        DownTool::AmapVectorDecodedData satelliteRoofData;
+        satelliteRoofData.features.push_back(MakeHeightBuilding(centerGcj02, 12, true, 30));
+        DownTool::AmapBuildingFbxExportOptions satelliteRoofOptions;
+        satelliteRoofOptions.outputPath = satelliteRoofFbxRoot / "buildings.fbx";
+        satelliteRoofOptions.centerWgs84 = centerWgs84;
+        satelliteRoofOptions.wallTexturePath = textureRoot / std::filesystem::u8path("墙体");
+        satelliteRoofOptions.roofTextureMode =
+            DownTool::AmapBuildingFbxRoofTextureMode::Satellite;
+        satelliteRoofOptions.satelliteRoofTextures.push_back({
+            satelliteRoofLeftTexture,
+            centerWgs84.lon - 0.02,
+            centerWgs84.lat - 0.02,
+            centerWgs84.lon,
+            centerWgs84.lat + 0.02});
+        satelliteRoofOptions.satelliteRoofTextures.push_back({
+            satelliteRoofRightTexture,
+            centerWgs84.lon,
+            centerWgs84.lat - 0.02,
+            centerWgs84.lon + 0.02,
+            centerWgs84.lat + 0.02});
+        const DownTool::AmapBuildingFbxExportResult satelliteRoofResult =
+            DownTool::ExportAmapBuildingsToFbx(satelliteRoofData, satelliteRoofOptions);
+        if (!Require(
+                satelliteRoofResult.success,
+                "卫星屋顶建筑 FBX 导出失败：" + satelliteRoofResult.error) ||
+            !Require(!std::filesystem::exists(
+                    satelliteRoofFbxRoot / "building_roof_satellite_0.jpg"),
+                "卫星屋顶 FBX 不应额外复制左侧卫星贴图") ||
+            !Require(!std::filesystem::exists(
+                    satelliteRoofFbxRoot / "building_roof_satellite_1.jpg"),
+                "卫星屋顶 FBX 不应额外复制右侧卫星贴图") ||
+            !RequireSatelliteRoofFbx(satelliteRoofOptions.outputPath, 2))
+        {
+            return false;
+        }
+
+        const std::filesystem::path buildingExporterPath =
+            std::filesystem::u8path(DOMDOWNTOOL_SOURCE_DIR) / "src" /
+            "AmapBuildingFbxExporter.cpp";
+        const std::filesystem::path exportTaskManagerPath =
+            std::filesystem::u8path(DOMDOWNTOOL_SOURCE_DIR) / "src" / "preview" /
+            "ExportTaskManager.cpp";
+        if (!Require(
+                !postprocess_test::ContainsText(buildingExporterPath, "IsWallMeshTexturePath") &&
+                    postprocess_test::ContainsText(buildingExporterPath, "wallMeshBuckets") &&
+                    postprocess_test::ContainsText(buildingExporterPath, "roofMeshBuckets"),
+                "建筑 FBX 导出不应再靠贴图文件名前缀区分墙体和屋顶 mesh"))
+        {
+            return false;
+        }
+        if (!Require(
+                postprocess_test::ContainsText(
+                    exportTaskManagerPath, "ExportSatelliteRoofBuildingFbxToRoot") &&
+                    postprocess_test::ContainsText(
+                        exportTaskManagerPath, "compositeRoot / \"FBX\"") &&
+                    postprocess_test::ContainsText(
+                        exportTaskManagerPath, "!satelliteRoofBuildingFbx"),
+                "卫星屋顶建筑 FBX 应输出到对应卫星 FBX 目录"))
         {
             return false;
         }

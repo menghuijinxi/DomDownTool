@@ -318,8 +318,8 @@ bool runTest()
         "export-gis-combine-separate-item"};
     const std::vector<std::string> expectedBuildingFbxFields = {
         "export-building-wall-textures", "export-building-roof-textures",
-        "export-building-texture-mode", "export-building-atlas-format",
-        "export-building-layer-height",
+        "export-building-wall-texture-mode", "export-building-roof-texture-mode",
+        "export-building-atlas-format", "export-building-layer-height",
         "export-building-max-wall-materials", "export-building-texture-seed"};
     if (!postprocess_test::Require(
             runtime.childElementIdsById("export-gis-groups") == expectedInitialGisItems,
@@ -341,7 +341,7 @@ bool runTest()
                             documentPath,
                             "id=\"" + id + "\"");
                     }),
-            "建筑 FBX 配置区缺少散图测试控件"))
+            "建筑 FBX 配置区缺少墙体/屋顶贴图模式控件"))
     {
         return false;
     }
@@ -349,10 +349,10 @@ bool runTest()
         sourceRoot / "src" / "preview" / "ExportTaskManager.cpp";
     if (!postprocess_test::Require(
             postprocess_test::ContainsText(exportManagerPath, "RunBuildingFbxExport") &&
-                postprocess_test::ContainsText(exportManagerPath, "建筑散图 FBX") &&
+                postprocess_test::ContainsText(exportManagerPath, "BuildingFbxModeName") &&
                 postprocess_test::ContainsText(exportManagerPath,
                                                "ExportAmapBuildingsToFbx"),
-            "建筑散图 FBX 没有独立导出调度入口"))
+            "建筑 FBX 没有独立导出调度入口"))
     {
         return false;
     }
