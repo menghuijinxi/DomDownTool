@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <windows.h>
+#include <dbghelp.h>
 
 #include "skui_win32_app.h"
 
@@ -17,6 +18,8 @@
 
 namespace
 {
+std::wstring crashDumpDirectory;
+
 std::filesystem::path executableDirectory()
 {
     std::vector<wchar_t> pathBuffer(32768);
@@ -54,6 +57,94 @@ std::optional<std::string> loadEmbeddedPreviewDocument(HINSTANCE instance)
 
     return std::string(static_cast<const char*>(resourceBytes), resourceSize);
 }
+
+bool tryBuildCrashDumpPath(wchar_t* outputPath, size_t outputPathLength)
+{
+    if (crashDumpDirectory.empty() || outputPath == nullptr || outputPathLength == 0)
+    {
+        return false;
+    }
+
+    SYSTEMTIME localTime{};
+    GetLocalTime(&localTime);
+
+    wchar_t fileName[128]{};
+    swprintf_s(
+        fileName,
+        L"DomDownToolPreview-%04u%02u%02u-%02u%02u%02u-%lu.dmp",
+        localTime.wYear,
+        localTime.wMonth,
+        localTime.wDay,
+        localTime.wHour,
+        localTime.wMinute,
+        localTime.wSecond,
+        GetCurrentProcessId());
+
+    if (crashDumpDirectory.size() + 1 + wcslen(fileName) >= outputPathLength)
+    {
+        return false;
+    }
+
+    wcscpy_s(outputPath, outputPathLength, crashDumpDirectory.c_str());
+    const wchar_t lastCharacter = outputPath[wcslen(outputPath) - 1];
+    if (lastCharacter != L'\\' && lastCharacter != L'/')
+    {
+        wcscat_s(outputPath, outputPathLength, L"\\");
+    }
+    wcscat_s(outputPath, outputPathLength, fileName);
+    return true;
+}
+
+LONG WINAPI writeUnhandledExceptionDump(EXCEPTION_POINTERS* exceptionPointers)
+{
+    wchar_t dumpPath[32768]{};
+    if (!tryBuildCrashDumpPath(dumpPath, sizeof(dumpPath) / sizeof(dumpPath[0])))
+    {
+        return EXCEPTION_EXECUTE_HANDLER;
+    }
+    const HANDLE dumpFile = CreateFileW(
+        dumpPath,
+        GENERIC_WRITE,
+        0,
+        nullptr,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (dumpFile == INVALID_HANDLE_VALUE)
+    {
+        return EXCEPTION_EXECUTE_HANDLER;
+    }
+
+    MINIDUMP_EXCEPTION_INFORMATION dumpException{};
+    dumpException.ThreadId = GetCurrentThreadId();
+    dumpException.ExceptionPointers = exceptionPointers;
+    dumpException.ClientPointers = FALSE;
+
+    // 崩溃后进程状态不可信，只写足够排查栈和堆破坏线索的小型 dump。
+    MiniDumpWriteDump(
+        GetCurrentProcess(),
+        GetCurrentProcessId(),
+        dumpFile,
+        MiniDumpWithDataSegs,
+        exceptionPointers == nullptr ? nullptr : &dumpException,
+        nullptr,
+        nullptr);
+    CloseHandle(dumpFile);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+void configureCrashDumpWriter(const std::filesystem::path& dumpDirectory)
+{
+    std::error_code directoryError;
+    std::filesystem::create_directories(dumpDirectory, directoryError);
+    if (directoryError)
+    {
+        return;
+    }
+
+    crashDumpDirectory = dumpDirectory.wstring();
+    SetUnhandledExceptionFilter(writeUnhandledExceptionDump);
+}
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
@@ -71,6 +162,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         MessageBoxW(nullptr, L"无法确定程序运行目录。", L"DomDownTool", MB_OK | MB_ICONERROR);
         return EXIT_FAILURE;
     }
+    configureCrashDumpWriter(applicationRoot / "cache" / "crash-dumps");
 
     std::error_code pathError;
     std::filesystem::current_path(applicationRoot, pathError);

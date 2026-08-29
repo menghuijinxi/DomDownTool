@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -16,6 +15,7 @@
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/imgproc.hpp"
 
+#include "AmapBuildingFbxExporter.h"
 #include "AmapVectorPngDownloader.h"
 #include "GCJ02GoogleDownBase.h"
 #include "PostProcessTestSupport.h"
@@ -70,10 +70,49 @@ namespace
             postprocess_test::PathToUtf8String(path),
             cv::IMREAD_COLOR);
         return Require(!image.empty(),
-                "合并贴图无法读取：" + postprocess_test::PathToUtf8String(path)) &&
+                "建筑贴图无法读取：" + postprocess_test::PathToUtf8String(path)) &&
             Require(IsPowerOfTwo(image.cols) && IsPowerOfTwo(image.rows),
-                "合并贴图宽高必须都是 2 的次幂：" +
+                "建筑贴图宽高必须都是 2 的次幂：" +
                     postprocess_test::PathToUtf8String(path));
+    }
+
+    bool RequireTextureSize(const std::filesystem::path& path, int width, int height)
+    {
+        const cv::Mat image = cv::imread(
+            postprocess_test::PathToUtf8String(path),
+            cv::IMREAD_COLOR);
+        return Require(!image.empty(),
+                "建筑贴图无法读取：" + postprocess_test::PathToUtf8String(path)) &&
+            Require(image.cols == width && image.rows == height,
+                "建筑贴图尺寸不符合预期：" + postprocess_test::PathToUtf8String(path));
+    }
+
+    bool RequireResizedTextureUsesFullCanvas(const std::filesystem::path& path)
+    {
+        const cv::Mat image = cv::imread(
+            postprocess_test::PathToUtf8String(path),
+            cv::IMREAD_COLOR);
+        if (!Require(!image.empty(),
+                "建筑贴图无法读取：" + postprocess_test::PathToUtf8String(path)))
+        {
+            return false;
+        }
+
+        const int leftColumn = std::max(0, image.cols * 3 / 4);
+        const int rightColumn = image.cols - 1;
+        const int centerRow = image.rows / 2;
+        const int blueDelta = std::abs(
+            static_cast<int>(image.at<cv::Vec3b>(centerRow, rightColumn)[0]) -
+            static_cast<int>(image.at<cv::Vec3b>(centerRow, leftColumn)[0]));
+        const int upperRow = std::max(0, image.rows * 3 / 4);
+        const int bottomRow = image.rows - 1;
+        const int centerColumn = image.cols / 2;
+        const int greenDelta = std::abs(
+            static_cast<int>(image.at<cv::Vec3b>(bottomRow, centerColumn)[1]) -
+            static_cast<int>(image.at<cv::Vec3b>(upperRow, centerColumn)[1]));
+        return Require(blueDelta > 20 && greenDelta > 20,
+            "建筑散图贴图疑似补空白/复制边缘，而不是重采样拉伸到 2 的次幂：" +
+                postprocess_test::PathToUtf8String(path));
     }
 
     bool IsVisibleAtlasSample(const cv::Mat& image, const aiVector3D& uv)
@@ -213,6 +252,47 @@ namespace
         }
 
         cv::Mat image(height, width, CV_8UC3, color);
+        std::vector<unsigned char> encodedImage;
+        if (!cv::imencode(".jpg", image, encodedImage) || encodedImage.empty())
+        {
+            return false;
+        }
+
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        if (!output.is_open())
+        {
+            return false;
+        }
+        output.write(
+            reinterpret_cast<const char*>(encodedImage.data()),
+            static_cast<std::streamsize>(encodedImage.size()));
+        return output.good();
+    }
+
+    bool WriteGradientJpegTexture(
+        const std::filesystem::path& path,
+        int width,
+        int height)
+    {
+        std::error_code createError;
+        std::filesystem::create_directories(path.parent_path(), createError);
+        if (createError)
+        {
+            return false;
+        }
+
+        cv::Mat image(height, width, CV_8UC3);
+        for (int row = 0; row < height; row++)
+        {
+            for (int column = 0; column < width; column++)
+            {
+                image.at<cv::Vec3b>(row, column) = cv::Vec3b(
+                    static_cast<uint8_t>(column * 255 / std::max(1, width - 1)),
+                    static_cast<uint8_t>(row * 255 / std::max(1, height - 1)),
+                    80);
+            }
+        }
+
         std::vector<unsigned char> encodedImage;
         if (!cv::imencode(".jpg", image, encodedImage) || encodedImage.empty())
         {
@@ -426,6 +506,81 @@ namespace
                    fbxRoot / ("building_wall_atlas" + atlasExtension)) &&
                RequirePowerOfTwoTexture(
                    fbxRoot / ("building_roof_atlas" + atlasExtension))));
+    }
+
+    bool RequireScatteredBuildingOriginalUv0Only(const std::filesystem::path& fbxPath)
+    {
+        Assimp::Importer importer;
+        const aiScene* scene = postprocess_test::ReadFbxScene(importer, fbxPath);
+        if (!Require(scene != nullptr, "建筑散图 FBX 无法读取"))
+        {
+            return false;
+        }
+
+        bool foundWallUv = false;
+        bool foundRoofUv = false;
+        for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; meshIndex++)
+        {
+            const aiMesh* mesh = scene->mMeshes[meshIndex];
+            if (mesh == nullptr || !mesh->HasTextureCoords(0) ||
+                mesh->mMaterialIndex >= scene->mNumMaterials)
+            {
+                continue;
+            }
+
+            aiString texturePath;
+            if (scene->mMaterials[mesh->mMaterialIndex]->GetTexture(
+                    aiTextureType_DIFFUSE,
+                    0,
+                    &texturePath) != AI_SUCCESS)
+            {
+                continue;
+            }
+
+            float minimumU = std::numeric_limits<float>::max();
+            float maximumU = std::numeric_limits<float>::lowest();
+            float minimumV = std::numeric_limits<float>::max();
+            float maximumV = std::numeric_limits<float>::lowest();
+            for (unsigned int vertexIndex = 0; vertexIndex < mesh->mNumVertices;
+                 vertexIndex++)
+            {
+                const aiVector3D& uv = mesh->mTextureCoords[0][vertexIndex];
+                minimumU = std::min(minimumU, uv.x);
+                maximumU = std::max(maximumU, uv.x);
+                minimumV = std::min(minimumV, uv.y);
+                maximumV = std::max(maximumV, uv.y);
+            }
+
+            const std::string textureName = texturePath.C_Str();
+            if (textureName == "building_wall_0.jpg")
+            {
+                foundWallUv = true;
+                if (!Require(!mesh->HasTextureCoords(1) && !mesh->HasTextureCoords(2),
+                        "散图墙体不应写入 UV1/UV2 atlas 通道") ||
+                    !Require(maximumU > 1.1f,
+                        "散图墙体 UV0 没有保留按原始贴图比例计算的横向重复") ||
+                    !Require(minimumV <= 0.01f && maximumV >= 0.99f,
+                        "散图墙体 UV0 没有铺满完整贴图高度"))
+                {
+                    return false;
+                }
+            }
+            else if (textureName == "building_roof_0.jpg")
+            {
+                foundRoofUv = true;
+                if (!Require(!mesh->HasTextureCoords(1) && !mesh->HasTextureCoords(2),
+                        "散图屋顶不应写入 UV1/UV2 atlas 通道") ||
+                    !Require(minimumU <= 0.01f && maximumU >= 0.99f,
+                        "散图屋顶 UV0 没有铺满完整贴图宽度") ||
+                    !Require(minimumV <= 0.01f && maximumV >= 0.99f,
+                        "散图屋顶 UV0 没有铺满完整贴图高度"))
+                {
+                    return false;
+                }
+            }
+        }
+        return Require(foundWallUv, "散图墙体 FBX 缺少可检查 UV") &&
+            Require(foundRoofUv, "散图屋顶 FBX 缺少可检查 UV");
     }
 
     bool RequireSatelliteRoofFbx(
@@ -914,18 +1069,16 @@ namespace
         const std::filesystem::path xyzRoot = postProcessRoot / "XYZ";
         const std::filesystem::path fbxRoot = postProcessRoot / "FBX";
         const std::filesystem::path textureRoot = outputRoot / std::filesystem::u8path("贴图");
-        if (!Require(WriteJpegTextureWithoutExtension(
+        if (!Require(WriteGradientJpegTexture(
                 textureRoot / std::filesystem::u8path("墙体") /
                     "wall_texture_without_suffix",
                 96,
-                128,
-                cv::Scalar(40, 80, 180)),
+                128),
                 "无法写入无后缀墙体 JPEG 测试贴图") ||
-            !Require(WriteJpegTexture(
+            !Require(WriteGradientJpegTexture(
                 textureRoot / std::filesystem::u8path("房顶") / "roof_texture.jpg",
                 160,
-                96,
-                cv::Scalar(120, 160, 40)),
+                96),
                 "无法写入屋顶 JPEG 测试贴图"))
         {
             return false;
@@ -973,7 +1126,12 @@ namespace
             !Require(std::filesystem::exists(
                 fbxRoot / "buildings.fbx"),
                 "后处理缺少建筑 FBX") ||
+            !RequireTextureSize(fbxRoot / "building_wall_0.jpg", 128, 128) ||
+            !RequireTextureSize(fbxRoot / "building_roof_0.jpg", 256, 128) ||
+            !RequireResizedTextureUsesFullCanvas(fbxRoot / "building_wall_0.jpg") ||
+            !RequireResizedTextureUsesFullCanvas(fbxRoot / "building_roof_0.jpg") ||
             !postprocess_test::RequireFbxAxisAndUnit(fbxRoot / "buildings.fbx") ||
+            !RequireScatteredBuildingOriginalUv0Only(fbxRoot / "buildings.fbx") ||
             !RequireBuildingFbx(fbxRoot / "buildings.fbx", fbxRoot, 100., 1000.))
         {
             return false;

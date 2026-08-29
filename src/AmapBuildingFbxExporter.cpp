@@ -32,6 +32,8 @@
 
 namespace
 {
+    constexpr int32_t kMaximumScatterTextureSide = 16384;
+
     struct Point2
     {
         double x = 0.;
@@ -231,18 +233,33 @@ namespace
         const std::string& extension,
         const cv::Mat& image)
     {
-        std::vector<unsigned char> encodedImage;
-        std::vector<int> parameters;
-        if (extension == ".jpg" || extension == ".jpeg")
+        try
         {
-            parameters = { cv::IMWRITE_JPEG_QUALITY, 95 };
+            std::vector<unsigned char> encodedImage;
+            std::vector<int> parameters;
+            if (extension == ".jpg" || extension == ".jpeg")
+            {
+                parameters = { cv::IMWRITE_JPEG_QUALITY, 95 };
+            }
+            if (!cv::imencode(extension, image, encodedImage, parameters) ||
+                encodedImage.empty())
+            {
+                return false;
+            }
+            return WriteBinaryFile(path, encodedImage.data(), encodedImage.size());
         }
-        if (!cv::imencode(extension, image, encodedImage, parameters) ||
-            encodedImage.empty())
+        catch (const cv::Exception&)
         {
             return false;
         }
-        return WriteBinaryFile(path, encodedImage.data(), encodedImage.size());
+        catch (const std::bad_alloc&)
+        {
+            return false;
+        }
+        catch (const std::exception&)
+        {
+            return false;
+        }
     }
 
     double LongitudeToWebMercatorX(double longitude)
@@ -597,6 +614,22 @@ namespace
         return ".png";
     }
 
+    int32_t NextPowerOfTwo(int32_t value)
+    {
+        value = std::max(1, value);
+        int32_t result = 1;
+        while (result < value && result <= (std::numeric_limits<int32_t>::max() / 2))
+        {
+            result *= 2;
+        }
+        return result;
+    }
+
+    bool IsPowerOfTwo(int32_t value)
+    {
+        return value > 0 && (value & (value - 1)) == 0;
+    }
+
     cv::Mat ReadTextureImage(const std::filesystem::path& path)
     {
         std::ifstream input(path, std::ios::binary);
@@ -622,7 +655,120 @@ namespace
             return {};
         }
 
-        return cv::imdecode(buffer, cv::IMREAD_UNCHANGED);
+        try
+        {
+            return cv::imdecode(buffer, cv::IMREAD_UNCHANGED);
+        }
+        catch (const cv::Exception&)
+        {
+            return {};
+        }
+        catch (const std::bad_alloc&)
+        {
+            return {};
+        }
+    }
+
+    cv::Mat ConvertTextureImageForEncoding(
+        const cv::Mat& image,
+        const std::string& extension)
+    {
+        if (image.empty())
+        {
+            return {};
+        }
+
+        try
+        {
+            cv::Mat eightBitImage;
+            const cv::Mat* sourceImage = &image;
+            if (image.depth() != CV_8U)
+            {
+                image.convertTo(eightBitImage, CV_8U);
+                sourceImage = &eightBitImage;
+            }
+
+            if (extension == ".jpg" || extension == ".jpeg")
+            {
+                cv::Mat bgrImage;
+                if (sourceImage->channels() == 4)
+                {
+                    cv::cvtColor(*sourceImage, bgrImage, cv::COLOR_BGRA2BGR);
+                }
+                else if (sourceImage->channels() == 1)
+                {
+                    cv::cvtColor(*sourceImage, bgrImage, cv::COLOR_GRAY2BGR);
+                }
+                else if (sourceImage->channels() == 3)
+                {
+                    bgrImage = sourceImage->clone();
+                }
+                return bgrImage;
+            }
+
+            if (sourceImage->channels() == 1 || sourceImage->channels() == 3 ||
+                sourceImage->channels() == 4)
+            {
+                return sourceImage->clone();
+            }
+            return {};
+        }
+        catch (const cv::Exception&)
+        {
+            return {};
+        }
+        catch (const std::bad_alloc&)
+        {
+            return {};
+        }
+    }
+
+    cv::Mat ResizeTextureImageToPowerOfTwo(const cv::Mat& image, std::string& error)
+    {
+        if (image.empty() || image.cols <= 0 || image.rows <= 0)
+        {
+            error = "建筑散图贴图像素数据为空。";
+            return {};
+        }
+
+        const int32_t targetWidth = NextPowerOfTwo(image.cols);
+        const int32_t targetHeight = NextPowerOfTwo(image.rows);
+        if (targetWidth > kMaximumScatterTextureSide ||
+            targetHeight > kMaximumScatterTextureSide)
+        {
+            error = fmt::format(
+                "建筑散图贴图拉伸后的尺寸超过上限：{}x{}。",
+                targetWidth,
+                targetHeight);
+            return {};
+        }
+        if (targetWidth == image.cols && targetHeight == image.rows)
+        {
+            return image.clone();
+        }
+
+        try
+        {
+            cv::Mat resizedImage;
+            cv::resize(
+                image,
+                resizedImage,
+                cv::Size(targetWidth, targetHeight),
+                0.,
+                0.,
+                cv::INTER_LINEAR);
+            return resizedImage;
+        }
+        catch (const cv::Exception& exception)
+        {
+            error = "建筑散图贴图拉伸失败：" + std::string(exception.what());
+            return {};
+        }
+        catch (const std::bad_alloc&)
+        {
+            error = "建筑散图贴图拉伸失败：内存不足。";
+            return {};
+        }
     }
 
     std::filesystem::path ResolveTextureRoot(const std::filesystem::path& path)
@@ -1269,6 +1415,52 @@ namespace
         return true;
     }
 
+    bool WritePowerOfTwoScatterTexture(
+        const TextureInfo& texture,
+        std::set<std::filesystem::path>& copiedTextures,
+        std::string& error)
+    {
+        if (copiedTextures.contains(texture.outputPath))
+        {
+            return true;
+        }
+        if (IsPowerOfTwo(texture.width) && IsPowerOfTwo(texture.height))
+        {
+            return CopyTexture(texture, copiedTextures, error);
+        }
+
+        const cv::Mat sourceImage = ReadTextureImage(texture.sourcePath);
+        const cv::Mat encodableImage = ConvertTextureImageForEncoding(
+            sourceImage,
+            LowercaseExtension(texture.outputPath));
+        if (encodableImage.empty())
+        {
+            error = "无法读取建筑散图贴图：" + PathToUtf8String(texture.sourcePath);
+            return false;
+        }
+
+        const cv::Mat resizedImage = ResizeTextureImageToPowerOfTwo(encodableImage, error);
+        if (resizedImage.empty())
+        {
+            if (error.empty())
+            {
+                error = "建筑散图贴图拉伸到 2 的次幂失败：" +
+                    PathToUtf8String(texture.sourcePath);
+            }
+            return false;
+        }
+        if (!WriteEncodedImage(
+                texture.outputPath,
+                LowercaseExtension(texture.outputPath),
+                resizedImage))
+        {
+            error = "建筑散图贴图写入失败：" + PathToUtf8String(texture.outputPath);
+            return false;
+        }
+        copiedTextures.insert(texture.outputPath);
+        return true;
+    }
+
     enum class RectClipEdge
     {
         Left,
@@ -1644,17 +1836,6 @@ namespace
             return normalized;
         }
         return converted.clone();
-    }
-
-    int32_t NextPowerOfTwo(int32_t value)
-    {
-        value = std::max(1, value);
-        int32_t result = 1;
-        while (result < value && result <= (std::numeric_limits<int32_t>::max() / 2))
-        {
-            result *= 2;
-        }
-        return result;
     }
 
     std::unordered_map<std::string, const TextureInfo*> BuildTextureLookup(
@@ -2335,7 +2516,8 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
             randomEngine);
         const TextureInfo& wallTexture = textureLibrary.wallTextures[wallTextureIndex];
 
-        if (!useWallAtlas && !CopyTexture(wallTexture, copiedTextures, result.error))
+        if (!useWallAtlas &&
+            !WritePowerOfTwoScatterTexture(wallTexture, copiedTextures, result.error))
         {
             return result;
         }
@@ -2368,7 +2550,8 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
                 geometry,
                 randomEngine);
             const TextureInfo& roofTexture = textureLibrary.roofTextures[roofTextureIndex];
-            if (!useRoofAtlas && !CopyTexture(roofTexture, copiedTextures, result.error))
+            if (!useRoofAtlas &&
+                !WritePowerOfTwoScatterTexture(roofTexture, copiedTextures, result.error))
             {
                 return result;
             }
