@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -1497,13 +1498,20 @@ DownTool::AmapVectorColor fromHsv(const HsvColor& color)
 } // namespace
 
 DomDownToolPreview::PreviewController::PreviewController()
-    : renderer_([this] { requestRedraw(); }),
+    : tianDiTuMultidateSession_(),
+      renderer_([this] { requestRedraw(); }),
       placeSearch_([this] { scheduleSearchRefresh(); },
                    [this](const std::string& url) { return webViewSearch_.get(url); },
                    [this] { webViewSearch_.cancelCurrent(); }),
       exportTaskManager_([this] { scheduleExportTaskRefresh(); }),
       dx12FbxRenderer_([this] { requestRedraw(); })
 {
+    renderer_.SetTianDiTuMultidateTileDownloader(
+        [this](const DownTool::TileHttpRequest& request,
+               const std::filesystem::path& partialPath)
+        {
+            return DownloadTianDiTuMultidateTile(request, partialPath);
+        });
     applyFbxInteractionSettings(loadFbxInteractionSettings());
 }
 
@@ -2256,7 +2264,7 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             }
             else if (event.id == "tianditu-multidate-refresh")
             {
-                RefreshTianDiTuMultidateTimelines(runtime);
+                RefreshTianDiTuMultidateTimelines(runtime, GetSelectedTianDiTuMultidateYear());
                 return;
             }
             else if (event.id == "gis-color-toggle")
@@ -3050,6 +3058,7 @@ void DomDownToolPreview::PreviewController::selectPlaceSearchResult(skui::Runtim
     }
 
     pendingLocationRequest_.reset();
+    const std::string preferredMultidateYear = GetSelectedTianDiTuMultidateYear();
     renderer_.setView(*result.coordinateWgs84, result.recommendedZoom);
     renderer_.setLocationMarker(result.coordinateWgs84);
     placeSearch_.cancelPending();
@@ -3062,6 +3071,7 @@ void DomDownToolPreview::PreviewController::selectPlaceSearchResult(skui::Runtim
                     result.coordinateWgs84->lon, result.coordinateWgs84->lat,
                     result.recommendedZoom));
     updateSearchUi(runtime);
+    RefreshTianDiTuMultidateAfterViewChange(runtime, preferredMultidateYear);
     updateUi(runtime);
     requestRedraw();
 }
@@ -3241,7 +3251,7 @@ void DomDownToolPreview::PreviewController::LoginTianDiTuMultidate(skui::Runtime
 }
 
 void DomDownToolPreview::PreviewController::RefreshTianDiTuMultidateTimelines(
-    skui::Runtime& runtime)
+    skui::Runtime& runtime, std::string_view preferredYear)
 {
     if (tianDiTuMultidateCookie_.empty())
     {
@@ -3282,8 +3292,11 @@ void DomDownToolPreview::PreviewController::RefreshTianDiTuMultidateTimelines(
         fmt::format("zoom={} gb={} region={} bounds={:.8f},{:.8f},{:.8f},{:.8f}",
                     queryZoom, downloader.GetRegionGbCode(), downloader.GetRegionName(),
                     bounds->minLon, bounds->minLat, bounds->maxLon, bounds->maxLat));
-    const TianDiTuMultidateFetchResponse response =
-        tianDiTuMultidateSession_.fetchUrl(timelineUrl);
+    TianDiTuMultidateFetchResponse response;
+    {
+        const std::lock_guard lock(tianDiTuMultidateTileFetchMutex_);
+        response = tianDiTuMultidateSession_.fetchUrl(timelineUrl);
+    }
     writeSearchTrace(
         "Controller", "tianditu_timeline_response",
         fmt::format("status={} body_bytes={} final_url={} error={}", response.statusCode,
@@ -3357,6 +3370,23 @@ void DomDownToolPreview::PreviewController::RefreshTianDiTuMultidateTimelines(
     tianDiTuMultidateTimelines_ = std::move(timelines);
     tianDiTuMultidateRegionGbCode_ = downloader.GetRegionGbCode();
     tianDiTuMultidateRegionName_ = downloader.GetRegionName();
+    const auto selectedByPreferredYear = std::ranges::find_if(
+        tianDiTuMultidateTimelines_,
+        [preferredYear](const auto& item)
+        {
+            return !preferredYear.empty() &&
+                (item.year == preferredYear || item.time == preferredYear);
+        });
+    if (selectedByPreferredYear != tianDiTuMultidateTimelines_.end())
+    {
+        tianDiTuMultidateSelectedValue_ = selectedByPreferredYear->key;
+    }
+    else if (!preferredYear.empty())
+    {
+        tianDiTuMultidateSelectedValue_ = "latest";
+        renderer_.UseLatestTianDiTuMultidate();
+    }
+
     if (tianDiTuMultidateSelectedValue_ != "latest")
     {
         const auto selected = std::ranges::find_if(
@@ -3374,13 +3404,93 @@ void DomDownToolPreview::PreviewController::RefreshTianDiTuMultidateTimelines(
                 tianDiTuMultidateRegionName_, tianDiTuMultidateCookie_);
         }
     }
-    tianDiTuMultidateStatus_ = fmt::format(
-        "已获取 {} 个历史时相{}。", tianDiTuMultidateTimelines_.size(),
-        tianDiTuMultidateRegionName_.empty()
-            ? ""
-            : "，区域 " + tianDiTuMultidateRegionName_);
+    const std::string regionText = tianDiTuMultidateRegionName_.empty()
+        ? ""
+        : "，区域 " + tianDiTuMultidateRegionName_;
+    if (!preferredYear.empty() && selectedByPreferredYear != tianDiTuMultidateTimelines_.end())
+    {
+        tianDiTuMultidateStatus_ = fmt::format(
+            "已获取 {} 个历史时相{}，并切换到 {}。",
+            tianDiTuMultidateTimelines_.size(), regionText, preferredYear);
+    }
+    else if (!preferredYear.empty())
+    {
+        tianDiTuMultidateStatus_ = fmt::format(
+            "已获取 {} 个历史时相{}，当前区域没有 {}。",
+            tianDiTuMultidateTimelines_.size(), regionText, preferredYear);
+    }
+    else
+    {
+        tianDiTuMultidateStatus_ = fmt::format(
+            "已获取 {} 个历史时相{}。", tianDiTuMultidateTimelines_.size(), regionText);
+    }
     UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
     requestRedraw();
+}
+
+bool DomDownToolPreview::PreviewController::DownloadTianDiTuMultidateTile(
+    const DownTool::TileHttpRequest& request,
+    const std::filesystem::path& partialPath)
+{
+    TianDiTuMultidateFetchResponse response;
+    {
+        const std::lock_guard lock(tianDiTuMultidateTileFetchMutex_);
+        response = tianDiTuMultidateSession_.fetchBinaryUrl(request.url);
+    }
+
+    const bool redirectedToLogin =
+        response.finalUrl.find("oauth.tianditu.gov.cn/login") != std::string::npos ||
+        response.body.find("oauth.tianditu.gov.cn/login") != std::string::npos;
+    const bool htmlResponse =
+        response.contentType.find("text/html") != std::string::npos ||
+        response.contentType.find("text/plain") != std::string::npos;
+    if (!response.error.empty() || response.statusCode != 200 || redirectedToLogin ||
+        htmlResponse)
+    {
+        writeSearchTrace(
+            "Controller", "tianditu_tile_fetch_failed",
+            fmt::format("status={} body_bytes={} content_type={} final_url={} error={}",
+                        response.statusCode, response.body.size(), response.contentType,
+                        response.finalUrl, response.error));
+        return false;
+    }
+
+    std::ofstream file(partialPath, std::ios::binary | std::ios::trunc);
+    if (!file.is_open())
+    {
+        return false;
+    }
+
+    file.write(response.body.data(), static_cast<std::streamsize>(response.body.size()));
+    return file.good();
+}
+
+std::string DomDownToolPreview::PreviewController::GetSelectedTianDiTuMultidateYear() const
+{
+    if (tianDiTuMultidateSelectedValue_ == "latest")
+    {
+        return {};
+    }
+
+    const auto selected = std::ranges::find_if(
+        tianDiTuMultidateTimelines_,
+        [this](const auto& item) { return item.key == tianDiTuMultidateSelectedValue_; });
+    if (selected == tianDiTuMultidateTimelines_.end())
+    {
+        return {};
+    }
+    return selected->year.empty() ? selected->time : selected->year;
+}
+
+void DomDownToolPreview::PreviewController::RefreshTianDiTuMultidateAfterViewChange(
+    skui::Runtime& runtime, std::string_view preferredYear)
+{
+    if (renderer_.activeSource().id != "tianditu.multidate" || tianDiTuMultidateCookie_.empty())
+    {
+        return;
+    }
+
+    RefreshTianDiTuMultidateTimelines(runtime, preferredYear);
 }
 
 void DomDownToolPreview::PreviewController::SelectTianDiTuMultidateTimeline(
@@ -3436,7 +3546,12 @@ void DomDownToolPreview::PreviewController::UpdateTianDiTuMultidateUi(
     skui::Runtime& runtime, const MapSourceSummary& source)
 {
     const bool visible = source.id == "tianditu.multidate";
-    runtime.setVisibleById("tianditu-multidate-panel", visible);
+    if (!lastTianDiTuMultidatePanelVisible_.has_value() ||
+        *lastTianDiTuMultidatePanelVisible_ != visible)
+    {
+        runtime.setVisibleById("tianditu-multidate-panel", visible);
+        lastTianDiTuMultidatePanelVisible_ = visible;
+    }
     if (!visible)
     {
         return;
@@ -3458,13 +3573,38 @@ void DomDownToolPreview::PreviewController::UpdateTianDiTuMultidateUi(
             escapeHtml(title), escapeHtml(zoomText));
     }
     selectHtml += "</select>";
-    runtime.replaceHtmlById("tianditu-multidate-year", selectHtml);
-    runtime.setValueById("tianditu-multidate-year", tianDiTuMultidateSelectedValue_);
-    runtime.setTextById("tianditu-multidate-status", tianDiTuMultidateStatus_);
-    setControlDisabled(runtime, "tianditu-multidate-refresh",
-                       tianDiTuMultidateCookie_.empty());
-    setControlDisabled(runtime, "tianditu-multidate-year",
-                       tianDiTuMultidateTimelines_.empty());
+    if (selectHtml != lastTianDiTuMultidateSelectHtml_)
+    {
+        runtime.replaceHtmlById("tianditu-multidate-year", selectHtml);
+        lastTianDiTuMultidateSelectHtml_ = selectHtml;
+        lastTianDiTuMultidateSelectedValue_.clear();
+        lastTianDiTuMultidateYearDisabled_.reset();
+    }
+    if (tianDiTuMultidateSelectedValue_ != lastTianDiTuMultidateSelectedValue_)
+    {
+        runtime.setValueById("tianditu-multidate-year", tianDiTuMultidateSelectedValue_);
+        lastTianDiTuMultidateSelectedValue_ = tianDiTuMultidateSelectedValue_;
+    }
+    if (tianDiTuMultidateStatus_ != lastTianDiTuMultidateStatus_)
+    {
+        runtime.setTextById("tianditu-multidate-status", tianDiTuMultidateStatus_);
+        lastTianDiTuMultidateStatus_ = tianDiTuMultidateStatus_;
+    }
+
+    const bool refreshDisabled = tianDiTuMultidateCookie_.empty();
+    if (!lastTianDiTuMultidateRefreshDisabled_.has_value() ||
+        *lastTianDiTuMultidateRefreshDisabled_ != refreshDisabled)
+    {
+        setControlDisabled(runtime, "tianditu-multidate-refresh", refreshDisabled);
+        lastTianDiTuMultidateRefreshDisabled_ = refreshDisabled;
+    }
+    const bool yearDisabled = tianDiTuMultidateTimelines_.empty();
+    if (!lastTianDiTuMultidateYearDisabled_.has_value() ||
+        *lastTianDiTuMultidateYearDisabled_ != yearDisabled)
+    {
+        setControlDisabled(runtime, "tianditu-multidate-year", yearDisabled);
+        lastTianDiTuMultidateYearDisabled_ = yearDisabled;
+    }
 }
 
 void DomDownToolPreview::PreviewController::selectGisColorCategory(
@@ -4484,8 +4624,10 @@ void DomDownToolPreview::PreviewController::submitCenterCoordinate(
     const std::optional<DownTool::LonLat> coordinate = parseCenterCoordinate(value);
     if (coordinate.has_value())
     {
+        const std::string preferredMultidateYear = GetSelectedTianDiTuMultidateYear();
         renderer_.setView(*coordinate, renderer_.zoom());
         renderer_.setLocationMarker(std::nullopt);
+        RefreshTianDiTuMultidateAfterViewChange(runtime, preferredMultidateYear);
     }
     lastCenterCoordinate_.clear();
     updateUi(runtime);

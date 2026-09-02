@@ -965,9 +965,10 @@ bool DownTool::TianDiTuMultidateDown::TryResolveRegionFromCenter()
         return false;
     }
 
-    const std::string gbCode = GetJsonString(root, "parentGbcode");
+    const std::string parentGbCode = GetJsonString(root, "parentGbcode");
+    const std::string gbCode = GetJsonString(root, "gbcode");
     const std::string name = GetJsonString(root, "name");
-	RegionGbCode = gbCode.empty() ? GetJsonString(root, "gbcode") : gbCode;
+	RegionGbCode = parentGbCode.empty() ? gbCode : parentGbCode;
 	RegionName = name;
 	return !RegionGbCode.empty();
 }

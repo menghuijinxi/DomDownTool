@@ -131,6 +131,9 @@ DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw
               std::make_unique<DownTool::TianDiTuDown>(), TileYAxisDirection::Down, 1., 18.);
     auto multidateProjection = std::make_unique<DownTool::TianDiTuMultidateDown>();
     multidateProjection->SetCachePath(pathToUtf8(multidateCacheRoot("latest")));
+    tianDiTuMultidateLatestProjection_ = std::make_unique<DownTool::TianDiTuMultidateDown>();
+    tianDiTuMultidateLatestProjection_->SetTileSize(kTileSize);
+    tianDiTuMultidateLatestProjection_->SetCachePath(pathToUtf8(multidateCacheRoot("latest")));
     addSource("tianditu.multidate", "天地图多时相", "CGCS2000 / EPSG:4326",
               std::move(multidateProjection), TileYAxisDirection::Down, 17., 18.);
     addSource("baidu.satellite", "百度卫星", "BD09 / Baidu",
@@ -169,24 +172,34 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
     canvas.drawRect(mapBounds, backgroundPaint);
 
     MapSource& source = currentSource();
-    const std::vector<VisibleTile> visibleTiles =
-        viewport_.visibleTiles(*source.projection, source.yDirection, kTileSize, 1);
-    renderStats_.visibleTiles = visibleTiles.size();
+    renderStats_.visibleTiles = 0;
     renderStats_.readyTiles = 0;
     std::vector<TileDownloadJob> downloadJobs;
-    downloadJobs.reserve(visibleTiles.size());
     const double mapCenterX = static_cast<double>(width) * 0.5;
     const double mapContentHeight =
         std::max(0., static_cast<double>(height) - toolbarHeight_ - statusBarHeight_);
     const double mapCenterY = static_cast<double>(toolbarHeight_) + mapContentHeight * 0.5;
 
     const SkSamplingOptions sampling(SkFilterMode::kLinear, SkMipmapMode::kNone);
-    if (source.summary.id != "none")
+    struct TileLayerResult
     {
+        size_t visibleTiles = 0;
+        size_t readyTiles = 0;
+    };
+    auto drawTileLayer = [&](DownTool::DownToolBase& projection, TileYAxisDirection yDirection,
+                             const std::filesystem::path& cacheRoot,
+                             bool drawMissingTiles,
+                             const TileDownloader* customDownloader = nullptr) -> TileLayerResult
+    {
+        const std::vector<VisibleTile> visibleTiles =
+            viewport_.visibleTiles(projection, yDirection, kTileSize, 1);
+        downloadJobs.reserve(downloadJobs.size() + visibleTiles.size());
+        TileLayerResult result;
+        result.visibleTiles = visibleTiles.size();
         for (const VisibleTile& visibleTile : visibleTiles)
         {
             const std::filesystem::path tilePath =
-                resolveTilePath(source.summary.cacheRoot, visibleTile.cacheTile);
+                resolveTilePath(cacheRoot, visibleTile.cacheTile);
             sk_sp<SkImage> image = imageCache_.findOrRequest(tilePath, canvas);
             if (!image)
             {
@@ -195,8 +208,13 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
                     TileDownloadJob job{
                         tilePath,
                         visibleTile.cacheTile,
-                        source.projection.get(),
-                        source.projection->BuildTileHttpRequest(visibleTile.cacheTile)};
+                        &projection,
+                        projection.BuildTileHttpRequest(visibleTile.cacheTile)};
+                    job.useTransparentPlaceholderOnEmptyResponse = !drawMissingTiles;
+                    if (customDownloader != nullptr && *customDownloader)
+                    {
+                        job.customDownloader = *customDownloader;
+                    }
                     const double tileCenterX =
                         visibleTile.left + static_cast<double>(visibleTile.size) * 0.5;
                     const double tileCenterY =
@@ -206,11 +224,14 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
                     job.priority = distanceX * distanceX + distanceY * distanceY;
                     downloadJobs.push_back(std::move(job));
                 }
-                drawMissingTile(canvas, visibleTile);
+                if (drawMissingTiles)
+                {
+                    drawMissingTile(canvas, visibleTile);
+                }
                 continue;
             }
 
-            renderStats_.readyTiles++;
+            result.readyTiles++;
             const SkRect sourceRect = SkRect::MakeIWH(image->width(), image->height());
             const SkRect destinationRect = SkRect::MakeXYWH(
                 static_cast<float>(visibleTile.left), static_cast<float>(visibleTile.top),
@@ -218,6 +239,35 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
                 static_cast<float>(visibleTile.size + 0.5));
             canvas.drawImageRect(image, sourceRect, destinationRect, sampling, nullptr,
                                  SkCanvas::kFast_SrcRectConstraint);
+        }
+
+        return result;
+    };
+    if (source.summary.id != "none")
+    {
+        auto* multidateProjection = dynamic_cast<DownTool::TianDiTuMultidateDown*>(
+            source.projection.get());
+        const bool shouldDrawMultidateBase = source.summary.id == "tianditu.multidate" &&
+            multidateProjection != nullptr && !multidateProjection->GetYear().empty() &&
+            tianDiTuMultidateLatestProjection_ != nullptr;
+        if (shouldDrawMultidateBase)
+        {
+            // 官网多时相也是“最新影像底图 + 历史时相覆盖层”。历史瓦片缺失时保留底图。
+            const TileLayerResult baseLayer = drawTileLayer(
+                *tianDiTuMultidateLatestProjection_, source.yDirection,
+                multidateCacheRoot("latest"), true);
+            const TileLayerResult historyLayer = drawTileLayer(
+                *source.projection, source.yDirection, source.summary.cacheRoot, false,
+                &tianDiTuMultidateTileDownloader_);
+            renderStats_.visibleTiles = baseLayer.visibleTiles + historyLayer.visibleTiles;
+            renderStats_.readyTiles = baseLayer.readyTiles + historyLayer.readyTiles;
+        }
+        else
+        {
+            const TileLayerResult layer = drawTileLayer(
+                *source.projection, source.yDirection, source.summary.cacheRoot, true);
+            renderStats_.visibleTiles = layer.visibleTiles;
+            renderStats_.readyTiles = layer.readyTiles;
         }
     }
 
@@ -384,6 +434,13 @@ bool DomDownToolPreview::MapRenderer::SetTianDiTuMultidateCookie(const std::stri
     projection->SetSessionCookie(cookie);
     downloadQueue_.cancelPending();
     return true;
+}
+
+void DomDownToolPreview::MapRenderer::SetTianDiTuMultidateTileDownloader(
+    TileDownloader downloader)
+{
+    tianDiTuMultidateTileDownloader_ = std::move(downloader);
+    downloadQueue_.cancelPending();
 }
 
 std::optional<DomDownToolPreview::ViewportGeoBounds>

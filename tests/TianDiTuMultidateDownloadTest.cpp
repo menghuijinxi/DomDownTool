@@ -130,6 +130,71 @@ namespace
             return false;
         }
 
+        TestTianDiTuMultidateDown langfangTool;
+        langfangTool.SetTileSize(256);
+        langfangTool.SetCenterLonLat(DownTool::LonLat(116.671609, 39.537395));
+        if (!postprocess_test::Require(
+                langfangTool.PrepareTimelineQueryForBounds(
+                    DownTool::LonLat(116.66, 39.53),
+                    DownTool::LonLat(116.69, 39.55),
+                    17) &&
+                    langfangTool.GetRegionGbCode() == "156130000" &&
+                    langfangTool.GetRegionName() == "廊坊市" &&
+                    ContainsText(langfangTool.GetTimelineListUrl(), "gb=156130000"),
+                "TianDiTu multidate city region should use province parentGbcode with city name"))
+        {
+            return false;
+        }
+
+        DownTool::Tile langfangTile;
+        double langfangPixelX = 0.;
+        double langfangPixelY = 0.;
+        if (!postprocess_test::Require(
+                langfangTool.TryGetSourceTilePixelForLonLat(
+                    DownTool::LonLat(116.671609, 39.537395),
+                    17,
+                    langfangTile,
+                    langfangPixelX,
+                    langfangPixelY) &&
+                    langfangTile.X == 108014 && langfangTile.Y == 18372 &&
+                    langfangTile.Zoom == 17,
+                "TianDiTu multidate Langfang coordinate did not match the JS-proven tile"))
+        {
+            return false;
+        }
+
+        struct VerifiedLangfangTile
+        {
+            std::string_view year;
+            std::string_view key;
+        };
+        // 这些样例来自 JS 登录态探针实际下载成功的廊坊同坐标瓦片。
+        const std::vector<VerifiedLangfangTile> verifiedLangfangTiles = {
+            {"2022",
+             "68747470733a2f2f68656265692e7469616e646974752e676f762e636e2f67656f6573622f70726f78792f33316331336531343636383834326463393235383137623864306234323439652f38383665363062623765303134663232613730376465323365366636353035643f736572766963653d574d545326726571756573743d47657454696c652676657273696f6e3d312e302e30266c617965723d59585432303232267374796c653d64656661756c7426666f726d61743d696d6167652f706e672654696c654d61747269785365743d437573746f6d435253343332365363616c65595854323032322654696c654d61747269783d7b6c6576656c7d2654696c65526f773d7b726f777d2654696c65436f6c3d7b636f6c7d32303232"},
+            {"2023",
+             "68747470733a2f2f68656265692e7469616e646974752e676f762e636e2f67656f6573622f70726f78792f31316637313865326533306334373462393633383663363630663039323736302f38383665363062623765303134663232613730376465323365366636353035643f736572766963653d574d545326726571756573743d47657454696c652676657273696f6e3d312e302e30266c617965723d59585432303233267374796c653d64656661756c7426666f726d61743d696d6167652f706e672654696c654d61747269785365743d437573746f6d435253343332365363616c65595854323032332654696c654d61747269783d7b6c6576656c7d2654696c65526f773d7b726f777d2654696c65436f6c3d7b636f6c7d32303233"},
+            {"2024",
+             "68747470733a2f2f68656265692e7469616e646974752e676f762e636e2f67656f6573622f70726f78792f32393334623037616465393434663137393263363636353164386361626636372f38383665363062623765303134663232613730376465323365366636353035643f736572766963653d574d545326726571756573743d47657454696c652676657273696f6e3d312e302e30266c617965723d4842595832303234267374796c653d64656661756c7426666f726d61743d696d6167652f706e672654696c654d61747269785365743d437573746f6d435253343332365363616c6548425958323032342654696c654d61747269783d7b6c6576656c7d2654696c65526f773d7b726f777d2654696c65436f6c3d7b636f6c7d32303234"}};
+        for (const VerifiedLangfangTile& verifiedTile : verifiedLangfangTiles)
+        {
+            langfangTool.SetYearKey(std::string(verifiedTile.year),
+                                    std::string(verifiedTile.key));
+            const std::string tileUrl = langfangTool.MakeUri(langfangTile);
+            if (!postprocess_test::Require(
+                    ContainsText(tileUrl, "x=108014") &&
+                        ContainsText(tileUrl, "y=18372") &&
+                        ContainsText(tileUrl, "z=17") &&
+                        ContainsText(tileUrl, std::string("key=") +
+                                                 std::string(verifiedTile.key)) &&
+                        ContainsText(tileUrl, "gb=156130000") &&
+                        ContainsText(tileUrl, "name=%E5%BB%8A%E5%9D%8A%E5%B8%82"),
+                    "TianDiTu multidate Langfang tile URL diverged from JS probe"))
+            {
+                return false;
+            }
+        }
+
         tool.SetSessionCookie("SESSION=test-session");
         const std::vector<std::string> cookieHeaders = tool.GetRequestHeaders(tile);
         if (!postprocess_test::Require(

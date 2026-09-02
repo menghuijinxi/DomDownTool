@@ -22,6 +22,7 @@ struct TianDiTuMultidateFetchResponse
     std::string body;
     std::string finalUrl;
     std::string error;
+    std::string contentType;
 };
 
 class TianDiTuMultidateWebViewSession
@@ -37,6 +38,8 @@ class TianDiTuMultidateWebViewSession
     [[nodiscard]] TianDiTuMultidateCookieResponse requestSessionCookie();
 
     [[nodiscard]] TianDiTuMultidateFetchResponse fetchUrl(std::string_view url);
+
+    [[nodiscard]] TianDiTuMultidateFetchResponse fetchBinaryUrl(std::string_view url);
 
     void cancelCurrent();
 
@@ -63,7 +66,11 @@ class TianDiTuMultidateWebViewSession
 
     void extractSessionCookie(uint64_t requestId);
 
-    void dispatchFetchRequest(uint64_t requestId, std::string url);
+    [[nodiscard]] TianDiTuMultidateFetchResponse fetchUrl(std::string_view url,
+                                                          bool binaryBody,
+                                                          std::string_view timeoutError);
+
+    void dispatchFetchRequest(uint64_t requestId, std::string url, bool binaryBody);
 
     void completeRequest(uint64_t requestId, TianDiTuMultidateCookieResponse response);
 

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -96,8 +97,10 @@ int main()
 
         const std::filesystem::path validSourcePath = testRoot / "source.png";
         const std::filesystem::path invalidSourcePath = testRoot / "source.txt";
+        const std::filesystem::path emptySourcePath = testRoot / "empty.bin";
         writeFile(validSourcePath, pngBytes);
         writeFile(invalidSourcePath, {'n', 'o', 't', '-', 'a', 'n', '-', 'i', 'm', 'a', 'g', 'e'});
+        writeFile(emptySourcePath, {});
 
         std::condition_variable completionCondition;
         std::mutex completionMutex;
@@ -128,10 +131,49 @@ int main()
         {
             throw std::runtime_error("有效瓦块没有通过原子落盘或图片校验");
         }
-        queue.takeCompletedPaths();
+        (void)queue.takeCompletedPaths();
+
+        const std::filesystem::path customPath = testRoot / "cache" / "custom.png";
+        std::atomic_bool customDownloaderCalled = false;
+        source.SetUrlTemplate("https://example.invalid/custom.png");
+        DomDownToolPreview::TileDownloadJob customJob{
+            customPath, tile, &source, source.BuildTileHttpRequest(tile)};
+        customJob.customDownloader =
+            [&pngBytes, &customDownloaderCalled](
+                const DownTool::TileHttpRequest& request,
+                const std::filesystem::path& partialPath)
+            {
+                if (request.url.empty())
+                {
+                    return false;
+                }
+                customDownloaderCalled = true;
+                try
+                {
+                    writeFile(partialPath, pngBytes);
+                }
+                catch (...)
+                {
+                    return false;
+                }
+                return true;
+            };
+        queue.updateVisibleRequests({customJob});
+        if (!waitUntil([&customPath] { return std::filesystem::exists(customPath); },
+                       completionCondition, completionMutex))
+        {
+            throw std::runtime_error("自定义下载器没有写入有效瓦块");
+        }
+        if (!customDownloaderCalled || std::filesystem::exists(partialPathFor(customPath)) ||
+            std::filesystem::file_size(customPath) != pngBytes.size())
+        {
+            throw std::runtime_error("自定义下载器没有复用原子落盘和图片校验路径");
+        }
+        (void)queue.takeCompletedPaths();
 
         const std::filesystem::path highPriorityPath = testRoot / "cache" / "high.png";
         const std::filesystem::path lowPriorityPath = testRoot / "cache" / "low.png";
+        source.SetUrlTemplate(fileUrl(validSourcePath));
         queue.updateVisibleRequests({
             {lowPriorityPath, tile, &source, source.BuildTileHttpRequest(tile), 100.0},
             {highPriorityPath, tile, &source, source.BuildTileHttpRequest(tile), 1.0}});
@@ -151,6 +193,28 @@ int main()
         {
             throw std::runtime_error("瓦块下载没有按中心优先级执行");
         }
+
+        const std::filesystem::path transparentPath = testRoot / "cache" / "transparent.png";
+        source.SetUrlTemplate(fileUrl(emptySourcePath));
+        DomDownToolPreview::TileDownloadJob transparentJob{
+            transparentPath, tile, &source, source.BuildTileHttpRequest(tile)};
+        transparentJob.useTransparentPlaceholderOnEmptyResponse = true;
+        queue.updateVisibleRequests({transparentJob});
+        if (!waitUntil([&transparentPath] { return std::filesystem::exists(transparentPath); },
+                       completionCondition, completionMutex))
+        {
+            throw std::runtime_error("空响应没有写入透明瓦块");
+        }
+        std::ifstream transparentFile(transparentPath, std::ios::binary);
+        std::vector<unsigned char> transparentBytes(
+            (std::istreambuf_iterator<char>(transparentFile)), std::istreambuf_iterator<char>());
+        if (transparentBytes.size() < 8 || transparentBytes[0] != 0x89 ||
+            transparentBytes[1] != 0x50 || transparentBytes[2] != 0x4E ||
+            transparentBytes[3] != 0x47)
+        {
+            throw std::runtime_error("透明瓦块不是 PNG 编码");
+        }
+        (void)queue.takeCompletedPaths();
 
         const std::filesystem::path invalidPath = testRoot / "cache" / "invalid.png";
         source.SetUrlTemplate(fileUrl(invalidSourcePath));

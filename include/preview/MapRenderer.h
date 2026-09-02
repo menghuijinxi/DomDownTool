@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "DownToolBase.h"
+#include "TianDiTuMultidateDown.h"
 #include "preview/GisOverlayRenderer.h"
 #include "preview/MapViewport.h"
 #include "preview/TileDownloadQueue.h"
@@ -51,6 +52,9 @@ struct ExportGeoBounds
 class MapRenderer
 {
   public:
+    using TileDownloader = std::function<bool(const DownTool::TileHttpRequest&,
+                                              const std::filesystem::path&)>;
+
     explicit MapRenderer(std::function<void()> requestRedraw);
 
     ~MapRenderer();
@@ -83,6 +87,8 @@ class MapRenderer
                                          const std::string& cookie);
 
     bool SetTianDiTuMultidateCookie(const std::string& cookie);
+
+    void SetTianDiTuMultidateTileDownloader(TileDownloader downloader);
 
     [[nodiscard]] std::optional<ViewportGeoBounds> visibleGeoBounds() const;
 
@@ -163,6 +169,8 @@ class MapRenderer
     void drawExportBounds(SkCanvas& canvas) const;
 
     std::vector<MapSource> sources_;
+    std::unique_ptr<DownTool::TianDiTuMultidateDown> tianDiTuMultidateLatestProjection_;
+    TileDownloader tianDiTuMultidateTileDownloader_;
     size_t activeSourceIndex_ = 0;
     MapViewport viewport_;
     TileImageCache imageCache_;

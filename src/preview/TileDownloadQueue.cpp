@@ -144,6 +144,33 @@ bool requiresSuccessfulHttpStatus(const std::string& url)
 {
     return url.starts_with("http://") || url.starts_with("https://");
 }
+
+bool isEmptyFile(const std::filesystem::path& path)
+{
+    std::error_code error;
+    return std::filesystem::exists(path, error) && !error &&
+        std::filesystem::file_size(path, error) == 0 && !error;
+}
+
+bool writeTransparentPng(const std::filesystem::path& path)
+{
+    static constexpr unsigned char kTransparentPng[] = {
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+        0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+        0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+        0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82};
+
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file.is_open())
+    {
+        return false;
+    }
+    file.write(reinterpret_cast<const char*>(kTransparentPng),
+               static_cast<std::streamsize>(std::size(kTransparentPng)));
+    return file.good();
+}
 } // namespace
 
 DomDownToolPreview::TileDownloadQueue::TileDownloadQueue(
@@ -294,63 +321,84 @@ bool DomDownToolPreview::TileDownloadQueue::download(const TileDownloadJob& job)
     std::filesystem::path partialPath = job.destination;
     partialPath += L".part";
     const PartialFileGuard partialFileGuard(partialPath);
-    std::ofstream partialFile(partialPath, std::ios::binary | std::ios::trunc);
-    if (!partialFile.is_open())
+    std::map<std::string, std::string> responseHeaders;
+    if (job.customDownloader)
     {
-        return false;
-    }
-
-    CURL* easy = curl_easy_init();
-    if (!easy)
-    {
-        return false;
-    }
-    const auto easyCleanup = [](CURL* handle) { curl_easy_cleanup(handle); };
-    std::unique_ptr<CURL, decltype(easyCleanup)> easyHandle(easy, easyCleanup);
-
-    curl_slist* rawHeaders = nullptr;
-    for (const std::string& header : job.request.headers)
-    {
-        curl_slist* nextHeaders = curl_slist_append(rawHeaders, header.c_str());
-        if (!nextHeaders)
+        if (!job.customDownloader(job.request, partialPath))
         {
-            cleanupCurlHeaders(rawHeaders);
             return false;
         }
-        rawHeaders = nextHeaders;
     }
-    const std::unique_ptr<curl_slist, decltype(&cleanupCurlHeaders)> headers(
-        rawHeaders, cleanupCurlHeaders);
-    std::map<std::string, std::string> responseHeaders;
-
-    curl_easy_setopt(easy, CURLOPT_URL, job.request.url.c_str());
-    curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, writeFileData);
-    curl_easy_setopt(easy, CURLOPT_WRITEDATA, &partialFile);
-    curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, writeHeaderData);
-    curl_easy_setopt(easy, CURLOPT_HEADERDATA, &responseHeaders);
-    curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(easy, CURLOPT_TIMEOUT, kRequestTimeoutSeconds);
-    curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, kConnectTimeoutSeconds);
-    curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(easy, CURLOPT_USERAGENT, "DomDownToolPreview/1.0");
-    if (headers)
+    else
     {
-        curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers.get());
-    }
-    if (!job.request.proxy.empty())
-    {
-        curl_easy_setopt(easy, CURLOPT_PROXY, job.request.proxy.c_str());
+        std::ofstream partialFile(partialPath, std::ios::binary | std::ios::trunc);
+        if (!partialFile.is_open())
+        {
+            return false;
+        }
+
+        CURL* easy = curl_easy_init();
+        if (!easy)
+        {
+            return false;
+        }
+        const auto easyCleanup = [](CURL* handle) { curl_easy_cleanup(handle); };
+        std::unique_ptr<CURL, decltype(easyCleanup)> easyHandle(easy, easyCleanup);
+
+        curl_slist* rawHeaders = nullptr;
+        for (const std::string& header : job.request.headers)
+        {
+            curl_slist* nextHeaders = curl_slist_append(rawHeaders, header.c_str());
+            if (!nextHeaders)
+            {
+                cleanupCurlHeaders(rawHeaders);
+                return false;
+            }
+            rawHeaders = nextHeaders;
+        }
+        const std::unique_ptr<curl_slist, decltype(&cleanupCurlHeaders)> headers(
+            rawHeaders, cleanupCurlHeaders);
+
+        curl_easy_setopt(easy, CURLOPT_URL, job.request.url.c_str());
+        curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, writeFileData);
+        curl_easy_setopt(easy, CURLOPT_WRITEDATA, &partialFile);
+        curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, writeHeaderData);
+        curl_easy_setopt(easy, CURLOPT_HEADERDATA, &responseHeaders);
+        curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(easy, CURLOPT_TIMEOUT, kRequestTimeoutSeconds);
+        curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, kConnectTimeoutSeconds);
+        curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(easy, CURLOPT_USERAGENT, "DomDownToolPreview/1.0");
+        if (headers)
+        {
+            curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers.get());
+        }
+        if (!job.request.proxy.empty())
+        {
+            curl_easy_setopt(easy, CURLOPT_PROXY, job.request.proxy.c_str());
+        }
+
+        const CURLcode result = curl_easy_perform(easy);
+        long responseCode = 0;
+        curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &responseCode);
+        partialFile.close();
+        const bool httpStatusFailed = requiresSuccessfulHttpStatus(job.request.url) &&
+            (responseCode < 200 || responseCode >= 300);
+        if (result != CURLE_OK || httpStatusFailed)
+        {
+            return false;
+        }
     }
 
-    const CURLcode result = curl_easy_perform(easy);
-    long responseCode = 0;
-    curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &responseCode);
-    partialFile.close();
-    const bool httpStatusFailed = requiresSuccessfulHttpStatus(job.request.url) &&
-        (responseCode < 200 || responseCode >= 300);
-    if (result != CURLE_OK || httpStatusFailed ||
-        job.source->IsTileDownloadUnavailable(partialPath, responseHeaders, job.tile) ||
-        !validateImage(partialPath))
+    if (isEmptyFile(partialPath) && job.useTransparentPlaceholderOnEmptyResponse)
+    {
+        if (!writeTransparentPng(partialPath) || !validateImage(partialPath))
+        {
+            return false;
+        }
+    }
+    else if (job.source->IsTileDownloadUnavailable(partialPath, responseHeaders, job.tile) ||
+             !validateImage(partialPath))
     {
         return false;
     }

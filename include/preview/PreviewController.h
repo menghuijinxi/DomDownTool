@@ -4,7 +4,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -110,13 +112,23 @@ class PreviewController
 
     void LoginTianDiTuMultidate(skui::Runtime& runtime);
 
-    void RefreshTianDiTuMultidateTimelines(skui::Runtime& runtime);
+    void RefreshTianDiTuMultidateTimelines(skui::Runtime& runtime,
+                                           std::string_view preferredYear = {});
 
     void SelectTianDiTuMultidateTimeline(skui::Runtime& runtime,
                                          std::string_view value);
 
+    [[nodiscard]] std::string GetSelectedTianDiTuMultidateYear() const;
+
+    void RefreshTianDiTuMultidateAfterViewChange(skui::Runtime& runtime,
+                                                 std::string_view preferredYear);
+
     void UpdateTianDiTuMultidateUi(skui::Runtime& runtime,
                                    const MapSourceSummary& source);
+
+    [[nodiscard]] bool DownloadTianDiTuMultidateTile(
+        const DownTool::TileHttpRequest& request,
+        const std::filesystem::path& partialPath);
 
     void updateUi(skui::Runtime& runtime);
 
@@ -210,9 +222,9 @@ class PreviewController
 
     std::atomic<HWND> window_{nullptr};
     skui::Runtime* runtime_ = nullptr;
+    TianDiTuMultidateWebViewSession tianDiTuMultidateSession_;
     MapRenderer renderer_;
     AmapWebViewSearch webViewSearch_;
-    TianDiTuMultidateWebViewSession tianDiTuMultidateSession_;
     AmapPlaceSearch placeSearch_;
     Page page_ = Page::Preview;
     std::vector<ExportGisUiGroup> exportGisGroups_;
@@ -260,6 +272,13 @@ class PreviewController
     std::string tianDiTuMultidateRegionName_;
     std::string tianDiTuMultidateSelectedValue_ = "latest";
     std::string tianDiTuMultidateStatus_ = "默认显示最新影像；历史时相需要登录后刷新。";
+    std::mutex tianDiTuMultidateTileFetchMutex_;
+    std::optional<bool> lastTianDiTuMultidatePanelVisible_;
+    std::string lastTianDiTuMultidateSelectHtml_;
+    std::string lastTianDiTuMultidateSelectedValue_;
+    std::string lastTianDiTuMultidateStatus_;
+    std::optional<bool> lastTianDiTuMultidateRefreshDisabled_;
+    std::optional<bool> lastTianDiTuMultidateYearDisabled_;
     std::optional<size_t> highlightedSearchResult_;
     std::optional<PendingLocationRequest> pendingLocationRequest_;
     SearchState searchState_ = SearchState::Idle;

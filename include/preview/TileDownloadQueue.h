@@ -24,6 +24,9 @@ struct TileDownloadJob
     DownTool::DownToolBase* source = nullptr;
     DownTool::TileHttpRequest request;
     double priority = 0.0;
+    bool useTransparentPlaceholderOnEmptyResponse = false;
+    std::function<bool(const DownTool::TileHttpRequest&, const std::filesystem::path&)>
+        customDownloader;
 };
 
 struct TileDownloadStats

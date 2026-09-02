@@ -34,6 +34,8 @@ bool runTest()
     const std::filesystem::path sourceRoot = DOMDOWNTOOL_SOURCE_DIR;
     const std::filesystem::path documentPath =
         sourceRoot / "resources" / "preview" / "index.html";
+    const std::filesystem::path controllerPath =
+        sourceRoot / "src" / "preview" / "PreviewController.cpp";
     skui::RuntimeOptions options;
     options.assetRoot = documentPath.parent_path().generic_string();
     skui::Runtime runtime(std::move(options));
@@ -89,6 +91,18 @@ bool runTest()
                 postprocess_test::ContainsText(documentPath,
                                                "历史时相需要登录后刷新"),
             "预览页缺少天地图多时相入口或登录刷新控件"))
+    {
+        return false;
+    }
+    if (!postprocess_test::Require(
+            postprocess_test::ContainsText(
+                controllerPath, "if (selectHtml != lastTianDiTuMultidateSelectHtml_)") &&
+                postprocess_test::ContainsText(
+                    controllerPath,
+                    "lastTianDiTuMultidateSelectedValue_.clear();") &&
+                postprocess_test::ContainsText(
+                    controllerPath, "RefreshTianDiTuMultidateAfterViewChange"),
+            "天地图多时相年份下拉框不应在普通 UI 刷新时反复重建"))
     {
         return false;
     }
@@ -197,8 +211,6 @@ bool runTest()
         return false;
     }
 
-    const std::filesystem::path controllerPath =
-        sourceRoot / "src" / "preview" / "PreviewController.cpp";
     const std::filesystem::path dx12FbxRendererPath =
         sourceRoot / "src" / "preview" / "Dx12FbxRenderer.cpp";
     const std::filesystem::path cmakePath = sourceRoot / "CMakeLists.txt";

@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 
+#include <openssl/evp.h>
 #include <windows.h>
 #include <commctrl.h>
 #include <wrl/client.h>
@@ -53,6 +55,39 @@ std::string GetJsonString(const Json& object, const char* fieldName)
     return iterator != object.end() && iterator->is_string()
         ? iterator->get<std::string>()
         : std::string{};
+}
+
+std::string decodeBase64(std::string_view encoded)
+{
+    if (encoded.empty() || encoded.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+    {
+        return {};
+    }
+
+    std::string decoded(((encoded.size() + 3) / 4) * 3, '\0');
+    const int decodedLength = EVP_DecodeBlock(
+        reinterpret_cast<unsigned char*>(decoded.data()),
+        reinterpret_cast<const unsigned char*>(encoded.data()),
+        static_cast<int>(encoded.size()));
+    if (decodedLength < 0)
+    {
+        return {};
+    }
+
+    size_t padding = 0;
+    if (!encoded.empty() && encoded.back() == '=')
+    {
+        ++padding;
+    }
+    if (encoded.size() >= 2 && encoded[encoded.size() - 2] == '=')
+    {
+        ++padding;
+    }
+    const size_t outputLength = static_cast<size_t>(decodedLength) > padding
+        ? static_cast<size_t>(decodedLength) - padding
+        : 0;
+    decoded.resize(outputLength);
+    return decoded;
 }
 
 int64_t GetJsonInteger(const Json& object, const char* fieldName)
@@ -238,9 +273,10 @@ std::string makeActivateLoginScript(uint64_t requestId)
            "window.__domDownToolTianDiTuInstallPanel(payload.requestId);}})();";
 }
 
-std::string makeFetchScript(uint64_t requestId, std::string_view url)
+std::string makeFetchScript(uint64_t requestId, std::string_view url, bool binaryBody)
 {
-    const Json payload = {{"requestId", requestId}, {"url", std::string(url)}};
+    const Json payload = {
+        {"requestId", requestId}, {"url", std::string(url)}, {"binaryBody", binaryBody}};
     return R"javascript(
 (() => {
   const payload = )javascript" + payload.dump() + R"javascript(;
@@ -264,21 +300,40 @@ std::string makeFetchScript(uint64_t requestId, std::string_view url)
     }
     return new TextDecoder('utf-8').decode(decoded);
   };
+  const readBinaryBase64 = async (response) => {
+    const buffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+    }
+    return { bodyBase64: btoa(binary), bodyBytes: bytes.length };
+  };
   fetch(payload.url, {
     method: 'GET',
     credentials: 'include',
-    headers: { Accept: 'application/json, text/plain, */*' }
+    headers: {
+      Accept: payload.binaryBody
+        ? 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+        : 'application/json, text/plain, */*'
+    }
   })
     .then(async (response) => {
-      const body = payload.url.includes('/basic/GetRegion')
-        ? await decodeGetRegionBody(response)
-        : await response.text();
-      complete({
+      const result = {
         requestId: payload.requestId,
         status: response.status,
         finalUrl: response.url,
-        body
-      });
+        contentType: response.headers.get('content-type') || ''
+      };
+      if (payload.binaryBody) {
+        Object.assign(result, await readBinaryBase64(response));
+      } else {
+        result.body = payload.url.includes('/basic/GetRegion')
+          ? await decodeGetRegionBody(response)
+          : await response.text();
+      }
+      complete(result);
     })
     .catch((error) => {
       complete({
@@ -485,6 +540,19 @@ DomDownToolPreview::TianDiTuMultidateWebViewSession::requestSessionCookie()
 DomDownToolPreview::TianDiTuMultidateFetchResponse
 DomDownToolPreview::TianDiTuMultidateWebViewSession::fetchUrl(std::string_view url)
 {
+    return fetchUrl(url, false, "天地图多时相时间线请求超时。");
+}
+
+DomDownToolPreview::TianDiTuMultidateFetchResponse
+DomDownToolPreview::TianDiTuMultidateWebViewSession::fetchBinaryUrl(std::string_view url)
+{
+    return fetchUrl(url, true, "天地图多时相瓦片请求超时。");
+}
+
+DomDownToolPreview::TianDiTuMultidateFetchResponse
+DomDownToolPreview::TianDiTuMultidateWebViewSession::fetchUrl(
+    std::string_view url, bool binaryBody, std::string_view timeoutError)
+{
     if (url.empty())
     {
         return {0, {}, {}, "天地图多时相请求 URL 为空。"};
@@ -527,7 +595,7 @@ DomDownToolPreview::TianDiTuMultidateWebViewSession::fetchUrl(std::string_view u
         activeFetchRequest_ = std::move(request);
     }
 
-    dispatchFetchRequest(requestId, std::string(url));
+    dispatchFetchRequest(requestId, std::string(url), binaryBody);
 
     std::unique_lock lock(mutex_);
     const bool completed = condition_.wait_for(
@@ -541,7 +609,7 @@ DomDownToolPreview::TianDiTuMultidateWebViewSession::fetchUrl(std::string_view u
     if (!completed)
     {
         activeFetchRequest_.reset();
-        return {0, {}, {}, "天地图多时相时间线请求超时。"};
+        return {0, {}, {}, std::string(timeoutError)};
     }
     if (!activeFetchRequest_.has_value() || activeFetchRequest_->requestId != requestId)
     {
@@ -718,7 +786,7 @@ void DomDownToolPreview::TianDiTuMultidateWebViewSession::requestCookieExtractio
 }
 
 void DomDownToolPreview::TianDiTuMultidateWebViewSession::dispatchFetchRequest(
-    uint64_t requestId, std::string url)
+    uint64_t requestId, std::string url, bool binaryBody)
 {
     webview::webview* webView = nullptr;
     {
@@ -734,9 +802,9 @@ void DomDownToolPreview::TianDiTuMultidateWebViewSession::dispatchFetchRequest(
     writeSearchTrace("TianDiTuWebView", "fetch_dispatch_start",
                      fmt::format("id={}", requestId));
     const webview::noresult dispatchResult = webView->dispatch(
-        [this, webView, requestId, url = std::move(url)]
+        [this, webView, requestId, url = std::move(url), binaryBody]
         {
-            const std::string script = makeFetchScript(requestId, url);
+            const std::string script = makeFetchScript(requestId, url, binaryBody);
             const webview::noresult evalResult = webView->eval(script);
             if (evalResult.has_error())
             {
@@ -920,15 +988,25 @@ std::string DomDownToolPreview::TianDiTuMultidateWebViewSession::handleFetchComp
     TianDiTuMultidateFetchResponse response;
     response.statusCode = static_cast<int>(
         std::max<int64_t>(0, GetJsonInteger(*payload, "status")));
-    response.body = GetJsonString(*payload, "body");
     response.finalUrl = GetJsonString(*payload, "finalUrl");
     response.error = GetJsonString(*payload, "error");
+    response.contentType = GetJsonString(*payload, "contentType");
+
+    const auto bodyBase64 = payload->find("bodyBase64");
+    if (bodyBase64 != payload->end() && bodyBase64->is_string())
+    {
+        response.body = decodeBase64(bodyBase64->get<std::string>());
+    }
+    else
+    {
+        response.body = GetJsonString(*payload, "body");
+    }
 
     writeSearchTrace(
         "TianDiTuWebView", "fetch_complete",
-        fmt::format("id={} status={} body_bytes={} final_url={} error={}",
+        fmt::format("id={} status={} body_bytes={} content_type={} final_url={} error={}",
                     requestId, response.statusCode, response.body.size(),
-                    response.finalUrl, response.error));
+                    response.contentType, response.finalUrl, response.error));
     completeFetchRequest(requestId, std::move(response));
     return makeBindingResult(true);
 }
