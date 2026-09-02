@@ -5041,3 +5041,18 @@ bool DownTool::DownToolBase::TryUnprojectFromSourceTile(
 	lonLat = ConvertSourceLonLatToTargetLonLat(sourceLonLat);
 	return true;
 }
+
+bool DownTool::DownToolBase::TryGetSourceTileMatrixSize(
+	uint32_t zoom,
+	uint32_t& columnCount,
+	uint32_t& rowCount) const
+{
+	if (zoom >= 32)
+	{
+		return false;
+	}
+
+	columnCount = uint32_t{ 1 } << zoom;
+	rowCount = columnCount;
+	return columnCount != 0;
+}

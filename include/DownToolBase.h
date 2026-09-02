@@ -392,6 +392,11 @@ namespace DownTool
 			double pixelY,
 			LonLat& lonLat) const;
 
+		virtual bool TryGetSourceTileMatrixSize(
+			uint32_t zoom,
+			uint32_t& columnCount,
+			uint32_t& rowCount) const;
+
         GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Proxy, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxTextureFormat, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTerrainHeightEnabled, FbxElevationReferenceMeters, FbxTerrainSampleRateMeters, FbxElevationSampler, FbxTextureDistanceOffsets, TileSize, ProgressCallback)
 
 		const DownToolCancellationCallback& GetCancellationRequestedCallback()

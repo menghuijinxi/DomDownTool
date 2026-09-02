@@ -251,6 +251,71 @@ namespace
 		return 4;
 	}
 
+	const Json* FindTimelineRecordsJson(const Json& root)
+	{
+		if (root.is_array())
+		{
+			return &root;
+		}
+		if (!root.is_object())
+		{
+			return nullptr;
+		}
+
+		const auto data = root.find("data");
+		if (data == root.end())
+		{
+			return nullptr;
+		}
+		if (data->is_array())
+		{
+			return &*data;
+		}
+		if (!data->is_object())
+		{
+			return nullptr;
+		}
+
+		const auto records = data->find("records");
+		if (records != data->end() && records->is_array())
+		{
+			return &*records;
+		}
+
+		const auto page = data->find("page");
+		if (page == data->end() || !page->is_object())
+		{
+			return nullptr;
+		}
+		const auto pageRecords = page->find("records");
+		return pageRecords != page->end() && pageRecords->is_array() ? &*pageRecords : nullptr;
+	}
+
+	std::string DecodeTianDiTuGetRegionBody(const std::string& responseBody)
+	{
+		constexpr size_t encodedCharacterSize = 4;
+		if (responseBody.empty() || responseBody.size() % encodedCharacterSize != 0)
+		{
+			return "";
+		}
+
+		std::string decoded;
+		decoded.reserve(responseBody.size() / encodedCharacterSize);
+		for (size_t offset = 0; offset + 3 < responseBody.size(); offset += encodedCharacterSize)
+		{
+			uint32_t packedValue = 0;
+			for (size_t byteIndex = 0; byteIndex < encodedCharacterSize; ++byteIndex)
+			{
+				const auto character = static_cast<unsigned char>(responseBody[offset + byteIndex]);
+				packedValue |= static_cast<uint32_t>(character) << (8 * (3 - byteIndex));
+			}
+
+			decoded.push_back(static_cast<char>((packedValue >> 2) & 0xFF));
+		}
+
+		return decoded;
+	}
+
 	bool HttpGet(
 		const std::string& url,
 		const std::vector<std::string>& headers,
@@ -381,6 +446,47 @@ bool DownTool::TianDiTuMultidateDown::TryGetSourceTilePixelForLonLat(
 	return TryGetGeographicTilePixelForLonLat(lonLat, zoom, tile, pixelX, pixelY);
 }
 
+bool DownTool::TianDiTuMultidateDown::TryGetSourceLonLatForTilePixel(
+	const Tile& tile,
+	double pixelX,
+	double pixelY,
+	LonLat& lonLat) const
+{
+	const double tileSize = static_cast<double>(TileSize);
+	if (tileSize <= 0. || tile.Zoom == 0 || !std::isfinite(pixelX) ||
+		!std::isfinite(pixelY))
+	{
+		return false;
+	}
+
+	const double rowCount = std::pow(2., static_cast<double>(tile.Zoom) - 1.);
+	const double globalX = static_cast<double>(tile.X) + pixelX / tileSize;
+	const double globalY = static_cast<double>(tile.Y) + pixelY / tileSize;
+	if (!std::isfinite(globalX) || !std::isfinite(globalY))
+	{
+		return false;
+	}
+
+	lonLat.lon = globalX / rowCount * 180. - 180.;
+	lonLat.lat = (rowCount - globalY) / rowCount * 180. - 90.;
+	return std::isfinite(lonLat.lon) && std::isfinite(lonLat.lat);
+}
+
+bool DownTool::TianDiTuMultidateDown::TryGetSourceTileMatrixSize(
+	uint32_t zoom,
+	uint32_t& columnCount,
+	uint32_t& rowCount) const
+{
+	if (zoom == 0 || zoom >= 32)
+	{
+		return false;
+	}
+
+	rowCount = uint32_t{ 1 } << (zoom - 1);
+	columnCount = rowCount << 1;
+	return columnCount != 0 && rowCount != 0;
+}
+
 std::vector<std::string> DownTool::TianDiTuMultidateDown::GetRequestHeaders(
 	const Tile& tile) const
 {
@@ -463,6 +569,49 @@ DownTool::TianDiTuMultidateDown::ResolveAvailableTimelines()
 	}
 
 	return records;
+}
+
+std::vector<DownTool::TianDiTuMultidateDown::TimelineInfo>
+DownTool::TianDiTuMultidateDown::ResolveAvailableTimelinesForBounds(
+	const LonLat& minLonLat,
+	const LonLat& maxLonLat,
+	uint32_t zoom)
+{
+	if (!PrepareTimelineQueryForBounds(minLonLat, maxLonLat, zoom))
+	{
+		return {};
+	}
+
+	std::vector<TimelineInfo> records;
+	if (!FetchTimelineRecords(records))
+	{
+		return {};
+	}
+
+	return records;
+}
+
+bool DownTool::TianDiTuMultidateDown::PrepareTimelineQueryForBounds(
+	const LonLat& minLonLat,
+	const LonLat& maxLonLat,
+	uint32_t zoom)
+{
+	MinLonLat = minLonLat;
+	MaxLonLat = maxLonLat;
+	Zoom = zoom;
+	return EnsureRegion();
+}
+
+std::string DownTool::TianDiTuMultidateDown::GetTimelineListUrl() const
+{
+	return BuildTimelineListUrl();
+}
+
+bool DownTool::TianDiTuMultidateDown::TryParseTimelineRecords(
+	const std::string& responseBody,
+	std::vector<TimelineInfo>& records) const
+{
+	return ParseTimelineRecords(responseBody, records);
 }
 
 void DownTool::TianDiTuMultidateDown::SetMultidateRegion(
@@ -724,10 +873,20 @@ bool DownTool::TianDiTuMultidateDown::ParseTimelineRecords(
 {
 	records.clear();
 
-    const Json root = Json::parse(responseBody, nullptr, false);
+	Json root = Json::parse(responseBody, nullptr, false);
     if (root.is_discarded())
 	{
-		return false;
+		const std::string decodedBody = DecodeTianDiTuGetRegionBody(responseBody);
+		if (decodedBody.empty())
+		{
+			return false;
+		}
+
+		root = Json::parse(decodedBody, nullptr, false);
+		if (root.is_discarded())
+		{
+			return false;
+		}
 	}
 
     if (root.is_object() && GetJsonInteger(root, "status", 200) != 200)
@@ -735,19 +894,20 @@ bool DownTool::TianDiTuMultidateDown::ParseTimelineRecords(
 		return false;
 	}
 
-    const Json* dataArray = nullptr;
-    if (root.is_array())
-    {
-        dataArray = &root;
-    }
-    else if (root.is_object())
-    {
-        const auto data = root.find("data");
-        if (data != root.end() && data->is_array())
-        {
-            dataArray = &*data;
-        }
-    }
+	Json parsedDataString;
+    const Json* dataArray = FindTimelineRecordsJson(root);
+	if (dataArray == nullptr && root.is_object())
+	{
+		const auto data = root.find("data");
+		if (data != root.end() && data->is_string())
+		{
+			parsedDataString = Json::parse(data->get<std::string>(), nullptr, false);
+			if (!parsedDataString.is_discarded())
+			{
+				dataArray = FindTimelineRecordsJson(parsedDataString);
+			}
+		}
+	}
 
     if (dataArray == nullptr)
     {
@@ -758,8 +918,24 @@ bool DownTool::TianDiTuMultidateDown::ParseTimelineRecords(
     {
         TimelineInfo record;
         record.time = GetJsonString(item, "time");
+        if (record.time.empty())
+        {
+            record.time = GetJsonString(item, "title");
+        }
+        if (record.time.empty())
+        {
+            record.time = GetJsonString(item, "year");
+        }
         record.year = ExtractYear(record.time);
+        if (record.year.empty())
+        {
+            record.year = ExtractYear(GetJsonString(item, "year"));
+        }
         record.key = GetJsonString(item, "key");
+        if (record.key.empty())
+        {
+            record.key = GetJsonString(item, "uuid");
+        }
         record.projection = ToLowerAscii(GetJsonString(item, "projection"));
         record.minZoom = static_cast<uint32_t>(
             std::max(0, GetJsonInteger(item, "minlevel", 0)));
@@ -771,7 +947,7 @@ bool DownTool::TianDiTuMultidateDown::ParseTimelineRecords(
 		}
 	}
 
-	return !records.empty();
+	return true;
 }
 
 bool DownTool::TianDiTuMultidateDown::TryResolveRegionFromCenter()
@@ -791,7 +967,7 @@ bool DownTool::TianDiTuMultidateDown::TryResolveRegionFromCenter()
 
     const std::string gbCode = GetJsonString(root, "parentGbcode");
     const std::string name = GetJsonString(root, "name");
-    RegionGbCode = gbCode.empty() ? GetJsonString(root, "gbcode") : gbCode;
+	RegionGbCode = gbCode.empty() ? GetJsonString(root, "gbcode") : gbCode;
 	RegionName = name;
 	return !RegionGbCode.empty();
 }
@@ -799,7 +975,7 @@ bool DownTool::TianDiTuMultidateDown::TryResolveRegionFromCenter()
 std::string DownTool::TianDiTuMultidateDown::BuildTimelineListUrl() const
 {
 	return fmt::format(
-		"{}/api/multidate/basic/list?gb={}&lbx={:.8f}&lby={:.8f}&rux={:.8f}&ruy={:.8f}&level={}",
+		"{}/api/multidate/basic/GetRegion?gb={}&lbx={:.8f}&lby={:.8f}&rux={:.8f}&ruy={:.8f}&level={}",
 		TianDiTuMultidateHost,
 		UrlEncode(RegionGbCode),
 		MinLonLat.lon,

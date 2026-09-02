@@ -1,9 +1,11 @@
 #include "PostProcessTestSupport.h"
 
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "TianDiTuMultidateDown.h"
@@ -16,6 +18,9 @@ namespace
         using DownTool::TianDiTuMultidateDown::GetOffsetTiles;
         using DownTool::TianDiTuMultidateDown::GetRequestHeaders;
         using DownTool::TianDiTuMultidateDown::IsUnavailableTileResponseHeader;
+        using DownTool::TianDiTuMultidateDown::ParseTimelineRecords;
+        using DownTool::TianDiTuMultidateDown::TryGetSourceLonLatForTilePixel;
+        using DownTool::TianDiTuMultidateDown::TryGetSourceTileMatrixSize;
         using DownTool::TianDiTuMultidateDown::TryGetSourceTilePixelForLonLat;
     };
 
@@ -36,6 +41,22 @@ namespace
             }
         }
         return false;
+    }
+
+    std::string EncodeTianDiTuGetRegionBody(std::string_view decodedBody)
+    {
+        std::string encoded;
+        encoded.reserve(decodedBody.size() * 4);
+        for (const unsigned char character : decodedBody)
+        {
+            const uint32_t packedValue = static_cast<uint32_t>(character) << 2;
+            encoded.push_back(static_cast<char>((packedValue >> 24) & 0xFF));
+            encoded.push_back(static_cast<char>((packedValue >> 16) & 0xFF));
+            encoded.push_back(static_cast<char>((packedValue >> 8) & 0xFF));
+            encoded.push_back(static_cast<char>(packedValue & 0xFF));
+        }
+
+        return encoded;
     }
 
     bool RunTest()
@@ -81,6 +102,30 @@ namespace
                 ContainsText(yearUrl, "gb=156110000") &&
                 ContainsText(yearUrl, "name=%E5%8C%97%E4%BA%AC"),
             "TianDiTu multidate selected year URL did not include key and region"))
+        {
+            return false;
+        }
+
+        if (!postprocess_test::Require(
+            tool.PrepareTimelineQueryForBounds(
+                DownTool::LonLat(116.17, 39.92),
+                DownTool::LonLat(116.21, 39.95),
+                16),
+            "TianDiTu multidate timeline query did not use the configured region"))
+        {
+            return false;
+        }
+
+        const std::string timelineUrl = tool.GetTimelineListUrl();
+        if (!postprocess_test::Require(
+            ContainsText(timelineUrl, "image.tianditu.gov.cn/api/multidate/basic/GetRegion") &&
+                ContainsText(timelineUrl, "gb=156110000") &&
+                ContainsText(timelineUrl, "lbx=116.17000000") &&
+                ContainsText(timelineUrl, "lby=39.92000000") &&
+                ContainsText(timelineUrl, "rux=116.21000000") &&
+                ContainsText(timelineUrl, "ruy=39.95000000") &&
+                ContainsText(timelineUrl, "level=16"),
+            "TianDiTu multidate timeline URL did not match the official GetRegion API"))
         {
             return false;
         }
@@ -135,6 +180,27 @@ namespace
             return false;
         }
 
+        DownTool::LonLat roundTrip;
+        if (!postprocess_test::Require(
+            tool.TryGetSourceLonLatForTilePixel(
+                sourceTile, pixelX, pixelY, roundTrip) &&
+                std::abs(roundTrip.lon - beijing.lon) < 0.000001 &&
+                std::abs(roundTrip.lat - beijing.lat) < 0.000001,
+            "TianDiTu multidate geographic tile reverse projection failed"))
+        {
+            return false;
+        }
+
+        uint32_t matrixColumns = 0;
+        uint32_t matrixRows = 0;
+        if (!postprocess_test::Require(
+            tool.TryGetSourceTileMatrixSize(17, matrixColumns, matrixRows) &&
+                matrixColumns == 131072 && matrixRows == 65536,
+            "TianDiTu multidate matrix size did not match EPSG:4326 layout"))
+        {
+            return false;
+        }
+
         DownTool::Tile northTile;
         DownTool::Tile southTile;
         double northPixelX = 0.;
@@ -170,6 +236,53 @@ namespace
                 offsetTiles.MinTile.Zoom == 16 &&
                 offsetTiles.MaxTile.Zoom == 16,
             "TianDiTu multidate offset tile range is invalid"))
+        {
+            return false;
+        }
+
+        std::vector<DownTool::TianDiTuMultidateDown::TimelineInfo> records;
+        if (!postprocess_test::Require(
+            tool.ParseTimelineRecords(
+                R"json({"status":200,"data":[{"uuid":"official-uuid-2024","title":"2024年影像","minlevel":10,"maxlevel":18}]})json",
+                records) &&
+                records.size() == 1 && records.front().year == "2024" &&
+                records.front().key == "official-uuid-2024" &&
+                records.front().time == "2024年影像" &&
+                records.front().minZoom == 10 && records.front().maxZoom == 18,
+            "TianDiTu multidate timeline parser did not accept official uuid/title fields"))
+        {
+            return false;
+        }
+
+        if (!postprocess_test::Require(
+            tool.TryParseTimelineRecords(R"json({"status":200,"data":[]})json", records) &&
+                records.empty(),
+            "TianDiTu multidate timeline parser should accept an empty official list"))
+        {
+            return false;
+        }
+
+        if (!postprocess_test::Require(
+            tool.TryParseTimelineRecords(
+                R"json({"status":200,"message":"成功","data":{"page":{"records":[{"uuid":"page-uuid-2023","title":"2023年影像","minlevel":17,"maxlevel":18}],"total":1}}})json",
+                records) &&
+                records.size() == 1 && records.front().year == "2023" &&
+                records.front().key == "page-uuid-2023" &&
+                records.front().minZoom == 17 && records.front().maxZoom == 18,
+            "TianDiTu multidate timeline parser did not accept data.page.records"))
+        {
+            return false;
+        }
+
+        const std::string encodedGetRegionBody = EncodeTianDiTuGetRegionBody(
+            R"json({"status":200,"msg":"ok","data":"[{\"minlevel\":12,\"maxlevel\":18,\"time\":\"1951\",\"projection\":\"c\",\"key\":\"encoded-key-1951\"}]"})json");
+        if (!postprocess_test::Require(
+            tool.TryParseTimelineRecords(encodedGetRegionBody, records) &&
+                records.size() == 1 && records.front().year == "1951" &&
+                records.front().key == "encoded-key-1951" &&
+                records.front().projection == "c" &&
+                records.front().minZoom == 12 && records.front().maxZoom == 18,
+            "TianDiTu multidate timeline parser did not decode GetRegion response"))
         {
             return false;
         }

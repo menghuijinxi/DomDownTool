@@ -13,6 +13,7 @@
 #include "GoogleDown.h"
 #include "TencentDown.h"
 #include "TianDiTuDown.h"
+#include "TianDiTuMultidateDown.h"
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
@@ -26,6 +27,44 @@ namespace
 {
 constexpr uint32_t kTileSize = 256;
 constexpr double kEarthRadiusMeters = 6378137.;
+
+std::string pathToUtf8(const std::filesystem::path& path)
+{
+    const std::u8string utf8Path = path.u8string();
+    std::string result;
+    result.reserve(utf8Path.size());
+    for (const char8_t character : utf8Path)
+    {
+        result.push_back(static_cast<char>(character));
+    }
+    return result;
+}
+
+std::string sanitizeCacheLayerName(std::string layerName)
+{
+    if (layerName.empty())
+    {
+        return "latest";
+    }
+
+    for (char& character : layerName)
+    {
+        const unsigned char byte = static_cast<unsigned char>(character);
+        if (byte < 32 || character == '<' || character == '>' || character == ':' ||
+            character == '"' || character == '/' || character == '\\' || character == '|' ||
+            character == '?' || character == '*')
+        {
+            character = '_';
+        }
+    }
+    return layerName;
+}
+
+std::filesystem::path multidateCacheRoot(std::string layerName)
+{
+    return std::filesystem::u8path("cache/天地图多时相") /
+        std::filesystem::u8path(sanitizeCacheLayerName(std::move(layerName)));
+}
 } // namespace
 
 std::optional<DomDownToolPreview::ExportGeoBounds>
@@ -90,6 +129,10 @@ DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw
               std::make_unique<DownTool::TencentDown>(), TileYAxisDirection::Down, 3., 19.);
     addSource("tianditu.satellite", "天地图影像", "CGCS2000 / XYZ",
               std::make_unique<DownTool::TianDiTuDown>(), TileYAxisDirection::Down, 1., 18.);
+    auto multidateProjection = std::make_unique<DownTool::TianDiTuMultidateDown>();
+    multidateProjection->SetCachePath(pathToUtf8(multidateCacheRoot("latest")));
+    addSource("tianditu.multidate", "天地图多时相", "CGCS2000 / EPSG:4326",
+              std::move(multidateProjection), TileYAxisDirection::Down, 17., 18.);
     addSource("baidu.satellite", "百度卫星", "BD09 / Baidu",
               std::make_unique<DownTool::BaiduDown>(), TileYAxisDirection::Up, 3., 19.);
     addSource("google.satellite", "Google 卫星", "WGS84 / XYZ",
@@ -264,6 +307,90 @@ bool DomDownToolPreview::MapRenderer::selectSource(std::string_view sourceId)
     viewport_.setZoom(std::clamp(viewport_.zoom(), sourceIterator->summary.minimumZoom,
                                  sourceIterator->summary.maximumZoom));
     return true;
+}
+
+bool DomDownToolPreview::MapRenderer::UseLatestTianDiTuMultidate()
+{
+    const auto sourceIterator = std::find_if(
+        sources_.begin(), sources_.end(),
+        [](const MapSource& source) { return source.summary.id == "tianditu.multidate"; });
+    if (sourceIterator == sources_.end())
+    {
+        return false;
+    }
+
+    auto* projection = dynamic_cast<DownTool::TianDiTuMultidateDown*>(
+        sourceIterator->projection.get());
+    if (!projection)
+    {
+        return false;
+    }
+
+    projection->UseLatestYear();
+    sourceIterator->summary.cacheRoot = multidateCacheRoot("latest");
+    projection->SetCachePath(pathToUtf8(sourceIterator->summary.cacheRoot));
+    downloadQueue_.cancelPending();
+    return true;
+}
+
+bool DomDownToolPreview::MapRenderer::ConfigureTianDiTuMultidateLayer(
+    const std::string& year,
+    const std::string& key,
+    const std::string& gbCode,
+    const std::string& name,
+    const std::string& cookie)
+{
+    const auto sourceIterator = std::find_if(
+        sources_.begin(), sources_.end(),
+        [](const MapSource& source) { return source.summary.id == "tianditu.multidate"; });
+    if (sourceIterator == sources_.end())
+    {
+        return false;
+    }
+
+    auto* projection = dynamic_cast<DownTool::TianDiTuMultidateDown*>(
+        sourceIterator->projection.get());
+    if (!projection || key.empty())
+    {
+        return false;
+    }
+
+    projection->SetMultidateRegion(gbCode, name);
+    projection->SetSessionCookie(cookie);
+    projection->SetYearKey(year, key);
+    sourceIterator->summary.cacheRoot = multidateCacheRoot(year.empty() ? key : year);
+    projection->SetCachePath(pathToUtf8(sourceIterator->summary.cacheRoot));
+    downloadQueue_.cancelPending();
+    return true;
+}
+
+bool DomDownToolPreview::MapRenderer::SetTianDiTuMultidateCookie(const std::string& cookie)
+{
+    const auto sourceIterator = std::find_if(
+        sources_.begin(), sources_.end(),
+        [](const MapSource& source) { return source.summary.id == "tianditu.multidate"; });
+    if (sourceIterator == sources_.end())
+    {
+        return false;
+    }
+
+    auto* projection = dynamic_cast<DownTool::TianDiTuMultidateDown*>(
+        sourceIterator->projection.get());
+    if (!projection)
+    {
+        return false;
+    }
+
+    projection->SetSessionCookie(cookie);
+    downloadQueue_.cancelPending();
+    return true;
+}
+
+std::optional<DomDownToolPreview::ViewportGeoBounds>
+DomDownToolPreview::MapRenderer::visibleGeoBounds() const
+{
+    const MapSource& source = currentSource();
+    return viewport_.visibleGeoBounds(*source.projection, source.yDirection, kTileSize);
 }
 
 void DomDownToolPreview::MapRenderer::SetGisOverlayCategory(GisOverlayCategory category)

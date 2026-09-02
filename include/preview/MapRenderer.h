@@ -74,6 +74,18 @@ class MapRenderer
 
     bool selectSource(std::string_view sourceId);
 
+    bool UseLatestTianDiTuMultidate();
+
+    bool ConfigureTianDiTuMultidateLayer(const std::string& year,
+                                         const std::string& key,
+                                         const std::string& gbCode,
+                                         const std::string& name,
+                                         const std::string& cookie);
+
+    bool SetTianDiTuMultidateCookie(const std::string& cookie);
+
+    [[nodiscard]] std::optional<ViewportGeoBounds> visibleGeoBounds() const;
+
     void SetGisOverlayCategory(GisOverlayCategory category);
 
     [[nodiscard]] GisOverlayCategory GetGisOverlayCategory() const;

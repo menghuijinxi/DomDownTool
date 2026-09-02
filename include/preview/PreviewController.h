@@ -13,12 +13,14 @@
 #include <windows.h>
 #include <imm.h>
 
+#include "TianDiTuMultidateDown.h"
 #include "preview/AmapPlaceSearch.h"
 #include "preview/AmapWebViewSearch.h"
 #include "preview/Dx12FbxRenderer.h"
 #include "preview/ExportTaskManager.h"
 #include "preview/MapHoverRefreshThrottle.h"
 #include "preview/MapRenderer.h"
+#include "preview/TianDiTuMultidateWebViewSession.h"
 
 class SkCanvas;
 
@@ -105,6 +107,16 @@ class PreviewController
     void processPlaceSearchResponses(skui::Runtime& runtime);
 
     void updateSearchUi(skui::Runtime& runtime);
+
+    void LoginTianDiTuMultidate(skui::Runtime& runtime);
+
+    void RefreshTianDiTuMultidateTimelines(skui::Runtime& runtime);
+
+    void SelectTianDiTuMultidateTimeline(skui::Runtime& runtime,
+                                         std::string_view value);
+
+    void UpdateTianDiTuMultidateUi(skui::Runtime& runtime,
+                                   const MapSourceSummary& source);
 
     void updateUi(skui::Runtime& runtime);
 
@@ -200,6 +212,7 @@ class PreviewController
     skui::Runtime* runtime_ = nullptr;
     MapRenderer renderer_;
     AmapWebViewSearch webViewSearch_;
+    TianDiTuMultidateWebViewSession tianDiTuMultidateSession_;
     AmapPlaceSearch placeSearch_;
     Page page_ = Page::Preview;
     std::vector<ExportGisUiGroup> exportGisGroups_;
@@ -241,6 +254,12 @@ class PreviewController
     std::string searchQuery_;
     std::string searchMessage_;
     std::vector<PlaceSearchResult> searchResults_;
+    std::vector<DownTool::TianDiTuMultidateDown::TimelineInfo> tianDiTuMultidateTimelines_;
+    std::string tianDiTuMultidateCookie_;
+    std::string tianDiTuMultidateRegionGbCode_;
+    std::string tianDiTuMultidateRegionName_;
+    std::string tianDiTuMultidateSelectedValue_ = "latest";
+    std::string tianDiTuMultidateStatus_ = "默认显示最新影像；历史时相需要登录后刷新。";
     std::optional<size_t> highlightedSearchResult_;
     std::optional<PendingLocationRequest> pendingLocationRequest_;
     SearchState searchState_ = SearchState::Idle;

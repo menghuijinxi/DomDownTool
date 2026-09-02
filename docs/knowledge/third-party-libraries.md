@@ -110,6 +110,51 @@ profile 持久化，不同 EXE 的验证结果不会自动共享。人工完成�
 验证时应在日志中确认成功路径的 `location_applied` 名称与用户点击项一致；失败路径只能出现
 `location_resolution_rejected`，不能出现无关地点的 `location_applied`。
 
+## WebView2 同会话访问天地图多时相接口
+
+### 现象与影响范围
+
+用户在天地图多时相登录窗口完成登录后，预览页点击“刷新年份”仍提示“当前视窗没有返回可用历史时相”。
+该问题影响预览界面的历史时相列表，不影响公开最新影像 WMTS 加载。
+
+### 根因与排查路径
+
+天地图多时相的年份源是 `/api/multidate/basic/GetRegion`，官方请求会同时携带
+`gb`、`lbx`、`lby`、`rux`、`ruy`、`level`，并把响应按自定义 4 字节编码解成 JSON。
+早期实现误把 `/api/multidate/basic/list` 当作年份源，并且只把 `GetRegion` 当普通文本读取，
+因此即使页面已登录，也会得到空列表或乱码。
+缺少有效网页登录态时，多时相接口仍可能跳转到 OAuth 登录页；排查时不能把登录页、解析失败和真实空列表折叠成同一种状态。
+排查时应查看运行目录 `logs/amap-search.log` 中的 `TianDiTuWebView` 和
+`tianditu_timeline_response` 记录，确认状态码、最终 URL、响应字节数和错误信息，日志不要记录 Cookie。
+
+### 最终解决方案
+
+- 年份列表查询从 `https://image.tianditu.gov.cn/multidate` 页面上下文发起，调用
+  `/api/multidate/basic/GetRegion`，使用
+  WebView2 内部 `fetch(..., credentials: 'include')` 复用网页登录态。
+- `GetRegion` 返回体不是普通 JSON 文本；官方会把每 4 个字节拼成整数并右移 2 位，再按 UTF-8
+  解码。解出的根对象形如 `{"status":200,"msg":"ok","data":"[...]"}`，其中 `data` 字段仍需二次解析。
+- 多时相预览源最低缩放级别与官网保持一致设为 17；低于 17 级时历史时相覆盖可能不稳定。
+- Cookie 仍同步给瓦片下载请求，供选中历史时相后加载 `/api/multidate/basic/tile` 使用。
+- `changeCity` 返回带国家码前缀的 9 位行政区编码，例如北京 `156110000`；官方 `GetRegion` 和
+  `/basic/tile` 都使用这个 9 位编码。`/basic/list` 曾实测只接受 6 位 `110000`，但它不是当前年份源。
+- 天地图关键登录态可能绑定服务端一次性会话。即使把 WebView2 Cookie 回灌成功，重启后页面仍可能
+  立即跳回 OAuth；预览程序只承诺“本次运行内登录态”有效，不应依赖跨重启恢复。
+- 控制器分别处理登录失效、HTTP 非 200、响应为空、JSON 解析失败和真实空列表，避免误报。
+- 时间线解析器接受官方 `key`、`time`、`projection`、`minlevel`、`maxlevel` 字段，同时保留对
+  `uuid`、`title` 和 `data.page.records` 的兼容。
+
+### 验证方式与快速检查清单
+
+- 运行 `TianDiTuMultidateDownloadTest`、`MapViewportTest`、`PreviewSearchUiTest` 和
+  `TileDownloadQueueTest`。
+- 手工验证时选择“天地图多时相”，点击“登录”，在弹窗完成登录后点击同步按钮，确认年份下拉框出现
+  历史时相；若仍为空，先检查日志中的 `final_url` 是否指向 OAuth 登录页。
+- 开发接口参数时不要每次改 C++ 后重新登录。优先运行 `tmp/tianditu-probe/probe.mjs`，在同一个
+  已登录浏览器上下文里批量测试 `gb`、`level` 和 bounds 组合，再把结论集成回 C++。
+- 若年份能列出但历史瓦片不显示，继续检查瓦片请求的 Cookie、`gb`、`name` 和 `key` 参数，不要再从
+  年份列表链路推断瓦片链路一定有效。
+
 ## Skia 路径迭代器会忽略仅含移动命令的点路径
 
 ### 现象与影响

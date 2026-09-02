@@ -83,6 +83,7 @@ constexpr int kFbxSpeedPanelBottom = 60;
 constexpr int kFbxSpeedPanelWidth = 260;
 constexpr int kFbxSpeedPanelHeight = 174;
 constexpr double kFbxKeyboardPanPixelsPerSecond = 720.0;
+constexpr std::string_view kTaskOutputPathSeparator = "\xEF\xBC\x9B";
 
 std::filesystem::path fbxInteractionSettingsPath()
 {
@@ -468,6 +469,20 @@ std::string escapeHtml(std::string_view value)
     return escaped;
 }
 
+std::string responseBodyPreview(std::string_view value)
+{
+    constexpr size_t kPreviewLimit = 180;
+    std::string preview(value.substr(0, std::min(value.size(), kPreviewLimit)));
+    for (char& character : preview)
+    {
+        if (character == '\r' || character == '\n' || character == '\t')
+        {
+            character = ' ';
+        }
+    }
+    return preview;
+}
+
 std::optional<size_t> searchResultIndex(std::string_view id)
 {
     constexpr std::string_view kPrefix = "search-result-";
@@ -578,7 +593,7 @@ std::optional<std::string> taskIdFromDeleteButton(std::string_view id)
 
 std::optional<std::filesystem::path> existingTaskOutputPath(std::string_view outputPath)
 {
-    const size_t separator = outputPath.find("；");
+    const size_t separator = outputPath.find(kTaskOutputPathSeparator);
     const std::filesystem::path path = std::filesystem::u8path(
         std::string(outputPath.substr(0, separator)));
     std::error_code pathError;
@@ -596,7 +611,7 @@ std::vector<std::filesystem::path> findTaskFbxFiles(const ExportTaskRecord& reco
     size_t start = 0;
     while (start <= record.outputPath.size())
     {
-        const size_t separator = record.outputPath.find("；", start);
+        const size_t separator = record.outputPath.find(kTaskOutputPathSeparator, start);
         const std::string_view pathText = std::string_view(record.outputPath).substr(
             start, separator == std::string_view::npos ? std::string_view::npos :
                                                           separator - start);
@@ -637,7 +652,7 @@ std::vector<std::filesystem::path> findTaskFbxFiles(const ExportTaskRecord& reco
         {
             break;
         }
-        start = separator + std::string_view("；").size();
+        start = separator + kTaskOutputPathSeparator.size();
     }
     std::ranges::sort(files);
     return files;
@@ -719,7 +734,7 @@ std::string conversionRecordValue(const std::string& line, std::string_view pref
 std::optional<ExportConfiguration> loadLegacyTaskConfiguration(
     const ExportTaskRecord& record)
 {
-    const size_t separator = record.outputPath.find("；");
+    const size_t separator = record.outputPath.find(kTaskOutputPathSeparator);
     const std::filesystem::path outputRoot = std::filesystem::u8path(
         record.outputPath.substr(0, separator));
     const std::filesystem::path conversionRecord = outputRoot /
@@ -1167,6 +1182,13 @@ constexpr std::array<std::pair<std::string_view, std::string_view>, 7>
     std::pair{"bing.satellite", "export-provider-bing"},
     std::pair{"arcgis.satellite", "export-provider-arcgis"}};
 
+bool isExportProviderSource(std::string_view sourceId)
+{
+    return std::ranges::any_of(
+        kExportProviderControls,
+        [sourceId](const auto& item) { return item.first == sourceId; });
+}
+
 DomDownToolPreview::GisOverlayCategories allGisCategories()
 {
     return {DomDownToolPreview::GisOverlayCategory::Road,
@@ -1289,6 +1311,16 @@ void setCheckboxChecked(skui::Runtime& runtime, std::string_view id, bool checke
         return;
     }
     runtime.removeAttributeById(id, "checked");
+}
+
+void setControlDisabled(skui::Runtime& runtime, std::string_view id, bool disabled)
+{
+    if (disabled)
+    {
+        runtime.setAttributeById(id, "disabled", "");
+        return;
+    }
+    runtime.removeAttributeById(id, "disabled");
 }
 
 void syncGisCheckboxes(skui::Runtime& runtime,
@@ -1569,6 +1601,11 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
 
             if (event.type == skui::ElementEventType::Change)
             {
+                if (event.id == "tianditu-multidate-year")
+                {
+                    SelectTianDiTuMultidateTimeline(runtime, event.value);
+                    return;
+                }
                 const auto providerControl = std::find_if(
                     kExportProviderControls.begin(), kExportProviderControls.end(),
                     [&event](const auto& item) { return item.second == event.id; });
@@ -2211,6 +2248,16 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             else if (event.id == "reload-tiles")
             {
                 renderer_.clearCache();
+            }
+            else if (event.id == "tianditu-multidate-login")
+            {
+                LoginTianDiTuMultidate(runtime);
+                return;
+            }
+            else if (event.id == "tianditu-multidate-refresh")
+            {
+                RefreshTianDiTuMultidateTimelines(runtime);
+                return;
             }
             else if (event.id == "gis-color-toggle")
             {
@@ -3171,6 +3218,255 @@ void DomDownToolPreview::PreviewController::updateSearchUi(skui::Runtime& runtim
                     static_cast<int>(searchState_), searchResults_.size()));
 }
 
+void DomDownToolPreview::PreviewController::LoginTianDiTuMultidate(skui::Runtime& runtime)
+{
+    tianDiTuMultidateStatus_ = "请在弹出的天地图窗口完成登录。";
+    UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+    requestRedraw();
+
+    const TianDiTuMultidateCookieResponse response =
+        tianDiTuMultidateSession_.requestSessionCookie();
+    if (!response.error.empty())
+    {
+        tianDiTuMultidateStatus_ = response.error;
+        UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+        requestRedraw();
+        return;
+    }
+
+    tianDiTuMultidateCookie_ = response.cookie;
+    renderer_.SetTianDiTuMultidateCookie(tianDiTuMultidateCookie_);
+    tianDiTuMultidateStatus_ = "已同步本次运行的天地图登录态，可刷新历史时相。";
+    RefreshTianDiTuMultidateTimelines(runtime);
+}
+
+void DomDownToolPreview::PreviewController::RefreshTianDiTuMultidateTimelines(
+    skui::Runtime& runtime)
+{
+    if (tianDiTuMultidateCookie_.empty())
+    {
+        tianDiTuMultidateStatus_ = "历史时相登录仅本次运行有效，请登录后刷新年份。";
+        UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+        requestRedraw();
+        return;
+    }
+
+    const std::optional<ViewportGeoBounds> bounds = renderer_.visibleGeoBounds();
+    if (!bounds.has_value())
+    {
+        tianDiTuMultidateStatus_ = "当前视窗无法换算经纬度范围。";
+        UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+        requestRedraw();
+        return;
+    }
+
+    DownTool::TianDiTuMultidateDown downloader;
+    downloader.SetTileSize(256);
+    downloader.SetCenterLonLat(renderer_.center());
+    downloader.SetSessionCookie(tianDiTuMultidateCookie_);
+    const uint32_t queryZoom = std::clamp(
+        static_cast<uint32_t>(std::lround(renderer_.zoom())), 3u, 18u);
+
+    if (!downloader.PrepareTimelineQueryForBounds(
+            {bounds->minLon, bounds->minLat}, {bounds->maxLon, bounds->maxLat}, queryZoom))
+    {
+        tianDiTuMultidateStatus_ = "当前视窗无法解析天地图行政区域。";
+        UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+        requestRedraw();
+        return;
+    }
+
+    const std::string timelineUrl = downloader.GetTimelineListUrl();
+    writeSearchTrace(
+        "Controller", "tianditu_timeline_request",
+        fmt::format("zoom={} gb={} region={} bounds={:.8f},{:.8f},{:.8f},{:.8f}",
+                    queryZoom, downloader.GetRegionGbCode(), downloader.GetRegionName(),
+                    bounds->minLon, bounds->minLat, bounds->maxLon, bounds->maxLat));
+    const TianDiTuMultidateFetchResponse response =
+        tianDiTuMultidateSession_.fetchUrl(timelineUrl);
+    writeSearchTrace(
+        "Controller", "tianditu_timeline_response",
+        fmt::format("status={} body_bytes={} final_url={} error={}", response.statusCode,
+                    response.body.size(), response.finalUrl, response.error));
+
+    const auto resetToLatest = [this]
+    {
+        tianDiTuMultidateTimelines_.clear();
+        tianDiTuMultidateRegionGbCode_.clear();
+        tianDiTuMultidateRegionName_.clear();
+        tianDiTuMultidateSelectedValue_ = "latest";
+        renderer_.UseLatestTianDiTuMultidate();
+    };
+
+    const bool redirectedToLogin =
+        response.finalUrl.find("oauth.tianditu.gov.cn/login") != std::string::npos ||
+        response.body.find("oauth.tianditu.gov.cn/login") != std::string::npos;
+    if (redirectedToLogin)
+    {
+        resetToLatest();
+        tianDiTuMultidateCookie_.clear();
+        tianDiTuMultidateStatus_ = "本次天地图登录态已失效，请重新登录后刷新年份。";
+        UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+        requestRedraw();
+        return;
+    }
+
+    if (!response.error.empty())
+    {
+        resetToLatest();
+        tianDiTuMultidateStatus_ = "刷新历史时相失败：" + response.error;
+        UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+        requestRedraw();
+        return;
+    }
+
+    if (response.statusCode != 200)
+    {
+        resetToLatest();
+        tianDiTuMultidateStatus_ = fmt::format(
+            "时间线接口 HTTP {}，请重新登录后刷新年份。", response.statusCode);
+        UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+        requestRedraw();
+        return;
+    }
+
+    std::vector<DownTool::TianDiTuMultidateDown::TimelineInfo> timelines;
+    if (!downloader.TryParseTimelineRecords(response.body, timelines))
+    {
+        resetToLatest();
+        tianDiTuMultidateStatus_ = response.body.empty()
+            ? "时间线接口返回空内容，请重新登录后刷新年份。"
+            : "时间线返回无法解析：" + responseBodyPreview(response.body);
+        UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+        requestRedraw();
+        return;
+    }
+
+    if (timelines.empty())
+    {
+        resetToLatest();
+        tianDiTuMultidateStatus_ = "当前视窗没有返回可用历史时相，已保持最新影像。";
+        UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+        requestRedraw();
+        return;
+    }
+
+    std::ranges::sort(
+        timelines,
+        [](const auto& left, const auto& right) { return left.time > right.time; });
+    tianDiTuMultidateTimelines_ = std::move(timelines);
+    tianDiTuMultidateRegionGbCode_ = downloader.GetRegionGbCode();
+    tianDiTuMultidateRegionName_ = downloader.GetRegionName();
+    if (tianDiTuMultidateSelectedValue_ != "latest")
+    {
+        const auto selected = std::ranges::find_if(
+            tianDiTuMultidateTimelines_,
+            [this](const auto& item) { return item.key == tianDiTuMultidateSelectedValue_; });
+        if (selected == tianDiTuMultidateTimelines_.end())
+        {
+            tianDiTuMultidateSelectedValue_ = "latest";
+            renderer_.UseLatestTianDiTuMultidate();
+        }
+        else
+        {
+            renderer_.ConfigureTianDiTuMultidateLayer(
+                selected->year, selected->key, tianDiTuMultidateRegionGbCode_,
+                tianDiTuMultidateRegionName_, tianDiTuMultidateCookie_);
+        }
+    }
+    tianDiTuMultidateStatus_ = fmt::format(
+        "已获取 {} 个历史时相{}。", tianDiTuMultidateTimelines_.size(),
+        tianDiTuMultidateRegionName_.empty()
+            ? ""
+            : "，区域 " + tianDiTuMultidateRegionName_);
+    UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+    requestRedraw();
+}
+
+void DomDownToolPreview::PreviewController::SelectTianDiTuMultidateTimeline(
+    skui::Runtime& runtime, std::string_view value)
+{
+    if (value == "latest")
+    {
+        tianDiTuMultidateSelectedValue_ = "latest";
+        renderer_.UseLatestTianDiTuMultidate();
+        tianDiTuMultidateStatus_ = "已切回最新影像。";
+        UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+        requestRedraw();
+        return;
+    }
+
+    if (tianDiTuMultidateCookie_.empty())
+    {
+        tianDiTuMultidateStatus_ = "历史时相需要先登录天地图。";
+        UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+        requestRedraw();
+        return;
+    }
+
+    const auto selected = std::ranges::find_if(
+        tianDiTuMultidateTimelines_,
+        [value](const auto& item) { return item.key == value; });
+    if (selected == tianDiTuMultidateTimelines_.end())
+    {
+        tianDiTuMultidateStatus_ = "请选择刷新后返回的历史时相。";
+        UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+        requestRedraw();
+        return;
+    }
+
+    tianDiTuMultidateSelectedValue_ = selected->key;
+    if (!renderer_.ConfigureTianDiTuMultidateLayer(
+            selected->year, selected->key, tianDiTuMultidateRegionGbCode_,
+            tianDiTuMultidateRegionName_, tianDiTuMultidateCookie_))
+    {
+        tianDiTuMultidateStatus_ = "无法切换天地图多时相图层。";
+        UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+        requestRedraw();
+        return;
+    }
+
+    tianDiTuMultidateStatus_ = fmt::format(
+        "已切换到 {}。", selected->time.empty() ? selected->year : selected->time);
+    UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
+    requestRedraw();
+}
+
+void DomDownToolPreview::PreviewController::UpdateTianDiTuMultidateUi(
+    skui::Runtime& runtime, const MapSourceSummary& source)
+{
+    const bool visible = source.id == "tianditu.multidate";
+    runtime.setVisibleById("tianditu-multidate-panel", visible);
+    if (!visible)
+    {
+        return;
+    }
+
+    std::string selectHtml =
+        "<select id=\"tianditu-multidate-year\" aria-label=\"天地图多时相年份\">"
+        "<option value=\"latest\">最新影像</option>";
+    for (const DownTool::TianDiTuMultidateDown::TimelineInfo& timeline :
+         tianDiTuMultidateTimelines_)
+    {
+        const std::string title = timeline.time.empty() ? timeline.year : timeline.time;
+        const std::string zoomText =
+            timeline.minZoom == 0 && timeline.maxZoom == 0
+                ? ""
+                : fmt::format(" z{}-{}", timeline.minZoom, timeline.maxZoom);
+        selectHtml += fmt::format(
+            "<option value=\"{}\">{}{}</option>", escapeHtml(timeline.key),
+            escapeHtml(title), escapeHtml(zoomText));
+    }
+    selectHtml += "</select>";
+    runtime.replaceHtmlById("tianditu-multidate-year", selectHtml);
+    runtime.setValueById("tianditu-multidate-year", tianDiTuMultidateSelectedValue_);
+    runtime.setTextById("tianditu-multidate-status", tianDiTuMultidateStatus_);
+    setControlDisabled(runtime, "tianditu-multidate-refresh",
+                       tianDiTuMultidateCookie_.empty());
+    setControlDisabled(runtime, "tianditu-multidate-year",
+                       tianDiTuMultidateTimelines_.empty());
+}
+
 void DomDownToolPreview::PreviewController::selectGisColorCategory(
     GisOverlayCategory category)
 {
@@ -3336,6 +3632,7 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
          {"zoom-value", fmt::format("Z {:.2f}", renderer_.zoom())},
          {"view-span-value", fmt::format("视野 {:.1f}x", renderer_.GetViewSpan())},
          {"cache-path", pathToUtf8(source.cacheRoot)}});
+    UpdateTianDiTuMultidateUi(runtime, source);
     const std::string tileStatsState =
         fmt::format("{}:{}:{}:{}:{}:{}:{:.1f}", stats.visibleTiles, stats.readyTiles,
                     stats.cache.pendingTiles, stats.downloads.activeTiles,
@@ -3584,7 +3881,7 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
             exportMapSourceIds_.insert(exportSource.id);
         }
     }
-    else if (source.id != "none")
+    else if (source.id != "none" && isExportProviderSource(source.id))
     {
         exportMapSourceIds_.insert(source.id);
     }

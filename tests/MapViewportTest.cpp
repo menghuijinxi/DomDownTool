@@ -8,6 +8,7 @@
 #include "BaiduDown.h"
 #include "GaoDeDown.h"
 #include "GoogleDownBase.h"
+#include "TianDiTuMultidateDown.h"
 #include "preview/MapHoverRefreshThrottle.h"
 #include "preview/MapViewport.h"
 
@@ -198,6 +199,29 @@ bool testBaiduTileSelection()
                                      "Baidu upward Y tile selection is incorrect");
 }
 
+bool testTianDiTuMultidateTileSelection()
+{
+    DownTool::TianDiTuMultidateDown projection;
+    projection.SetTileSize(256);
+
+    DomDownToolPreview::MapViewport viewport;
+    viewport.setSize(1024, 768, {52., 28.});
+    viewport.setCenter({0., -84.});
+    viewport.setZoom(3.);
+    const std::vector<DomDownToolPreview::VisibleTile> tiles =
+        viewport.visibleTiles(projection, DomDownToolPreview::TileYAxisDirection::Down, 256, 1);
+    const bool rowsInMatrix = std::ranges::all_of(
+        tiles,
+        [](const DomDownToolPreview::VisibleTile& tile)
+        {
+            return tile.cacheTile.Y >= 0 && tile.cacheTile.Y < 4 &&
+                tile.cacheTile.X >= 0 && tile.cacheTile.X < 8;
+        });
+
+    return postprocess_test::Require(!tiles.empty() && rowsInMatrix,
+                                     "TianDiTu multidate visible tiles exceeded its geographic matrix");
+}
+
 bool testViewSpanShowsMoreTilesWithoutChangingSourceZoom()
 {
     DownTool::GoogleDownBase projection;
@@ -260,6 +284,7 @@ bool testMapHoverRefreshThrottle()
 bool runTest()
 {
     if (!testStandardTileSelection() || !testBaiduTileSelection() ||
+        !testTianDiTuMultidateTileSelection() ||
         !testViewSpanShowsMoreTilesWithoutChangingSourceZoom() ||
         !testMapHoverRefreshThrottle())
     {
@@ -286,6 +311,15 @@ bool runTest()
     baiduProjection.SetTileSize(256);
     if (!testProjectionInteraction(baiduProjection, DomDownToolPreview::TileYAxisDirection::Up,
                                    0.0003, "Baidu"))
+    {
+        return false;
+    }
+
+    DownTool::TianDiTuMultidateDown geographicProjection;
+    geographicProjection.SetTileSize(256);
+    if (!testProjectionInteraction(geographicProjection,
+                                   DomDownToolPreview::TileYAxisDirection::Down,
+                                   0.000001, "TianDiTu multidate"))
     {
         return false;
     }

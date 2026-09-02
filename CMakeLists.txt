@@ -223,6 +223,7 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewController.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SearchTrace.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SkiaImageCodecs.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TianDiTuMultidateWebViewSession.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TileDownloadQueue.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TileImageCache.cpp)
   set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewResources.rc

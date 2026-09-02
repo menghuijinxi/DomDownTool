@@ -37,6 +37,17 @@ namespace DownTool
 			double& pixelX,
 			double& pixelY) const override;
 
+		virtual bool TryGetSourceLonLatForTilePixel(
+			const Tile& tile,
+			double pixelX,
+			double pixelY,
+			LonLat& lonLat) const override;
+
+		virtual bool TryGetSourceTileMatrixSize(
+			uint32_t zoom,
+			uint32_t& columnCount,
+			uint32_t& rowCount) const override;
+
 		// 指定要下载的年份；空字符串表示使用最新年份。
 		void SetYear(const std::string& year);
 
@@ -48,9 +59,29 @@ namespace DownTool
 
 		std::vector<TimelineInfo> ResolveAvailableTimelines();
 
+		std::vector<TimelineInfo> ResolveAvailableTimelinesForBounds(
+			const LonLat& minLonLat,
+			const LonLat& maxLonLat,
+			uint32_t zoom);
+
+		bool PrepareTimelineQueryForBounds(
+			const LonLat& minLonLat,
+			const LonLat& maxLonLat,
+			uint32_t zoom);
+
+		std::string GetTimelineListUrl() const;
+
+		bool TryParseTimelineRecords(
+			const std::string& responseBody,
+			std::vector<TimelineInfo>& records) const;
+
 		std::vector<std::string> ResolveAvailableYears();
 
 		const std::string& GetResolvedYear() const { return ResolvedYear; }
+
+		const std::string& GetRegionGbCode() const { return RegionGbCode; }
+
+		const std::string& GetRegionName() const { return RegionName; }
 
 		void SetMultidateRegion(const std::string& gbCode, const std::string& name);
 
@@ -64,6 +95,10 @@ namespace DownTool
 			const Tile& tile) const override;
 
 		virtual uint32_t GetMinFallbackZoom() const override { return 3; }
+
+		bool ParseTimelineRecords(
+			const std::string& responseBody,
+			std::vector<TimelineInfo>& records) const;
 
 	private:
 
@@ -80,10 +115,6 @@ namespace DownTool
 		bool SelectTimelineRecord(
 			const std::vector<TimelineInfo>& records,
 			TimelineInfo& record) const;
-
-		bool ParseTimelineRecords(
-			const std::string& responseBody,
-			std::vector<TimelineInfo>& records) const;
 
 		bool TryResolveRegionFromCenter();
 

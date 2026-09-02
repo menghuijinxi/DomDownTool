@@ -74,6 +74,25 @@ bool runTest()
         return false;
     }
     if (!postprocess_test::Require(
+            postprocess_test::ContainsText(
+                documentPath, "<option value=\"tianditu.multidate\">天地图多时相</option>") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "id=\"tianditu-multidate-panel\"") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "id=\"tianditu-multidate-login\"") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "id=\"tianditu-multidate-refresh\"") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "id=\"tianditu-multidate-year\"") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "style=\"display: none\"") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "历史时相需要登录后刷新"),
+            "预览页缺少天地图多时相入口或登录刷新控件"))
+    {
+        return false;
+    }
+    if (!postprocess_test::Require(
             postprocess_test::ContainsText(documentPath, ".param-row") &&
                 postprocess_test::ContainsText(
                     documentPath,
@@ -701,15 +720,18 @@ bool runTest()
     {
         return false;
     }
-    sendMouse(runtime, skui::EventType::MouseDown, 970.F, 554.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 970.F, 554.F);
+    lastClickId.clear();
+    sendMouse(runtime, skui::EventType::MouseDown, 970.F, 568.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 970.F, 568.F);
     if (!postprocess_test::Require(lastClickId == "gis-color-eyedropper",
-                                   "GIS screen eyedropper button did not receive pointer input"))
+                                   "GIS screen eyedropper button did not receive pointer input, actual hit: " +
+                                       lastClickId))
     {
         return false;
     }
-    sendMouse(runtime, skui::EventType::MouseDown, 1008.F, 554.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 1008.F, 554.F);
+    lastClickId.clear();
+    sendMouse(runtime, skui::EventType::MouseDown, 1008.F, 568.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 1008.F, 568.F);
     if (!postprocess_test::Require(lastClickId == "gis-color-reset",
                                    "GIS color reset button did not receive pointer input"))
     {
@@ -769,9 +791,9 @@ bool runTest()
     lastMouseDownId.clear();
     lastMouseUpId.clear();
     lastClickId.clear();
-    sendMouse(runtime, skui::EventType::MouseMove, 1254.F, 26.F);
-    sendMouse(runtime, skui::EventType::MouseDown, 1254.F, 26.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 1254.F, 26.F);
+    sendMouse(runtime, skui::EventType::MouseMove, 1214.F, 26.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 1214.F, 26.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 1214.F, 26.F);
     if (!postprocess_test::Require(lastClickId == "open-export-page" &&
                                        activePage == "export" && navigationSucceeded,
                                    "导出按钮的可见文字区域无法打开配置页，MouseDown：" +
@@ -827,21 +849,32 @@ bool runTest()
     }
     navigationSucceeded = false;
 
-    if (!postprocess_test::Require(
-            runtime.setVisibleById("preview-page", false) &&
-                runtime.setVisibleById("export-page", true) &&
-                runtime.setVisibleById("task-page", false) &&
-                runtime.setTextById(
-                    "export-config-summary",
-                    "中心 116.39739, 39.90872 · z15 · 半径 2000 米") &&
-                runtime.setValueById("export-lon", "116.397389") &&
-                runtime.setValueById("export-lat", "39.908722") &&
-                runtime.setValueById("export-zoom", "15") &&
-                runtime.setValueById("export-output", "") &&
-                runtime.setAttributeById("export-gis-group-1", "checked", "") &&
-                runtime.setAttributeById("export-gis-group-2", "checked", "") &&
-                runtime.removeAttributeById("export-gis-group-3", "checked"),
-            "无法显示或填充导出配置页面"))
+    if (!postprocess_test::Require(runtime.setVisibleById("preview-page", false),
+                                   "无法隐藏预览页面") ||
+        !postprocess_test::Require(runtime.setVisibleById("export-page", true),
+                                   "无法显示导出配置页面") ||
+        !postprocess_test::Require(runtime.setVisibleById("task-page", false),
+                                   "无法隐藏导出任务页面") ||
+        !postprocess_test::Require(
+            runtime.setTextById("export-config-summary",
+                                "中心 116.39739, 39.90872 · z15 · 半径 2000 米"),
+            "无法填充导出配置摘要") ||
+        !postprocess_test::Require(runtime.setValueById("export-lon", "116.397389"),
+                                   "无法填充导出中心经度") ||
+        !postprocess_test::Require(runtime.setValueById("export-lat", "39.908722"),
+                                   "无法填充导出中心纬度") ||
+        !postprocess_test::Require(runtime.setValueById("export-zoom", "15"),
+                                   "无法填充导出缩放级别") ||
+        !postprocess_test::Require(runtime.setValueById("export-output", ""),
+                                   "无法清空导出目录") ||
+        !postprocess_test::Require(runtime.setAttributeById("export-gis-group-1", "checked", ""),
+                                   "无法勾选导出 GIS 道路项") ||
+        !postprocess_test::Require(runtime.setAttributeById("export-gis-group-2", "checked", ""),
+                                   "无法勾选导出 GIS 建筑项") ||
+        !postprocess_test::Require(runtime.setAttributeById("export-gis-group-3", "checked", ""),
+                                   "无法预置导出 GIS 水系项") ||
+        !postprocess_test::Require(runtime.removeAttributeById("export-gis-group-3", "checked"),
+                                   "无法取消导出 GIS 水系项"))
     {
         return false;
     }

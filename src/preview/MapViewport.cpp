@@ -131,13 +131,22 @@ std::vector<DomDownToolPreview::VisibleTile> DomDownToolPreview::MapViewport::vi
     const int64_t lastColumn = static_cast<int64_t>(std::floor(worldRight / tileExtent)) + margin;
     const int64_t firstRow = static_cast<int64_t>(std::floor(worldTop / tileExtent)) - margin;
     const int64_t lastRow = static_cast<int64_t>(std::floor(worldBottom / tileExtent)) + margin;
-    const int64_t tileCount = int64_t{1} << integerZoom;
+    uint32_t matrixColumnCount = 0;
+    uint32_t matrixRowCount = 0;
+    if (!projection.TryGetSourceTileMatrixSize(integerZoom, matrixColumnCount,
+                                               matrixRowCount) ||
+        matrixColumnCount == 0 || matrixRowCount == 0)
+    {
+        return result;
+    }
+    const int64_t columnCount = matrixColumnCount;
+    const int64_t rowCount = matrixRowCount;
 
     result.reserve(static_cast<size_t>(std::max<int64_t>(0, lastColumn - firstColumn + 1) *
                                        std::max<int64_t>(0, lastRow - firstRow + 1)));
     for (int64_t row = firstRow; row <= lastRow; row++)
     {
-        if (yDirection == TileYAxisDirection::Down && (row < 0 || row >= tileCount))
+        if (yDirection == TileYAxisDirection::Down && (row < 0 || row >= rowCount))
         {
             continue;
         }
@@ -145,7 +154,7 @@ std::vector<DomDownToolPreview::VisibleTile> DomDownToolPreview::MapViewport::vi
         for (int64_t column = firstColumn; column <= lastColumn; column++)
         {
             const int64_t cacheX =
-                yDirection == TileYAxisDirection::Down ? normalizeTileX(column, tileCount) : column;
+                yDirection == TileYAxisDirection::Down ? normalizeTileX(column, columnCount) : column;
             const int64_t cacheY = yDirection == TileYAxisDirection::Down ? row : -row - 1;
             if (cacheX < std::numeric_limits<int32_t>::min() ||
                 cacheX > std::numeric_limits<int32_t>::max() ||

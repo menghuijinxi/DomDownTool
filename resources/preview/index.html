@@ -112,6 +112,73 @@
             width: 160px;
         }
 
+        .multidate-panel {
+            position: absolute;
+            top: 64px;
+            left: 292px;
+            z-index: 24;
+            display: flex;
+            align-items: center;
+            align-content: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            width: fit-content;
+            max-width: calc(100% - 304px);
+            min-height: 42px;
+            height: auto;
+            padding: 5px 8px;
+            border: 1px solid #3b4744;
+            border-radius: 5px;
+            background: rgba(24, 29, 28, 0.94);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+            color: #d7ddda;
+        }
+
+        .multidate-panel button {
+            flex: 0 0 auto;
+            width: auto;
+            min-width: 54px;
+            height: 30px;
+            padding: 0 10px;
+            border: 1px solid #40524d;
+            border-radius: 4px;
+            background: #202928;
+            color: #e9f1ee;
+            font: inherit;
+            white-space: nowrap;
+        }
+
+        #tianditu-multidate-refresh {
+            min-width: 78px;
+        }
+
+        .multidate-panel button:hover {
+            border-color: #5b746d;
+            background: #263431;
+        }
+
+        .multidate-panel button:disabled,
+        .multidate-panel select:disabled {
+            opacity: 0.55;
+        }
+
+        #tianditu-multidate-year {
+            flex: 0 1 240px;
+            width: 240px;
+            min-width: 176px;
+            height: 30px;
+        }
+
+        #tianditu-multidate-status {
+            flex: 0 1 auto;
+            min-width: 0;
+            max-width: 360px;
+            overflow: hidden;
+            color: #aeb9b4;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         .gis-field {
             flex: 0 0 171px;
             width: 171px;
@@ -1272,7 +1339,7 @@
 
         .param-row {
             display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
             column-gap: 44px;
             row-gap: 18px;
             min-width: 0;
@@ -1663,6 +1730,11 @@
         }
 
         @media (max-width: 1100px) {
+            .multidate-panel {
+                left: 12px;
+                max-width: calc(100% - 24px);
+            }
+
             .page-header-spacer {
                 display: none;
             }
@@ -1736,6 +1808,7 @@
                     <option value="gaode.roads">高德透明路网</option>
                     <option value="tencent.satellite">腾讯卫星</option>
                     <option value="tianditu.satellite">天地图影像</option>
+                    <option value="tianditu.multidate">天地图多时相</option>
                     <option value="baidu.satellite">百度卫星</option>
                     <option value="google.satellite">Google 卫星</option>
                     <option value="bing.satellite">Bing 卫星</option>
@@ -1782,6 +1855,17 @@
                     aria-label="重新读取缓存">&#x21bb;</button>
             <div class="toolbar-spacer"></div>
         </header>
+
+        <section id="tianditu-multidate-panel" class="multidate-panel" style="display: none">
+            <button id="tianditu-multidate-login" type="button"
+                    data-action="login-tianditu-multidate">登录</button>
+            <button id="tianditu-multidate-refresh" type="button"
+                    data-action="refresh-tianditu-multidate" disabled>刷新年份</button>
+            <select id="tianditu-multidate-year" aria-label="天地图多时相年份" disabled>
+                <option value="latest">最新影像</option>
+            </select>
+            <span id="tianditu-multidate-status">默认显示最新影像；历史时相需要登录后刷新。</span>
+        </section>
 
         <div id="gis-overlay-panel" class="gis-overlay-panel" style="display: none">
             <label class="gis-overlay-option quick-option" for="gis-overlay-none">
