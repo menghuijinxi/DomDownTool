@@ -272,6 +272,8 @@ class PreviewController
     std::string tianDiTuMultidateRegionName_;
     std::string tianDiTuMultidateSelectedValue_ = "latest";
     std::string tianDiTuMultidateStatus_ = "默认显示最新影像；历史时相需要登录后刷新。";
+    bool tianDiTuMultidateYearPickerActive_ = false;
+    std::chrono::steady_clock::time_point tianDiTuMultidateYearPickerReleaseAt_{};
     std::mutex tianDiTuMultidateTileFetchMutex_;
     std::optional<bool> lastTianDiTuMultidatePanelVisible_;
     std::string lastTianDiTuMultidateSelectHtml_;

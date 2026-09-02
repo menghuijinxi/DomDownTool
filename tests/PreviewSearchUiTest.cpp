@@ -101,7 +101,11 @@ bool runTest()
                     controllerPath,
                     "lastTianDiTuMultidateSelectedValue_.clear();") &&
                 postprocess_test::ContainsText(
-                    controllerPath, "RefreshTianDiTuMultidateAfterViewChange"),
+                    controllerPath, "RefreshTianDiTuMultidateAfterViewChange") &&
+                postprocess_test::ContainsText(
+                    controllerPath, "tianDiTuMultidateYearPickerActive_") &&
+                postprocess_test::ContainsText(
+                    controllerPath, "!tianDiTuMultidateYearPickerActive_"),
             "天地图多时相年份下拉框不应在普通 UI 刷新时反复重建"))
     {
         return false;
@@ -109,6 +113,9 @@ bool runTest()
     if (!postprocess_test::Require(
             postprocess_test::ContainsText(documentPath, ".param-row") &&
                 postprocess_test::ContainsText(
+                    documentPath,
+                    "grid-template-columns: repeat(3, minmax(0, 1fr))") &&
+                !postprocess_test::ContainsText(
                     documentPath,
                     "grid-template-columns: repeat(auto-fit, minmax(250px, 1fr))") &&
                 postprocess_test::ContainsText(

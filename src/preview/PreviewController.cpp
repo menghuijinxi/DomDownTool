@@ -54,6 +54,7 @@ constexpr UINT_PTR kPreviewFbxFrameTimerId = 0x64C;
 constexpr UINT kPreviewEyedropperTimerIntervalMilliseconds = 16;
 constexpr UINT kPreviewFbxKeyboardPanFrameIntervalMilliseconds = 4;
 constexpr UINT kPreviewFbxFrameTimerIntervalMilliseconds = 16;
+constexpr auto kTianDiTuMultidateYearPickerHold = std::chrono::seconds(20);
 constexpr auto kFbxFrameRateUpdateInterval = std::chrono::milliseconds(500);
 constexpr auto kFbxFrameRateIdleResetInterval = std::chrono::seconds(1);
 constexpr double kSearchControlLeft = 192.;
@@ -1544,6 +1545,24 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 return;
             }
 
+            if (event.id == "tianditu-multidate-year" &&
+                (event.type == skui::ElementEventType::MouseDown ||
+                 event.type == skui::ElementEventType::Scroll ||
+                 event.type == skui::ElementEventType::MouseWheel))
+            {
+                tianDiTuMultidateYearPickerActive_ = true;
+                tianDiTuMultidateYearPickerReleaseAt_ =
+                    std::chrono::steady_clock::now() + kTianDiTuMultidateYearPickerHold;
+            }
+            else if (tianDiTuMultidateYearPickerActive_ &&
+                     event.id != "tianditu-multidate-year" &&
+                     (event.type == skui::ElementEventType::MouseDown ||
+                      event.type == skui::ElementEventType::Change ||
+                      event.type == skui::ElementEventType::KeyDown))
+            {
+                tianDiTuMultidateYearPickerActive_ = false;
+            }
+
             if (event.type == skui::ElementEventType::Input)
             {
                 if (event.id == "center-coordinate")
@@ -1611,6 +1630,7 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             {
                 if (event.id == "tianditu-multidate-year")
                 {
+                    tianDiTuMultidateYearPickerActive_ = false;
                     SelectTianDiTuMultidateTimeline(runtime, event.value);
                     return;
                 }
@@ -3557,33 +3577,42 @@ void DomDownToolPreview::PreviewController::UpdateTianDiTuMultidateUi(
         return;
     }
 
-    std::string selectHtml =
-        "<select id=\"tianditu-multidate-year\" aria-label=\"天地图多时相年份\">"
-        "<option value=\"latest\">最新影像</option>";
-    for (const DownTool::TianDiTuMultidateDown::TimelineInfo& timeline :
-         tianDiTuMultidateTimelines_)
+    if (tianDiTuMultidateYearPickerActive_ &&
+        std::chrono::steady_clock::now() >= tianDiTuMultidateYearPickerReleaseAt_)
     {
-        const std::string title = timeline.time.empty() ? timeline.year : timeline.time;
-        const std::string zoomText =
-            timeline.minZoom == 0 && timeline.maxZoom == 0
-                ? ""
-                : fmt::format(" z{}-{}", timeline.minZoom, timeline.maxZoom);
-        selectHtml += fmt::format(
-            "<option value=\"{}\">{}{}</option>", escapeHtml(timeline.key),
-            escapeHtml(title), escapeHtml(zoomText));
+        tianDiTuMultidateYearPickerActive_ = false;
     }
-    selectHtml += "</select>";
-    if (selectHtml != lastTianDiTuMultidateSelectHtml_)
+
+    if (!tianDiTuMultidateYearPickerActive_)
     {
-        runtime.replaceHtmlById("tianditu-multidate-year", selectHtml);
-        lastTianDiTuMultidateSelectHtml_ = selectHtml;
-        lastTianDiTuMultidateSelectedValue_.clear();
-        lastTianDiTuMultidateYearDisabled_.reset();
-    }
-    if (tianDiTuMultidateSelectedValue_ != lastTianDiTuMultidateSelectedValue_)
-    {
-        runtime.setValueById("tianditu-multidate-year", tianDiTuMultidateSelectedValue_);
-        lastTianDiTuMultidateSelectedValue_ = tianDiTuMultidateSelectedValue_;
+        std::string selectHtml =
+            "<select id=\"tianditu-multidate-year\" aria-label=\"天地图多时相年份\">"
+            "<option value=\"latest\">最新影像</option>";
+        for (const DownTool::TianDiTuMultidateDown::TimelineInfo& timeline :
+             tianDiTuMultidateTimelines_)
+        {
+            const std::string title = timeline.time.empty() ? timeline.year : timeline.time;
+            const std::string zoomText =
+                timeline.minZoom == 0 && timeline.maxZoom == 0
+                    ? ""
+                    : fmt::format(" z{}-{}", timeline.minZoom, timeline.maxZoom);
+            selectHtml += fmt::format(
+                "<option value=\"{}\">{}{}</option>", escapeHtml(timeline.key),
+                escapeHtml(title), escapeHtml(zoomText));
+        }
+        selectHtml += "</select>";
+        if (selectHtml != lastTianDiTuMultidateSelectHtml_)
+        {
+            runtime.replaceHtmlById("tianditu-multidate-year", selectHtml);
+            lastTianDiTuMultidateSelectHtml_ = selectHtml;
+            lastTianDiTuMultidateSelectedValue_.clear();
+            lastTianDiTuMultidateYearDisabled_.reset();
+        }
+        if (tianDiTuMultidateSelectedValue_ != lastTianDiTuMultidateSelectedValue_)
+        {
+            runtime.setValueById("tianditu-multidate-year", tianDiTuMultidateSelectedValue_);
+            lastTianDiTuMultidateSelectedValue_ = tianDiTuMultidateSelectedValue_;
+        }
     }
     if (tianDiTuMultidateStatus_ != lastTianDiTuMultidateStatus_)
     {
@@ -3599,8 +3628,9 @@ void DomDownToolPreview::PreviewController::UpdateTianDiTuMultidateUi(
         lastTianDiTuMultidateRefreshDisabled_ = refreshDisabled;
     }
     const bool yearDisabled = tianDiTuMultidateTimelines_.empty();
-    if (!lastTianDiTuMultidateYearDisabled_.has_value() ||
-        *lastTianDiTuMultidateYearDisabled_ != yearDisabled)
+    if (!tianDiTuMultidateYearPickerActive_ &&
+        (!lastTianDiTuMultidateYearDisabled_.has_value() ||
+         *lastTianDiTuMultidateYearDisabled_ != yearDisabled))
     {
         setControlDisabled(runtime, "tianditu-multidate-year", yearDisabled);
         lastTianDiTuMultidateYearDisabled_ = yearDisabled;
