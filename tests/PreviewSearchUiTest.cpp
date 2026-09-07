@@ -36,6 +36,8 @@ bool runTest()
         sourceRoot / "resources" / "preview" / "index.html";
     const std::filesystem::path controllerPath =
         sourceRoot / "src" / "preview" / "PreviewController.cpp";
+    const std::filesystem::path mapRendererPath =
+        sourceRoot / "src" / "preview" / "MapRenderer.cpp";
     skui::RuntimeOptions options;
     options.assetRoot = documentPath.parent_path().generic_string();
     skui::Runtime runtime(std::move(options));
@@ -91,6 +93,17 @@ bool runTest()
                 postprocess_test::ContainsText(documentPath,
                                                "历史时相需要登录后刷新"),
             "预览页缺少天地图多时相入口或登录刷新控件"))
+    {
+        return false;
+    }
+    if (!postprocess_test::Require(
+            postprocess_test::ContainsText(
+                mapRendererPath,
+                "std::move(multidateProjection), TileYAxisDirection::Down, 1., 18.)") &&
+                !postprocess_test::ContainsText(
+                    mapRendererPath,
+                    "std::move(multidateProjection), TileYAxisDirection::Down, 17., 18.)"),
+            "天地图多时相预览不应把卫星缩放层级限制到 17 以上"))
     {
         return false;
     }

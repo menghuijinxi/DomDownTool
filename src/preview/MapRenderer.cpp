@@ -135,7 +135,7 @@ DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw
     tianDiTuMultidateLatestProjection_->SetTileSize(kTileSize);
     tianDiTuMultidateLatestProjection_->SetCachePath(pathToUtf8(multidateCacheRoot("latest")));
     addSource("tianditu.multidate", "天地图多时相", "CGCS2000 / EPSG:4326",
-              std::move(multidateProjection), TileYAxisDirection::Down, 17., 18.);
+              std::move(multidateProjection), TileYAxisDirection::Down, 1., 18.);
     addSource("baidu.satellite", "百度卫星", "BD09 / Baidu",
               std::make_unique<DownTool::BaiduDown>(), TileYAxisDirection::Up, 3., 19.);
     addSource("google.satellite", "Google 卫星", "WGS84 / XYZ",
