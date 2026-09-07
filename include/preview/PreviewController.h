@@ -205,6 +205,14 @@ class PreviewController
 
     void updateMapInteractionUi(skui::Runtime& runtime);
 
+    void updateTileDebugCursor(HWND window, const POINT& point);
+
+    void ToggleTileDebug(skui::Runtime& runtime);
+
+    [[nodiscard]] std::string BuildTileDebugHtml() const;
+
+    [[nodiscard]] bool UpdateTileDebugUi(skui::Runtime& runtime);
+
     void applyFbxInteractionSettings(FbxPreviewInteractionSettings settings);
 
     bool updateFbxInteractionSetting(skui::Runtime& runtime, std::string_view id,
@@ -294,6 +302,7 @@ class PreviewController
     bool gisColorFieldDragging_ = false;
     bool gisColorHueDragging_ = false;
     bool gisColorEyedropperActive_ = false;
+    bool tileDebugEnabled_ = false;
     bool taskClearConfirmOpen_ = false;
     std::optional<ExportConfiguration> pendingExportConfiguration_;
     std::optional<std::string> taskDeleteTargetId_;
@@ -303,6 +312,7 @@ class PreviewController
     std::array<std::string, 9> lastUiGisColorValues_{};
     std::string lastUiGisPickerState_;
     std::string lastUiTileStats_;
+    std::string lastUiTileDebugHtml_;
     std::string lastCenterCoordinate_;
     std::string lastZoomValue_;
     FbxPreviewInteractionSettings fbxInteractionSettings_;
@@ -326,10 +336,14 @@ class PreviewController
     HWND fbxInputMethodWindow_ = nullptr;
     HIMC fbxInputMethodContext_ = nullptr;
     bool mapUiRefreshPosted_ = false;
+    std::optional<POINT> tileDebugCursor_;
+    std::optional<bool> lastUiTileDebugVisible_;
+    std::optional<bool> lastUiTileDebugPressed_;
     mutable std::atomic_bool fbxRedrawPosted_ = false;
     MapHoverRefreshThrottle mapDragRedrawThrottle_{std::chrono::milliseconds(4)};
     MapHoverRefreshThrottle fbxDragRedrawThrottle_{std::chrono::milliseconds(4)};
     MapHoverRefreshThrottle mapCenterUiRefreshThrottle_{std::chrono::milliseconds(50)};
+    MapHoverRefreshThrottle tileDebugUiRefreshThrottle_{std::chrono::milliseconds(80)};
     std::atomic_bool exportTaskRefreshPosted_ = false;
     // 必须先于任务状态回调所访问的成员析构。
     ExportTaskManager exportTaskManager_;

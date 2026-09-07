@@ -34,8 +34,31 @@ struct MapRenderStats
 {
     size_t visibleTiles = 0;
     size_t readyTiles = 0;
+    size_t multidateBaseVisibleTiles = 0;
+    size_t multidateBaseReadyTiles = 0;
+    size_t multidateHistoryVisibleTiles = 0;
+    size_t multidateHistoryReadyTiles = 0;
+    size_t multidateHistoryEmptyTiles = 0;
     TileCacheStats cache;
     TileDownloadStats downloads;
+};
+
+struct MapTileDebugLayer
+{
+    std::string layerName;
+    DownTool::Tile tile;
+    std::filesystem::path cachePath;
+    std::string requestUrl;
+    std::string stateText;
+    size_t fileBytes = 0;
+    int imageWidth = 0;
+    int imageHeight = 0;
+};
+
+struct MapTileDebugInfo
+{
+    DownTool::LonLat coordinate;
+    std::vector<MapTileDebugLayer> layers;
 };
 
 struct ExportGeoBounds
@@ -136,6 +159,16 @@ class MapRenderer
 
     [[nodiscard]] MapRenderStats stats() const;
 
+    void SetTileDebugEnabled(bool enabled);
+
+    [[nodiscard]] bool GetTileDebugEnabled() const
+    {
+        return tileDebugEnabled_;
+    }
+
+    [[nodiscard]] std::optional<MapTileDebugInfo> TileDebugAt(double screenX,
+                                                              double screenY) const;
+
     void clearCache();
 
     [[nodiscard]] double toolbarHeight() const
@@ -156,11 +189,21 @@ class MapRenderer
         std::unique_ptr<DownTool::DownToolBase> projection;
     };
 
+    struct TileDebugEntry
+    {
+        double left = 0.;
+        double top = 0.;
+        double size = 0.;
+        MapTileDebugLayer layer;
+    };
+
     [[nodiscard]] MapSource& currentSource();
 
     [[nodiscard]] const MapSource& currentSource() const;
 
     void drawMissingTile(SkCanvas& canvas, const VisibleTile& tile) const;
+
+    void drawTileDebugOverlay(SkCanvas& canvas) const;
 
     void drawCenterMarker(SkCanvas& canvas, int width, int height) const;
 
@@ -177,9 +220,11 @@ class MapRenderer
     TileDownloadQueue downloadQueue_;
     GisOverlayRenderer gisOverlay_;
     MapRenderStats renderStats_;
+    std::vector<TileDebugEntry> tileDebugEntries_;
     std::optional<DownTool::LonLat> locationMarkerWgs84_;
     double exportRadiusMeters_ = 0.;
     double toolbarHeight_ = 52.;
     double statusBarHeight_ = 28.;
+    bool tileDebugEnabled_ = false;
 };
 } // namespace DomDownToolPreview

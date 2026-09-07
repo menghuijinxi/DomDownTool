@@ -452,6 +452,27 @@
             background: #343a38;
         }
 
+        #tile-debug-toggle {
+            width: auto;
+            min-width: 48px;
+            height: 34px;
+            padding: 0 10px;
+            border: 1px solid #454B48;
+            border-radius: 4px;
+            background: #252729;
+            color: #c9cfcc;
+            font-size: 14px;
+            line-height: 1;
+            white-space: nowrap;
+        }
+
+        #tile-debug-toggle:hover,
+        #tile-debug-toggle[aria-pressed="true"] {
+            border-color: #2EA694;
+            background: #1f3f3c;
+            color: #ffffff;
+        }
+
         #gis-color-toggle {
             display: flex;
             align-items: center;
@@ -869,6 +890,89 @@
             color: #e8ecea;
             font-weight: 400;
             font-variant-numeric: tabular-nums;
+        }
+
+        .tile-debug-panel {
+            position: absolute;
+            left: 12px;
+            bottom: 48px;
+            z-index: 26;
+            width: min(760px, calc(100% - 24px));
+            max-height: 260px;
+            padding: 9px 10px;
+            overflow: hidden;
+            border: 1px solid #3c514d;
+            border-radius: 5px;
+            background: rgba(20, 25, 24, 0.94);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+            color: #d8e0dc;
+            font-size: 12px;
+            pointer-events: none;
+        }
+
+        .tile-debug-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 7px;
+            color: #f0f4f2;
+            font-weight: 650;
+        }
+
+        .tile-debug-title b {
+            color: #9bd8cf;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .tile-debug-empty {
+            color: #a8b3af;
+        }
+
+        .tile-debug-layer {
+            display: grid;
+            gap: 4px;
+            padding-top: 7px;
+            border-top: 1px solid rgba(117, 135, 129, 0.3);
+        }
+
+        .tile-debug-layer + .tile-debug-layer {
+            margin-top: 8px;
+        }
+
+        .tile-debug-layer-head {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .tile-debug-layer-head strong {
+            min-width: 56px;
+            color: #ffffff;
+        }
+
+        .tile-debug-layer-head span {
+            color: #e4ece8;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .tile-debug-layer-head em {
+            color: #82d7c8;
+            font-style: normal;
+        }
+
+        .tile-debug-path,
+        .tile-debug-url {
+            overflow: hidden;
+            color: #a9b4b0;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .tile-debug-url {
+            color: #879793;
+            font-family: Consolas, "Cascadia Mono", monospace;
         }
 
         button {
@@ -1853,6 +1957,8 @@
                     data-action="open-export-tasks">任务</button>
             <button id="reload-tiles" type="button" data-action="reload-tiles" title="重新读取缓存"
                     aria-label="重新读取缓存">&#x21bb;</button>
+            <button id="tile-debug-toggle" type="button" data-action="toggle-tile-debug"
+                    aria-pressed="false" title="显示鼠标所在瓦块请求">诊断</button>
             <div class="toolbar-spacer"></div>
         </header>
 
@@ -2048,6 +2154,13 @@
                 <span id="coordinate-system">GCJ02 / XYZ</span>
             </div>
             <div class="map-crosshair" aria-hidden="true"></div>
+        </section>
+
+        <section id="tile-debug-panel" class="tile-debug-panel" style="display: none">
+            <div id="tile-debug-content">
+                <div class="tile-debug-title">瓦片诊断</div>
+                <div class="tile-debug-empty">在地图上移动鼠标，查看该位置实际请求的瓦块。</div>
+            </div>
         </section>
 
         <footer id="preview-statusbar" class="statusbar">

@@ -91,8 +91,14 @@ bool runTest()
                 postprocess_test::ContainsText(documentPath,
                                                "style=\"display: none\"") &&
                 postprocess_test::ContainsText(documentPath,
-                                               "历史时相需要登录后刷新"),
-            "预览页缺少天地图多时相入口或登录刷新控件"))
+                                               "历史时相需要登录后刷新") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "id=\"tile-debug-toggle\"") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "id=\"tile-debug-panel\"") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "id=\"tile-debug-content\""),
+            "预览页缺少天地图多时相入口、登录刷新控件或瓦片诊断控件"))
     {
         return false;
     }
@@ -118,8 +124,19 @@ bool runTest()
                 postprocess_test::ContainsText(
                     controllerPath, "tianDiTuMultidateYearPickerActive_") &&
                 postprocess_test::ContainsText(
-                    controllerPath, "!tianDiTuMultidateYearPickerActive_"),
-            "天地图多时相年份下拉框不应在普通 UI 刷新时反复重建"))
+                    controllerPath, "!tianDiTuMultidateYearPickerActive_") &&
+                postprocess_test::ContainsText(controllerPath, "multidateLayerStatusText") &&
+                postprocess_test::ContainsText(controllerPath, "历史叠加") &&
+                postprocess_test::ContainsText(controllerPath, "BuildTileDebugHtml") &&
+                postprocess_test::ContainsText(controllerPath, "TileDebugAt") &&
+                postprocess_test::ContainsText(mapRendererPath,
+                                               "multidateHistoryEmptyTiles") &&
+                postprocess_test::ContainsText(mapRendererPath, "服务端空白占位") &&
+                postprocess_test::ContainsText(mapRendererPath, "最新底图") &&
+                postprocess_test::ContainsText(mapRendererPath, "drawTileDebugOverlay") &&
+                postprocess_test::ContainsText(mapRendererPath, "drawString") &&
+                postprocess_test::ContainsText(mapRendererPath, " empty"),
+            "天地图多时相年份下拉框、历史叠加状态和瓦片诊断网格不应丢失"))
     {
         return false;
     }
@@ -156,6 +173,22 @@ bool runTest()
                 runtime.setValueById("export-config-radius", "2000") &&
                 runtime.setValueById("export-terrain-sample-rate", "30"),
             "预览页或导出配置页缺少半径输入"))
+    {
+        return false;
+    }
+    if (!postprocess_test::Require(
+            runtime.setVisibleById("tile-debug-panel", true) &&
+                runtime.setAttributeById("tile-debug-toggle", "aria-pressed", "true") &&
+                runtime.replaceHtmlById(
+                    "tile-debug-content",
+                    "<div id=\"tile-debug-content\"><div class=\"tile-debug-title\">"
+                    "瓦片诊断</div><div class=\"tile-debug-layer\">"
+                    "<div class=\"tile-debug-layer-head\"><strong>历史叠加</strong>"
+                    "<span>x=107941 y=18261 z=17</span><em>已显示</em></div>"
+                    "<div class=\"tile-debug-path\">缓存：cache/天地图多时相/2024"
+                    "</div><div class=\"tile-debug-url\">请求：https://image.tianditu.gov.cn"
+                    "</div></div></div>"),
+            "瓦片诊断面板缺少可更新的显示区域或开关状态"))
     {
         return false;
     }

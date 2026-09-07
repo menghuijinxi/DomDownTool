@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <utility>
 
@@ -17,11 +18,16 @@
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
+#include "include/core/SkFont.h"
+#include "include/core/SkFontMgr.h"
+#include "include/core/SkFontStyle.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkPathBuilder.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkSamplingOptions.h"
+#include "include/core/SkTypeface.h"
+#include "include/ports/SkTypeface_win.h"
 
 namespace
 {
@@ -64,6 +70,133 @@ std::filesystem::path multidateCacheRoot(std::string layerName)
 {
     return std::filesystem::u8path("cache/天地图多时相") /
         std::filesystem::u8path(sanitizeCacheLayerName(std::move(layerName)));
+}
+
+size_t regularFileSize(const std::filesystem::path& path)
+{
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error) || error)
+    {
+        return 0;
+    }
+
+    const uintmax_t fileSize = std::filesystem::file_size(path, error);
+    if (error)
+    {
+        return 0;
+    }
+    const uintmax_t maximumSize = static_cast<uintmax_t>(
+        std::numeric_limits<size_t>::max());
+    return static_cast<size_t>(std::min(fileSize, maximumSize));
+}
+
+bool isHistoryDebugLayer(const DomDownToolPreview::MapTileDebugLayer& layer)
+{
+    return layer.layerName == "历史叠加";
+}
+
+bool isBaseDebugLayer(const DomDownToolPreview::MapTileDebugLayer& layer)
+{
+    return layer.layerName == "最新底图";
+}
+
+bool isEmptyDebugTile(const DomDownToolPreview::MapTileDebugLayer& layer)
+{
+    return layer.stateText == "服务端空白占位";
+}
+
+bool isReadyDebugTile(const DomDownToolPreview::MapTileDebugLayer& layer)
+{
+    return layer.stateText == "已显示";
+}
+
+bool isFailedDebugTile(const DomDownToolPreview::MapTileDebugLayer& layer)
+{
+    return layer.stateText.find("失败") != std::string::npos;
+}
+
+std::string debugTileLabel(const DomDownToolPreview::MapTileDebugLayer& layer)
+{
+    std::string label = std::to_string(layer.tile.X) + "," + std::to_string(layer.tile.Y);
+    if (isEmptyDebugTile(layer))
+    {
+        label += " empty";
+    }
+    else if (isFailedDebugTile(layer))
+    {
+        label += " failed";
+    }
+    else if (!isReadyDebugTile(layer))
+    {
+        label += " loading";
+    }
+    return label;
+}
+
+SkColor debugTileFillColor(const DomDownToolPreview::MapTileDebugLayer& layer)
+{
+    if (isEmptyDebugTile(layer))
+    {
+        return SkColorSetARGB(132, 87, 24, 22);
+    }
+    if (isFailedDebugTile(layer))
+    {
+        return SkColorSetARGB(104, 128, 28, 28);
+    }
+    if (!isReadyDebugTile(layer))
+    {
+        return SkColorSetARGB(72, 238, 178, 59);
+    }
+    return SK_ColorTRANSPARENT;
+}
+
+SkColor debugTileStrokeColor(const DomDownToolPreview::MapTileDebugLayer& layer)
+{
+    if (isEmptyDebugTile(layer))
+    {
+        return SkColorSetARGB(235, 255, 108, 92);
+    }
+    if (isFailedDebugTile(layer))
+    {
+        return SkColorSetARGB(235, 255, 80, 80);
+    }
+    if (!isReadyDebugTile(layer))
+    {
+        return SkColorSetARGB(235, 255, 194, 82);
+    }
+    if (isHistoryDebugLayer(layer))
+    {
+        return SkColorSetARGB(210, 235, 248, 243);
+    }
+    return SkColorSetARGB(190, 129, 226, 211);
+}
+
+sk_sp<SkTypeface> tileDebugTypeface()
+{
+    static const sk_sp<SkTypeface> typeface = []() -> sk_sp<SkTypeface>
+    {
+        sk_sp<SkFontMgr> fontManager = SkFontMgr_New_GDI();
+        if (!fontManager)
+        {
+            return nullptr;
+        }
+
+        const char* fontPaths[] = {
+            "C:/Windows/Fonts/msyh.ttc",
+            "C:/Windows/Fonts/simhei.ttf",
+            "C:/Windows/Fonts/arial.ttf"};
+        for (const char* fontPath : fontPaths)
+        {
+            sk_sp<SkTypeface> typefaceFromFile = fontManager->makeFromFile(fontPath);
+            if (typefaceFromFile)
+            {
+                return typefaceFromFile;
+            }
+        }
+
+        return fontManager->matchFamilyStyle("Arial", SkFontStyle());
+    }();
+    return typeface;
 }
 } // namespace
 
@@ -172,8 +305,11 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
     canvas.drawRect(mapBounds, backgroundPaint);
 
     MapSource& source = currentSource();
-    renderStats_.visibleTiles = 0;
-    renderStats_.readyTiles = 0;
+    renderStats_ = MapRenderStats{};
+    if (tileDebugEnabled_)
+    {
+        tileDebugEntries_.clear();
+    }
     std::vector<TileDownloadJob> downloadJobs;
     const double mapCenterX = static_cast<double>(width) * 0.5;
     const double mapContentHeight =
@@ -185,8 +321,11 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
     {
         size_t visibleTiles = 0;
         size_t readyTiles = 0;
+        size_t emptyTiles = 0;
     };
-    auto drawTileLayer = [&](DownTool::DownToolBase& projection, TileYAxisDirection yDirection,
+    auto drawTileLayer = [&](std::string_view layerName,
+                             DownTool::DownToolBase& projection,
+                             TileYAxisDirection yDirection,
                              const std::filesystem::path& cacheRoot,
                              bool drawMissingTiles,
                              const TileDownloader* customDownloader = nullptr) -> TileLayerResult
@@ -196,6 +335,28 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
         downloadJobs.reserve(downloadJobs.size() + visibleTiles.size());
         TileLayerResult result;
         result.visibleTiles = visibleTiles.size();
+        const auto rememberTileDebug =
+            [&](const VisibleTile& visibleTile, const std::filesystem::path& tilePath,
+                std::string stateText, int imageWidth, int imageHeight)
+        {
+            if (!tileDebugEnabled_)
+            {
+                return;
+            }
+
+            MapTileDebugLayer layer;
+            layer.layerName = std::string(layerName);
+            layer.tile = visibleTile.cacheTile;
+            layer.cachePath = tilePath;
+            layer.requestUrl = projection.BuildTileHttpRequest(visibleTile.cacheTile).url;
+            layer.stateText = std::move(stateText);
+            layer.fileBytes = regularFileSize(tilePath);
+            layer.imageWidth = imageWidth;
+            layer.imageHeight = imageHeight;
+            tileDebugEntries_.push_back(
+                TileDebugEntry{visibleTile.left, visibleTile.top, visibleTile.size,
+                               std::move(layer)});
+        };
         for (const VisibleTile& visibleTile : visibleTiles)
         {
             const std::filesystem::path tilePath =
@@ -203,7 +364,8 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
             sk_sp<SkImage> image = imageCache_.findOrRequest(tilePath, canvas);
             if (!image)
             {
-                if (imageCache_.isKnownMissing(tilePath))
+                const bool knownMissing = imageCache_.isKnownMissing(tilePath);
+                if (knownMissing)
                 {
                     TileDownloadJob job{
                         tilePath,
@@ -224,6 +386,11 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
                     job.priority = distanceX * distanceX + distanceY * distanceY;
                     downloadJobs.push_back(std::move(job));
                 }
+                const size_t fileBytes = regularFileSize(tilePath);
+                rememberTileDebug(visibleTile, tilePath,
+                                  knownMissing ? "已加入下载队列" :
+                                      fileBytes > 0 ? "正在解码缓存" : "正在检查缓存",
+                                  0, 0);
                 if (drawMissingTiles)
                 {
                     drawMissingTile(canvas, visibleTile);
@@ -233,6 +400,16 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
 
             result.readyTiles++;
             const SkRect sourceRect = SkRect::MakeIWH(image->width(), image->height());
+            const bool transparentPlaceholder = !drawMissingTiles && image->width() == 1 &&
+                image->height() == 1;
+            if (transparentPlaceholder)
+            {
+                result.emptyTiles++;
+                rememberTileDebug(visibleTile, tilePath, "服务端空白占位", image->width(),
+                                  image->height());
+                continue;
+            }
+            rememberTileDebug(visibleTile, tilePath, "已显示", image->width(), image->height());
             const SkRect destinationRect = SkRect::MakeXYWH(
                 static_cast<float>(visibleTile.left), static_cast<float>(visibleTile.top),
                 static_cast<float>(visibleTile.size + 0.5),
@@ -254,18 +431,23 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
         {
             // 官网多时相也是“最新影像底图 + 历史时相覆盖层”。历史瓦片缺失时保留底图。
             const TileLayerResult baseLayer = drawTileLayer(
-                *tianDiTuMultidateLatestProjection_, source.yDirection,
+                "最新底图", *tianDiTuMultidateLatestProjection_, source.yDirection,
                 multidateCacheRoot("latest"), true);
             const TileLayerResult historyLayer = drawTileLayer(
-                *source.projection, source.yDirection, source.summary.cacheRoot, false,
+                "历史叠加", *source.projection, source.yDirection, source.summary.cacheRoot, false,
                 &tianDiTuMultidateTileDownloader_);
             renderStats_.visibleTiles = baseLayer.visibleTiles + historyLayer.visibleTiles;
             renderStats_.readyTiles = baseLayer.readyTiles + historyLayer.readyTiles;
+            renderStats_.multidateBaseVisibleTiles = baseLayer.visibleTiles;
+            renderStats_.multidateBaseReadyTiles = baseLayer.readyTiles;
+            renderStats_.multidateHistoryVisibleTiles = historyLayer.visibleTiles;
+            renderStats_.multidateHistoryReadyTiles = historyLayer.readyTiles;
+            renderStats_.multidateHistoryEmptyTiles = historyLayer.emptyTiles;
         }
         else
         {
             const TileLayerResult layer = drawTileLayer(
-                *source.projection, source.yDirection, source.summary.cacheRoot, true);
+                "瓦片", *source.projection, source.yDirection, source.summary.cacheRoot, true);
             renderStats_.visibleTiles = layer.visibleTiles;
             renderStats_.readyTiles = layer.readyTiles;
         }
@@ -287,6 +469,7 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
     gisOverlay_.UpdateContext(viewport_.center(), radiusMeters, viewport_.sourceZoom());
     gisOverlay_.Draw(canvas, viewport_, *source.projection, source.yDirection, kTileSize);
 
+    drawTileDebugOverlay(canvas);
     drawExportBounds(canvas);
     drawCenterMarker(canvas, width, height);
     drawLocationMarker(canvas, width, height);
@@ -297,15 +480,26 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
 bool DomDownToolPreview::MapRenderer::panBy(double deltaX, double deltaY)
 {
     MapSource& source = currentSource();
-    return viewport_.panBy(deltaX, deltaY, *source.projection, source.yDirection, kTileSize);
+    const bool moved = viewport_.panBy(deltaX, deltaY, *source.projection, source.yDirection,
+                                       kTileSize);
+    if (moved)
+    {
+        tileDebugEntries_.clear();
+    }
+    return moved;
 }
 
 bool DomDownToolPreview::MapRenderer::zoomAt(double screenX, double screenY, double zoomDelta)
 {
     MapSource& source = currentSource();
-    return viewport_.zoomAt(screenX, screenY, zoomDelta, source.summary.minimumZoom,
-                            source.summary.maximumZoom, *source.projection, source.yDirection,
-                            kTileSize);
+    const bool zoomed = viewport_.zoomAt(screenX, screenY, zoomDelta, source.summary.minimumZoom,
+                                        source.summary.maximumZoom, *source.projection,
+                                        source.yDirection, kTileSize);
+    if (zoomed)
+    {
+        tileDebugEntries_.clear();
+    }
+    return zoomed;
 }
 
 bool DomDownToolPreview::MapRenderer::adjustViewSpan(double delta)
@@ -318,6 +512,7 @@ bool DomDownToolPreview::MapRenderer::adjustViewSpan(double delta)
     }
 
     downloadQueue_.cancelPending();
+    tileDebugEntries_.clear();
     return true;
 }
 
@@ -327,6 +522,7 @@ void DomDownToolPreview::MapRenderer::setView(const DownTool::LonLat& centerWgs8
     viewport_.setCenter(centerWgs84);
     viewport_.setZoom(std::clamp(zoom, source.summary.minimumZoom, source.summary.maximumZoom));
     downloadQueue_.cancelPending();
+    tileDebugEntries_.clear();
 }
 
 void DomDownToolPreview::MapRenderer::setLocationMarker(
@@ -356,6 +552,7 @@ bool DomDownToolPreview::MapRenderer::selectSource(std::string_view sourceId)
     downloadQueue_.cancelPending();
     viewport_.setZoom(std::clamp(viewport_.zoom(), sourceIterator->summary.minimumZoom,
                                  sourceIterator->summary.maximumZoom));
+    tileDebugEntries_.clear();
     return true;
 }
 
@@ -380,6 +577,7 @@ bool DomDownToolPreview::MapRenderer::UseLatestTianDiTuMultidate()
     sourceIterator->summary.cacheRoot = multidateCacheRoot("latest");
     projection->SetCachePath(pathToUtf8(sourceIterator->summary.cacheRoot));
     downloadQueue_.cancelPending();
+    tileDebugEntries_.clear();
     return true;
 }
 
@@ -411,6 +609,7 @@ bool DomDownToolPreview::MapRenderer::ConfigureTianDiTuMultidateLayer(
     sourceIterator->summary.cacheRoot = multidateCacheRoot(year.empty() ? key : year);
     projection->SetCachePath(pathToUtf8(sourceIterator->summary.cacheRoot));
     downloadQueue_.cancelPending();
+    tileDebugEntries_.clear();
     return true;
 }
 
@@ -433,6 +632,7 @@ bool DomDownToolPreview::MapRenderer::SetTianDiTuMultidateCookie(const std::stri
 
     projection->SetSessionCookie(cookie);
     downloadQueue_.cancelPending();
+    tileDebugEntries_.clear();
     return true;
 }
 
@@ -441,6 +641,7 @@ void DomDownToolPreview::MapRenderer::SetTianDiTuMultidateTileDownloader(
 {
     tianDiTuMultidateTileDownloader_ = std::move(downloader);
     downloadQueue_.cancelPending();
+    tileDebugEntries_.clear();
 }
 
 std::optional<DomDownToolPreview::ViewportGeoBounds>
@@ -516,11 +717,50 @@ DomDownToolPreview::MapRenderStats DomDownToolPreview::MapRenderer::stats() cons
     return renderStats_;
 }
 
+void DomDownToolPreview::MapRenderer::SetTileDebugEnabled(bool enabled)
+{
+    if (tileDebugEnabled_ == enabled)
+    {
+        return;
+    }
+
+    tileDebugEnabled_ = enabled;
+    tileDebugEntries_.clear();
+}
+
+std::optional<DomDownToolPreview::MapTileDebugInfo>
+DomDownToolPreview::MapRenderer::TileDebugAt(double screenX, double screenY) const
+{
+    if (!tileDebugEnabled_)
+    {
+        return std::nullopt;
+    }
+
+    const std::optional<DownTool::LonLat> coordinate = lonLatAt(screenX, screenY);
+    if (!coordinate.has_value())
+    {
+        return std::nullopt;
+    }
+
+    MapTileDebugInfo result;
+    result.coordinate = *coordinate;
+    for (const TileDebugEntry& entry : tileDebugEntries_)
+    {
+        if (screenX >= entry.left && screenX <= entry.left + entry.size &&
+            screenY >= entry.top && screenY <= entry.top + entry.size)
+        {
+            result.layers.push_back(entry.layer);
+        }
+    }
+    return result;
+}
+
 void DomDownToolPreview::MapRenderer::clearCache()
 {
     downloadQueue_.cancelPending();
     imageCache_.clear();
     gisOverlay_.Clear();
+    tileDebugEntries_.clear();
 }
 
 DomDownToolPreview::MapRenderer::MapSource& DomDownToolPreview::MapRenderer::currentSource()
@@ -552,6 +792,75 @@ void DomDownToolPreview::MapRenderer::drawMissingTile(SkCanvas& canvas,
     canvas.drawRect(SkRect::MakeXYWH(static_cast<float>(tile.left), static_cast<float>(tile.top),
                                      static_cast<float>(tile.size), static_cast<float>(tile.size)),
                     borderPaint);
+}
+
+void DomDownToolPreview::MapRenderer::drawTileDebugOverlay(SkCanvas& canvas) const
+{
+    if (!tileDebugEnabled_ || tileDebugEntries_.empty())
+    {
+        return;
+    }
+
+    const bool hasHistoryLayer = std::any_of(
+        tileDebugEntries_.begin(), tileDebugEntries_.end(),
+        [](const TileDebugEntry& entry) { return isHistoryDebugLayer(entry.layer); });
+
+    SkFont labelFont(tileDebugTypeface(), 12.F);
+    labelFont.setSubpixel(true);
+    SkPaint tileFillPaint;
+    tileFillPaint.setAntiAlias(false);
+    tileFillPaint.setStyle(SkPaint::kFill_Style);
+
+    SkPaint tileStrokePaint;
+    tileStrokePaint.setAntiAlias(false);
+    tileStrokePaint.setStyle(SkPaint::kStroke_Style);
+    tileStrokePaint.setStrokeWidth(1.F);
+
+    SkPaint labelBackgroundPaint;
+    labelBackgroundPaint.setColor(SkColorSetARGB(170, 12, 16, 15));
+    labelBackgroundPaint.setStyle(SkPaint::kFill_Style);
+
+    SkPaint labelTextPaint;
+    labelTextPaint.setAntiAlias(true);
+    labelTextPaint.setColor(SK_ColorWHITE);
+
+    for (const TileDebugEntry& entry : tileDebugEntries_)
+    {
+        if (hasHistoryLayer && isBaseDebugLayer(entry.layer))
+        {
+            continue;
+        }
+
+        const SkRect tileRect = SkRect::MakeXYWH(
+            static_cast<float>(entry.left), static_cast<float>(entry.top),
+            static_cast<float>(entry.size), static_cast<float>(entry.size));
+        const SkColor fillColor = debugTileFillColor(entry.layer);
+        if (SkColorGetA(fillColor) > 0)
+        {
+            tileFillPaint.setColor(fillColor);
+            canvas.drawRect(tileRect, tileFillPaint);
+        }
+
+        tileStrokePaint.setColor(debugTileStrokeColor(entry.layer));
+        canvas.drawRect(tileRect, tileStrokePaint);
+
+        const float labelHeight = std::min(18.F, tileRect.height());
+        if (labelHeight < 10.F || tileRect.width() < 24.F)
+        {
+            continue;
+        }
+
+        const SkRect labelRect = SkRect::MakeXYWH(tileRect.left(), tileRect.top(),
+                                                 tileRect.width(), labelHeight);
+        canvas.drawRect(labelRect, labelBackgroundPaint);
+
+        SkAutoCanvasRestore labelRestore(&canvas, true);
+        canvas.clipRect(tileRect, SkClipOp::kIntersect, false);
+        const std::string label = debugTileLabel(entry.layer);
+        const float baseline = tileRect.top() + std::min(13.F, labelHeight - 3.F);
+        canvas.drawString(label.c_str(), tileRect.left() + 4.F, baseline, labelFont,
+                          labelTextPaint);
+    }
 }
 
 void DomDownToolPreview::MapRenderer::drawCenterMarker(SkCanvas& canvas, int width,

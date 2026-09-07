@@ -434,6 +434,11 @@ bool equalStats(const DomDownToolPreview::MapRenderStats& left,
                 const DomDownToolPreview::MapRenderStats& right)
 {
     return left.visibleTiles == right.visibleTiles && left.readyTiles == right.readyTiles &&
+        left.multidateBaseVisibleTiles == right.multidateBaseVisibleTiles &&
+        left.multidateBaseReadyTiles == right.multidateBaseReadyTiles &&
+        left.multidateHistoryVisibleTiles == right.multidateHistoryVisibleTiles &&
+        left.multidateHistoryReadyTiles == right.multidateHistoryReadyTiles &&
+        left.multidateHistoryEmptyTiles == right.multidateHistoryEmptyTiles &&
         left.cache.residentTiles == right.cache.residentTiles &&
         left.cache.pendingTiles == right.cache.pendingTiles &&
         left.cache.cpuBytes == right.cache.cpuBytes &&
@@ -441,6 +446,35 @@ bool equalStats(const DomDownToolPreview::MapRenderStats& left,
         left.downloads.queuedTiles == right.downloads.queuedTiles &&
         left.downloads.activeTiles == right.downloads.activeTiles &&
         left.downloads.failedTiles == right.downloads.failedTiles;
+}
+
+std::string multidateLayerStatusText(const DomDownToolPreview::MapRenderStats& stats)
+{
+    if (stats.multidateHistoryVisibleTiles == 0)
+    {
+        return {};
+    }
+
+    const size_t historyShown = stats.multidateHistoryReadyTiles > stats.multidateHistoryEmptyTiles
+        ? stats.multidateHistoryReadyTiles - stats.multidateHistoryEmptyTiles
+        : 0;
+    const size_t historyPending = stats.multidateHistoryVisibleTiles > stats.multidateHistoryReadyTiles
+        ? stats.multidateHistoryVisibleTiles - stats.multidateHistoryReadyTiles
+        : 0;
+
+    std::string status = fmt::format(
+        "底图 {}/{}；历史叠加 {}/{}", stats.multidateBaseReadyTiles,
+        stats.multidateBaseVisibleTiles, historyShown, stats.multidateHistoryVisibleTiles);
+    if (stats.multidateHistoryEmptyTiles > 0)
+    {
+        status += fmt::format("，空白 {}", stats.multidateHistoryEmptyTiles);
+    }
+    if (historyPending > 0)
+    {
+        status += fmt::format("，待载入 {}", historyPending);
+    }
+    status += "。";
+    return status;
 }
 
 std::string escapeHtml(std::string_view value)
@@ -483,6 +517,28 @@ std::string responseBodyPreview(std::string_view value)
         }
     }
     return preview;
+}
+
+std::string byteSizeText(size_t bytes)
+{
+    if (bytes >= 1024ULL * 1024ULL)
+    {
+        return fmt::format("{:.1f} MB", static_cast<double>(bytes) / (1024. * 1024.));
+    }
+    if (bytes >= 1024ULL)
+    {
+        return fmt::format("{:.1f} KB", static_cast<double>(bytes) / 1024.);
+    }
+    return fmt::format("{} B", bytes);
+}
+
+std::string imageSizeText(const DomDownToolPreview::MapTileDebugLayer& layer)
+{
+    if (layer.imageWidth <= 0 || layer.imageHeight <= 0)
+    {
+        return "未解码";
+    }
+    return fmt::format("{}x{}", layer.imageWidth, layer.imageHeight);
 }
 
 std::optional<size_t> searchResultIndex(std::string_view id)
@@ -2277,6 +2333,11 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             {
                 renderer_.clearCache();
             }
+            else if (event.id == "tile-debug-toggle")
+            {
+                ToggleTileDebug(runtime);
+                return;
+            }
             else if (event.id == "tianditu-multidate-login")
             {
                 LoginTianDiTuMultidate(runtime);
@@ -2831,6 +2892,11 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         }
     }
 
+    if (message == WM_MOUSEMOVE)
+    {
+        updateTileDebugCursor(window, clientPoint(lParam));
+    }
+
     if (message == WM_CAPTURECHANGED || message == WM_CANCELMODE ||
         message == WM_KILLFOCUS)
     {
@@ -2874,6 +2940,7 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         POINT point{static_cast<LONG>(static_cast<int16_t>(LOWORD(lParam))),
                     static_cast<LONG>(static_cast<int16_t>(HIWORD(lParam)))};
         ScreenToClient(window, &point);
+        updateTileDebugCursor(window, point);
         if (!isMapPoint(window, point.x, point.y))
         {
             return false;
@@ -3614,10 +3681,20 @@ void DomDownToolPreview::PreviewController::UpdateTianDiTuMultidateUi(
             lastTianDiTuMultidateSelectedValue_ = tianDiTuMultidateSelectedValue_;
         }
     }
-    if (tianDiTuMultidateStatus_ != lastTianDiTuMultidateStatus_)
+    std::string statusText = tianDiTuMultidateStatus_;
+    if (tianDiTuMultidateSelectedValue_ != "latest")
     {
-        runtime.setTextById("tianditu-multidate-status", tianDiTuMultidateStatus_);
-        lastTianDiTuMultidateStatus_ = tianDiTuMultidateStatus_;
+        const std::string layerStatus = multidateLayerStatusText(renderer_.stats());
+        if (!layerStatus.empty())
+        {
+            statusText += " ";
+            statusText += layerStatus;
+        }
+    }
+    if (statusText != lastTianDiTuMultidateStatus_)
+    {
+        runtime.setTextById("tianditu-multidate-status", statusText);
+        lastTianDiTuMultidateStatus_ = std::move(statusText);
     }
 
     const bool refreshDisabled = tianDiTuMultidateCookie_.empty();
@@ -3803,6 +3880,7 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
          {"view-span-value", fmt::format("视野 {:.1f}x", renderer_.GetViewSpan())},
          {"cache-path", pathToUtf8(source.cacheRoot)}});
     UpdateTianDiTuMultidateUi(runtime, source);
+    static_cast<void>(UpdateTileDebugUi(runtime));
     const std::string tileStatsState =
         fmt::format("{}:{}:{}:{}:{}:{}:{:.1f}", stats.visibleTiles, stats.readyTiles,
                     stats.cache.pendingTiles, stats.downloads.activeTiles,
@@ -4932,11 +5010,137 @@ void DomDownToolPreview::PreviewController::updateMapInteractionUi(
         lastZoomValue_ = zoomText;
         statusChanged = true;
     }
+    if (UpdateTileDebugUi(runtime))
+    {
+        statusChanged = true;
+    }
 
     if (statusChanged)
     {
         requestRedraw();
     }
+}
+
+void DomDownToolPreview::PreviewController::updateTileDebugCursor(HWND window,
+                                                                  const POINT& point)
+{
+    if (!tileDebugEnabled_)
+    {
+        return;
+    }
+
+    if (!isMapPoint(window, point.x, point.y))
+    {
+        if (tileDebugCursor_.has_value())
+        {
+            tileDebugCursor_.reset();
+            scheduleMapUiRefresh(window);
+        }
+        return;
+    }
+
+    tileDebugCursor_ = point;
+    if (tileDebugUiRefreshThrottle_.shouldRefresh(MapHoverRefreshThrottle::Clock::now()))
+    {
+        scheduleMapUiRefresh(window);
+    }
+}
+
+void DomDownToolPreview::PreviewController::ToggleTileDebug(skui::Runtime& runtime)
+{
+    tileDebugEnabled_ = !tileDebugEnabled_;
+    if (!tileDebugEnabled_)
+    {
+        tileDebugCursor_.reset();
+    }
+    renderer_.SetTileDebugEnabled(tileDebugEnabled_);
+    tileDebugUiRefreshThrottle_.reset();
+    static_cast<void>(UpdateTileDebugUi(runtime));
+    requestRedraw();
+}
+
+std::string DomDownToolPreview::PreviewController::BuildTileDebugHtml() const
+{
+    if (!tileDebugEnabled_)
+    {
+        return {};
+    }
+    std::string content;
+    if (!tileDebugCursor_.has_value())
+    {
+        content = "<div class=\"tile-debug-title\">瓦片诊断</div>"
+            "<div class=\"tile-debug-empty\">在地图上移动鼠标，查看该位置实际请求的瓦块。</div>";
+        return "<div id=\"tile-debug-content\">" + content + "</div>";
+    }
+
+    const std::optional<MapTileDebugInfo> debugInfo = renderer_.TileDebugAt(
+        static_cast<double>(tileDebugCursor_->x), static_cast<double>(tileDebugCursor_->y));
+    if (!debugInfo.has_value())
+    {
+        content = "<div class=\"tile-debug-title\">瓦片诊断</div>"
+            "<div class=\"tile-debug-empty\">等待下一帧瓦片诊断数据。</div>";
+        return "<div id=\"tile-debug-content\">" + content + "</div>";
+    }
+
+    content = fmt::format(
+        "<div class=\"tile-debug-title\"><span>瓦片诊断</span>"
+        "<b>{:.6f}, {:.6f}</b></div>",
+        debugInfo->coordinate.lon, debugInfo->coordinate.lat);
+    if (debugInfo->layers.empty())
+    {
+        content += "<div class=\"tile-debug-empty\">该位置没有命中上一帧可见瓦片。</div>";
+        return "<div id=\"tile-debug-content\">" + content + "</div>";
+    }
+
+    for (const MapTileDebugLayer& layer : debugInfo->layers)
+    {
+        content += fmt::format(
+            "<div class=\"tile-debug-layer\">"
+            "<div class=\"tile-debug-layer-head\"><strong>{}</strong>"
+            "<span>x={} y={} z={}</span><em>{}</em></div>"
+            "<div class=\"tile-debug-path\">缓存：{} · 文件 {} · 图像 {}</div>"
+            "<div class=\"tile-debug-url\">请求：{}</div></div>",
+            escapeHtml(layer.layerName), layer.tile.X, layer.tile.Y, layer.tile.Zoom,
+            escapeHtml(layer.stateText), escapeHtml(pathToUtf8(layer.cachePath)),
+            byteSizeText(layer.fileBytes), imageSizeText(layer), escapeHtml(layer.requestUrl));
+    }
+    return "<div id=\"tile-debug-content\">" + content + "</div>";
+}
+
+bool DomDownToolPreview::PreviewController::UpdateTileDebugUi(skui::Runtime& runtime)
+{
+    bool changed = false;
+    const bool visible = page_ == Page::Preview && tileDebugEnabled_;
+    if (!lastUiTileDebugVisible_.has_value() || *lastUiTileDebugVisible_ != visible)
+    {
+        runtime.setVisibleById("tile-debug-panel", visible);
+        lastUiTileDebugVisible_ = visible;
+        changed = true;
+    }
+
+    if (!lastUiTileDebugPressed_.has_value() ||
+        *lastUiTileDebugPressed_ != tileDebugEnabled_)
+    {
+        runtime.setAttributeById("tile-debug-toggle", "aria-pressed",
+                                 tileDebugEnabled_ ? "true" : "false");
+        lastUiTileDebugPressed_ = tileDebugEnabled_;
+        changed = true;
+    }
+
+    if (!visible)
+    {
+        lastUiTileDebugHtml_.clear();
+        return changed;
+    }
+
+    const std::string html = BuildTileDebugHtml();
+    if (html != lastUiTileDebugHtml_)
+    {
+        runtime.replaceHtmlById("tile-debug-content", html);
+        lastUiTileDebugHtml_ = html;
+        changed = true;
+    }
+    return changed;
 }
 
 void DomDownToolPreview::PreviewController::applyFbxInteractionSettings(
