@@ -135,6 +135,10 @@ bool runTest()
                 postprocess_test::ContainsText(mapRendererPath, "最新底图") &&
                 postprocess_test::ContainsText(mapRendererPath, "drawTileDebugOverlay") &&
                 postprocess_test::ContainsText(mapRendererPath, "drawString") &&
+                postprocess_test::ContainsText(
+                    mapRendererPath, "SkFont labelFont(tileDebugTypeface(), 16.F)") &&
+                postprocess_test::ContainsText(
+                    mapRendererPath, "SkFont::Edging::kSubpixelAntiAlias") &&
                 postprocess_test::ContainsText(mapRendererPath, " empty"),
             "天地图多时相年份下拉框、历史叠加状态和瓦片诊断网格不应丢失"))
     {

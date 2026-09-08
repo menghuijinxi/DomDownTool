@@ -21,6 +21,7 @@
 #include "include/core/SkFont.h"
 #include "include/core/SkFontMgr.h"
 #include "include/core/SkFontStyle.h"
+#include "include/core/SkFontTypes.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkPathBuilder.h"
@@ -805,7 +806,11 @@ void DomDownToolPreview::MapRenderer::drawTileDebugOverlay(SkCanvas& canvas) con
         tileDebugEntries_.begin(), tileDebugEntries_.end(),
         [](const TileDebugEntry& entry) { return isHistoryDebugLayer(entry.layer); });
 
-    SkFont labelFont(tileDebugTypeface(), 12.F);
+    SkFont labelFont(tileDebugTypeface(), 16.F);
+    labelFont.setEdging(SkFont::Edging::kSubpixelAntiAlias);
+    labelFont.setHinting(SkFontHinting::kSlight);
+    labelFont.setLinearMetrics(true);
+    labelFont.setBaselineSnap(true);
     labelFont.setSubpixel(true);
     SkPaint tileFillPaint;
     tileFillPaint.setAntiAlias(false);
@@ -831,9 +836,10 @@ void DomDownToolPreview::MapRenderer::drawTileDebugOverlay(SkCanvas& canvas) con
             continue;
         }
 
-        const SkRect tileRect = SkRect::MakeXYWH(
-            static_cast<float>(entry.left), static_cast<float>(entry.top),
-            static_cast<float>(entry.size), static_cast<float>(entry.size));
+        const float tileLeft = std::floor(static_cast<float>(entry.left));
+        const float tileTop = std::floor(static_cast<float>(entry.top));
+        const float tileSize = std::ceil(static_cast<float>(entry.size));
+        const SkRect tileRect = SkRect::MakeXYWH(tileLeft, tileTop, tileSize, tileSize);
         const SkColor fillColor = debugTileFillColor(entry.layer);
         if (SkColorGetA(fillColor) > 0)
         {
@@ -844,7 +850,7 @@ void DomDownToolPreview::MapRenderer::drawTileDebugOverlay(SkCanvas& canvas) con
         tileStrokePaint.setColor(debugTileStrokeColor(entry.layer));
         canvas.drawRect(tileRect, tileStrokePaint);
 
-        const float labelHeight = std::min(18.F, tileRect.height());
+        const float labelHeight = std::min(24.F, tileRect.height());
         if (labelHeight < 10.F || tileRect.width() < 24.F)
         {
             continue;
@@ -857,7 +863,7 @@ void DomDownToolPreview::MapRenderer::drawTileDebugOverlay(SkCanvas& canvas) con
         SkAutoCanvasRestore labelRestore(&canvas, true);
         canvas.clipRect(tileRect, SkClipOp::kIntersect, false);
         const std::string label = debugTileLabel(entry.layer);
-        const float baseline = tileRect.top() + std::min(13.F, labelHeight - 3.F);
+        const float baseline = tileRect.top() + std::min(18.F, labelHeight - 4.F);
         canvas.drawString(label.c_str(), tileRect.left() + 4.F, baseline, labelFont,
                           labelTextPaint);
     }
