@@ -49,6 +49,12 @@ struct SatelliteExportSource
     std::string id;
     std::string name;
     std::filesystem::path cachePath;
+    std::string multidateYear;
+    std::string multidateKey;
+    std::string multidateGbCode;
+    std::string multidateRegionName;
+    // 登录态只用于当前进程内导出，不写入任务记录，避免保存一次性 cookie。
+    std::string multidateCookie;
 };
 
 using ExportDownloaderFactory =
@@ -148,6 +154,20 @@ class ExportTaskManager
         ExportConfiguration configuration;
     };
 
+    struct SatelliteDownloadOptions
+    {
+        std::filesystem::path outputRoot;
+        std::string mergedImageFormat;
+        std::string fbxTextureFormat;
+        std::string progressStagePrefix;
+        double stepProgressStart = 0.;
+        double stepProgressSpan = 1.;
+        uint32_t maxDownloadQueue = 0;
+        bool transparentMultidateEmptyTiles = false;
+        bool forceMultidateLatestWmts = false;
+        bool reportStepComplete = true;
+    };
+
     void WorkerLoop();
 
     bool RunExport(const QueuedExport& queuedExport, std::string& error);
@@ -157,6 +177,21 @@ class ExportTaskManager
                             const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
                             size_t stepIndex, size_t stepCount,
                             std::string& error);
+
+    bool RunSatelliteDownloaderToRoot(
+        const QueuedExport& queuedExport,
+        const SatelliteExportSource& source,
+        const SatelliteDownloadOptions& options,
+        const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
+        size_t stepIndex, size_t stepCount,
+        std::string& error);
+
+    bool RunTianDiTuMultidateCompositeExport(
+        const QueuedExport& queuedExport,
+        const SatelliteExportSource& source,
+        const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
+        size_t stepIndex, size_t stepCount,
+        std::string& error);
 
     bool RunGisExport(const QueuedExport& queuedExport,
                       const std::set<DownTool::AmapVectorRenderCategory>& categories,

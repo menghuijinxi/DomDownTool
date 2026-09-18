@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <stdexcept>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -171,6 +172,111 @@ bool writeTransparentPng(const std::filesystem::path& path)
                static_cast<std::streamsize>(std::size(kTransparentPng)));
     return file.good();
 }
+
+std::filesystem::path emptyTileMarkerPath(const std::filesystem::path& tilePath)
+{
+    std::filesystem::path markerPath = tilePath;
+    markerPath += L".empty";
+    return markerPath;
+}
+
+std::filesystem::path failedTileMarkerPath(const std::filesystem::path& tilePath)
+{
+    std::filesystem::path markerPath = tilePath;
+    markerPath += L".failed";
+    return markerPath;
+}
+
+size_t readMarkerAttemptCount(const std::filesystem::path& markerPath)
+{
+    std::ifstream marker(markerPath, std::ios::binary);
+    if (!marker.is_open())
+    {
+        return 0;
+    }
+
+    size_t attempts = 1;
+    std::string line;
+    while (std::getline(marker, line))
+    {
+        constexpr std::string_view kAttemptsPrefix = "attempts=";
+        if (!line.starts_with(kAttemptsPrefix))
+        {
+            continue;
+        }
+
+        try
+        {
+            attempts = std::max<size_t>(1, std::stoull(
+                line.substr(kAttemptsPrefix.size())));
+        }
+        catch (...)
+        {
+            attempts = 1;
+        }
+        break;
+    }
+    return attempts;
+}
+
+bool writeTileFailureMarker(const std::filesystem::path& markerPath,
+                            std::string_view kind, size_t attempts)
+{
+    std::error_code error;
+    std::filesystem::create_directories(markerPath.parent_path(), error);
+    if (error)
+    {
+        return false;
+    }
+
+    std::ofstream marker(markerPath, std::ios::binary | std::ios::trunc);
+    if (!marker.is_open())
+    {
+        return false;
+    }
+
+    marker << kind << "\n";
+    marker << "attempts=" << attempts << "\n";
+    return marker.good();
+}
+
+DomDownToolPreview::TilePersistentFailureState recordEmptyTileResponse(
+    const std::filesystem::path& tilePath)
+{
+    DomDownToolPreview::TilePersistentFailureState state =
+        DomDownToolPreview::TileDownloadQueue::GetPersistentFailureState(tilePath);
+    state.kind = DomDownToolPreview::TilePersistentFailureKind::EmptyResponse;
+    state.attempts += 1;
+    state.exhausted = state.attempts >= DomDownToolPreview::kPreviewTileFailureAttemptLimit;
+
+    std::error_code error;
+    std::filesystem::remove(failedTileMarkerPath(tilePath), error);
+    if (!writeTileFailureMarker(emptyTileMarkerPath(tilePath), "empty-response",
+                                state.attempts))
+    {
+        return DomDownToolPreview::TilePersistentFailureState{};
+    }
+    return state;
+}
+
+DomDownToolPreview::TilePersistentFailureState recordRequestFailed(
+    const std::filesystem::path& tilePath)
+{
+    DomDownToolPreview::TilePersistentFailureState state =
+        DomDownToolPreview::TileDownloadQueue::GetPersistentFailureState(tilePath);
+    state.kind = DomDownToolPreview::TilePersistentFailureKind::RequestFailed;
+    state.attempts += 1;
+    state.exhausted = state.attempts >= DomDownToolPreview::kPreviewTileFailureAttemptLimit;
+
+    std::error_code error;
+    std::filesystem::remove(emptyTileMarkerPath(tilePath), error);
+    if (!writeTileFailureMarker(failedTileMarkerPath(tilePath), "request-failed",
+                                state.attempts))
+    {
+        return DomDownToolPreview::TilePersistentFailureState{};
+    }
+    return state;
+}
 } // namespace
 
 DomDownToolPreview::TileDownloadQueue::TileDownloadQueue(
@@ -262,7 +368,8 @@ void DomDownToolPreview::TileDownloadQueue::updateVisibleRequests(
         {
             if (!job.source || job.destination.empty() ||
                 activePaths_.contains(job.destination) ||
-                pendingPaths_.contains(job.destination))
+                pendingPaths_.contains(job.destination) ||
+                HasExhaustedPersistentFailures(job.destination))
             {
                 continue;
             }
@@ -307,6 +414,82 @@ DomDownToolPreview::TileDownloadStats DomDownToolPreview::TileDownloadQueue::sta
 {
     const std::lock_guard lock(mutex_);
     return {pendingPaths_.size(), activePaths_.size(), failedTileCount_};
+}
+
+DomDownToolPreview::TilePersistentFailureState
+DomDownToolPreview::TileDownloadQueue::GetPersistentFailureState(
+    const std::filesystem::path& tilePath)
+{
+    const size_t emptyAttempts = readMarkerAttemptCount(emptyTileMarkerPath(tilePath));
+    const size_t failedAttempts = readMarkerAttemptCount(failedTileMarkerPath(tilePath));
+    if (emptyAttempts == 0 && failedAttempts == 0)
+    {
+        return {};
+    }
+
+    TilePersistentFailureState state;
+    if (failedAttempts >= emptyAttempts)
+    {
+        state.kind = TilePersistentFailureKind::RequestFailed;
+        state.attempts = failedAttempts;
+    }
+    else
+    {
+        state.kind = TilePersistentFailureKind::EmptyResponse;
+        state.attempts = emptyAttempts;
+    }
+    state.exhausted = state.attempts >= kPreviewTileFailureAttemptLimit;
+    return state;
+}
+
+bool DomDownToolPreview::TileDownloadQueue::HasExhaustedPersistentFailures(
+    const std::filesystem::path& tilePath)
+{
+    return GetPersistentFailureState(tilePath).exhausted;
+}
+
+void DomDownToolPreview::TileDownloadQueue::ClearPersistentFailureState(
+    const std::filesystem::path& tilePath)
+{
+    std::error_code error;
+    std::filesystem::remove(emptyTileMarkerPath(tilePath), error);
+    std::filesystem::remove(failedTileMarkerPath(tilePath), error);
+}
+
+void DomDownToolPreview::TileDownloadQueue::ClearPersistentFailureStatesUnder(
+    const std::filesystem::path& root)
+{
+    if (root.empty())
+    {
+        return;
+    }
+
+    std::error_code error;
+    if (!std::filesystem::exists(root, error) || error)
+    {
+        return;
+    }
+
+    std::filesystem::recursive_directory_iterator iterator(root, error);
+    const std::filesystem::recursive_directory_iterator end;
+    while (!error && iterator != end)
+    {
+        const std::filesystem::directory_entry entry = *iterator;
+        if (!entry.is_regular_file(error) || error)
+        {
+            error.clear();
+            iterator.increment(error);
+            continue;
+        }
+
+        const std::filesystem::path extension = entry.path().extension();
+        if (extension == L".empty" || extension == L".failed")
+        {
+            std::filesystem::remove(entry.path(), error);
+            error.clear();
+        }
+        iterator.increment(error);
+    }
 }
 
 bool DomDownToolPreview::TileDownloadQueue::download(const TileDownloadJob& job) const
@@ -390,12 +573,14 @@ bool DomDownToolPreview::TileDownloadQueue::download(const TileDownloadJob& job)
         }
     }
 
+    bool wroteTransparentPlaceholder = false;
     if (isEmptyFile(partialPath) && job.useTransparentPlaceholderOnEmptyResponse)
     {
         if (!writeTransparentPng(partialPath) || !validateImage(partialPath))
         {
             return false;
         }
+        wroteTransparentPlaceholder = true;
     }
     else if (job.source->IsTileDownloadUnavailable(partialPath, responseHeaders, job.tile) ||
              !validateImage(partialPath))
@@ -407,6 +592,14 @@ bool DomDownToolPreview::TileDownloadQueue::download(const TileDownloadJob& job)
     {
         return false;
     }
+
+    if (wroteTransparentPlaceholder)
+    {
+        return recordEmptyTileResponse(job.destination).kind ==
+            TilePersistentFailureKind::EmptyResponse;
+    }
+
+    ClearPersistentFailureState(job.destination);
     return true;
 }
 
@@ -507,7 +700,10 @@ void DomDownToolPreview::TileDownloadQueue::workerLoop()
             if (!succeeded)
             {
                 ++failedTileCount_;
-                if (visiblePaths_.contains(job.destination) && !stopping_)
+                const TilePersistentFailureState failureState =
+                    recordRequestFailed(job.destination);
+                if (visiblePaths_.contains(job.destination) && !stopping_ &&
+                    !failureState.exhausted)
                 {
                     pendingPaths_.insert(job.destination);
                     pendingJobs_.push_back({

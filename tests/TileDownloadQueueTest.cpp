@@ -44,6 +44,21 @@ void writeFile(const std::filesystem::path& path, const std::vector<unsigned cha
     }
 }
 
+void writeTextFile(const std::filesystem::path& path, const std::string& text)
+{
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file.is_open())
+    {
+        throw std::runtime_error("无法写入测试标记文件");
+    }
+    file << text;
+    if (!file.good())
+    {
+        throw std::runtime_error("测试标记文件写入不完整");
+    }
+}
+
 bool waitUntil(const std::function<bool()>& predicate, std::condition_variable& condition,
                std::mutex& mutex)
 {
@@ -64,6 +79,20 @@ std::filesystem::path partialPathFor(const std::filesystem::path& destination)
 {
     std::filesystem::path path = destination;
     path += L".part";
+    return path;
+}
+
+std::filesystem::path emptyMarkerPathFor(const std::filesystem::path& destination)
+{
+    std::filesystem::path path = destination;
+    path += L".empty";
+    return path;
+}
+
+std::filesystem::path failedMarkerPathFor(const std::filesystem::path& destination)
+{
+    std::filesystem::path path = destination;
+    path += L".failed";
     return path;
 }
 
@@ -208,11 +237,103 @@ int main()
         std::ifstream transparentFile(transparentPath, std::ios::binary);
         std::vector<unsigned char> transparentBytes(
             (std::istreambuf_iterator<char>(transparentFile)), std::istreambuf_iterator<char>());
+        transparentFile.close();
         if (transparentBytes.size() < 8 || transparentBytes[0] != 0x89 ||
             transparentBytes[1] != 0x50 || transparentBytes[2] != 0x4E ||
-            transparentBytes[3] != 0x47)
+            transparentBytes[3] != 0x47 ||
+            !std::filesystem::exists(emptyMarkerPathFor(transparentPath)))
         {
-            throw std::runtime_error("透明瓦块不是 PNG 编码");
+            throw std::runtime_error("透明瓦块不是 PNG 编码，或缺少空响应标记");
+        }
+        const DomDownToolPreview::TilePersistentFailureState emptyFailureState =
+            DomDownToolPreview::TileDownloadQueue::GetPersistentFailureState(transparentPath);
+        if (emptyFailureState.kind !=
+                DomDownToolPreview::TilePersistentFailureKind::EmptyResponse ||
+            emptyFailureState.attempts != 1 || emptyFailureState.exhausted)
+        {
+            throw std::runtime_error("空响应标记没有记录失败次数");
+        }
+        std::vector<std::filesystem::path> transparentCompletions;
+        if (!waitUntil(
+                [&queue, &transparentCompletions]
+                {
+                    transparentCompletions = queue.takeCompletedPaths();
+                    return !transparentCompletions.empty();
+                },
+                completionCondition, completionMutex))
+        {
+            throw std::runtime_error("透明瓦块任务没有完成出队");
+        }
+
+        source.SetUrlTemplate(fileUrl(validSourcePath));
+        queue.updateVisibleRequests(
+            {{transparentPath, tile, &source, source.BuildTileHttpRequest(tile)}});
+        std::vector<std::filesystem::path> refreshCompletions;
+        if (!waitUntil(
+                [&queue, &refreshCompletions, &transparentPath]
+                {
+                    refreshCompletions = queue.takeCompletedPaths();
+                    return !refreshCompletions.empty() &&
+                        !std::filesystem::exists(emptyMarkerPathFor(transparentPath));
+                },
+                completionCondition, completionMutex))
+        {
+            throw std::runtime_error("真实瓦块覆盖后没有清除空响应标记");
+        }
+
+        const std::filesystem::path exhaustedPath = testRoot / "cache" / "exhausted.png";
+        const std::filesystem::path retryablePath = testRoot / "cache" / "retryable.png";
+        writeTextFile(failedMarkerPathFor(retryablePath),
+                      "request-failed\nattempts=" +
+                          std::to_string(
+                              DomDownToolPreview::kPreviewTileFailureAttemptLimit - 1) +
+                          "\n");
+        queue.updateVisibleRequests(
+            {{retryablePath, tile, &source, source.BuildTileHttpRequest(tile)}});
+        if (!waitUntil(
+                [&retryablePath]
+                {
+                    return std::filesystem::exists(retryablePath) &&
+                        !std::filesystem::exists(failedMarkerPathFor(retryablePath));
+                },
+                completionCondition, completionMutex))
+        {
+            throw std::runtime_error("未达到失败上限的瓦块没有在刷新后重新请求");
+        }
+        (void)queue.takeCompletedPaths();
+
+        writeTextFile(failedMarkerPathFor(exhaustedPath),
+                      "request-failed\nattempts=" +
+                          std::to_string(DomDownToolPreview::kPreviewTileFailureAttemptLimit) +
+                          "\n");
+        source.SetUrlTemplate(fileUrl(validSourcePath));
+        queue.updateVisibleRequests(
+            {{exhaustedPath, tile, &source, source.BuildTileHttpRequest(tile)}});
+        std::this_thread::sleep_for(200ms);
+        const DomDownToolPreview::TileDownloadStats exhaustedStats = queue.stats();
+        const DomDownToolPreview::TilePersistentFailureState exhaustedFailureState =
+            DomDownToolPreview::TileDownloadQueue::GetPersistentFailureState(exhaustedPath);
+        if (std::filesystem::exists(exhaustedPath) || exhaustedStats.queuedTiles != 0 ||
+            exhaustedStats.activeTiles != 0 || !exhaustedFailureState.exhausted)
+        {
+            throw std::runtime_error("达到失败上限的瓦块仍然被自动入队");
+        }
+
+        DomDownToolPreview::TileDownloadQueue::ClearPersistentFailureStatesUnder(
+            testRoot / "cache");
+        const DomDownToolPreview::TilePersistentFailureState clearedFailureState =
+            DomDownToolPreview::TileDownloadQueue::GetPersistentFailureState(exhaustedPath);
+        if (clearedFailureState.kind != DomDownToolPreview::TilePersistentFailureKind::None ||
+            clearedFailureState.attempts != 0 || clearedFailureState.exhausted)
+        {
+            throw std::runtime_error("刷新瓦片没有清除达到上限的失败状态");
+        }
+        queue.updateVisibleRequests(
+            {{exhaustedPath, tile, &source, source.BuildTileHttpRequest(tile)}});
+        if (!waitUntil([&exhaustedPath] { return std::filesystem::exists(exhaustedPath); },
+                       completionCondition, completionMutex))
+        {
+            throw std::runtime_error("刷新清除失败状态后，瓦块没有重新请求");
         }
         (void)queue.takeCompletedPaths();
 
@@ -224,6 +345,14 @@ int main()
                        completionMutex))
         {
             throw std::runtime_error("无效响应没有进入失败状态");
+        }
+        const DomDownToolPreview::TilePersistentFailureState failedState =
+            DomDownToolPreview::TileDownloadQueue::GetPersistentFailureState(invalidPath);
+        if (failedState.kind != DomDownToolPreview::TilePersistentFailureKind::RequestFailed ||
+            failedState.attempts == 0 || failedState.exhausted ||
+            !std::filesystem::exists(failedMarkerPathFor(invalidPath)))
+        {
+            throw std::runtime_error("请求失败没有写入可诊断的失败标记");
         }
         queue.cancelPending();
         if (std::filesystem::exists(invalidPath) ||

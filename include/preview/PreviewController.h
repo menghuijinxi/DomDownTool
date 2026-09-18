@@ -110,7 +110,8 @@ class PreviewController
 
     void updateSearchUi(skui::Runtime& runtime);
 
-    void LoginTianDiTuMultidate(skui::Runtime& runtime);
+    void LoginTianDiTuMultidate(skui::Runtime& runtime,
+                                std::string_view preferredYear = {});
 
     void RefreshTianDiTuMultidateTimelines(skui::Runtime& runtime,
                                            std::string_view preferredYear = {});
@@ -119,6 +120,10 @@ class PreviewController
                                          std::string_view value);
 
     [[nodiscard]] std::string GetSelectedTianDiTuMultidateYear() const;
+
+    [[nodiscard]] std::string GetSelectedExportTianDiTuMultidateYear() const;
+
+    void EnsureExportTianDiTuMultidateYears(skui::Runtime& runtime);
 
     void RefreshTianDiTuMultidateAfterViewChange(skui::Runtime& runtime,
                                                  std::string_view preferredYear);
@@ -268,6 +273,7 @@ class PreviewController
     bool exportGeoJson_ = false;
     bool exportBuildingHeightColors_ = false;
     bool exportBuildingFbx_ = false;
+    std::set<std::string> exportTianDiTuMultidateSelectedValues_ = {"latest"};
     std::string exportValidationMessage_;
     std::string lastTaskListHtml_;
     std::optional<MapRenderStats> scheduledStats_;
@@ -289,6 +295,7 @@ class PreviewController
     std::string lastTianDiTuMultidateStatus_;
     std::optional<bool> lastTianDiTuMultidateRefreshDisabled_;
     std::optional<bool> lastTianDiTuMultidateYearDisabled_;
+    std::string lastExportTianDiTuMultidateYearsHtml_;
     std::optional<size_t> highlightedSearchResult_;
     std::optional<PendingLocationRequest> pendingLocationRequest_;
     SearchState searchState_ = SearchState::Idle;

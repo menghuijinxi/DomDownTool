@@ -28,6 +28,7 @@
 #include "GoogleDown.h"
 #include "TencentDown.h"
 #include "TianDiTuDown.h"
+#include "TianDiTuMultidateDown.h"
 
 #include "fmt/format.h"
 #include "nlohmann/json.hpp"
@@ -230,10 +231,27 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
     Json satelliteSources = Json::array();
     for (const SatelliteExportSource& source : configuration.satelliteSources)
     {
-        satelliteSources.push_back({
+        Json sourceJson = {
             {"id", source.id},
             {"name", source.name},
-            {"cachePath", PathToUtf8(source.cachePath)}});
+            {"cachePath", PathToUtf8(source.cachePath)}};
+        if (!source.multidateYear.empty())
+        {
+            sourceJson["multidateYear"] = source.multidateYear;
+        }
+        if (!source.multidateKey.empty())
+        {
+            sourceJson["multidateKey"] = source.multidateKey;
+        }
+        if (!source.multidateGbCode.empty())
+        {
+            sourceJson["multidateGbCode"] = source.multidateGbCode;
+        }
+        if (!source.multidateRegionName.empty())
+        {
+            sourceJson["multidateRegionName"] = source.multidateRegionName;
+        }
+        satelliteSources.push_back(std::move(sourceJson));
     }
 
     Json gisCategories = Json::array();
@@ -374,10 +392,15 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
             {
                 return std::nullopt;
             }
-            configuration.satelliteSources.push_back({
+            SatelliteExportSource exportSource{
                 GetJsonString(source, "id"),
                 GetJsonString(source, "name"),
-                std::filesystem::u8path(GetJsonString(source, "cachePath"))});
+                std::filesystem::u8path(GetJsonString(source, "cachePath"))};
+            exportSource.multidateYear = GetJsonString(source, "multidateYear");
+            exportSource.multidateKey = GetJsonString(source, "multidateKey");
+            exportSource.multidateGbCode = GetJsonString(source, "multidateGbCode");
+            exportSource.multidateRegionName = GetJsonString(source, "multidateRegionName");
+            configuration.satelliteSources.push_back(std::move(exportSource));
         }
     }
 
@@ -546,6 +569,38 @@ std::string SanitizeFileName(std::string name)
     return name.empty() ? "GIS" : name;
 }
 
+bool IsTianDiTuMultidateHistorySource(const SatelliteExportSource& source)
+{
+    return source.id == "tianditu.multidate" && !source.multidateYear.empty() &&
+        !source.multidateKey.empty();
+}
+
+bool IsTianDiTuMultidateSource(const SatelliteExportSource& source)
+{
+    return source.id == "tianditu.multidate";
+}
+
+std::filesystem::path MergedImagePath(const std::filesystem::path& outputRoot,
+                                      std::string_view imageFormat)
+{
+    std::filesystem::path mergedImagePath = outputRoot / "merged";
+    mergedImagePath.replace_extension(std::string(imageFormat));
+    return mergedImagePath;
+}
+
+std::filesystem::path MultidateTemporaryOutputRoot(
+    const ExportConfiguration& configuration,
+    const std::string& taskId,
+    const SatelliteExportSource& source,
+    std::string_view layerName)
+{
+    return DomDownToolPreview::ExportTaskOutputRoot(configuration, taskId) /
+        std::filesystem::u8path("临时") /
+        std::filesystem::u8path("天地图多时相") /
+        std::filesystem::u8path(SanitizeFileName(source.name)) /
+        std::filesystem::u8path(std::string(layerName));
+}
+
 bool IsBuildingFbxArtifact(const std::filesystem::path& path)
 {
     const std::string fileName = PathToUtf8(path.filename());
@@ -621,6 +676,10 @@ std::unique_ptr<DownTool::DownToolBase> CreateDownloader(std::string_view source
     if (sourceId == "tianditu.satellite")
     {
         return std::make_unique<DownTool::TianDiTuDown>();
+    }
+    if (sourceId == "tianditu.multidate")
+    {
+        return std::make_unique<DownTool::TianDiTuMultidateDown>();
     }
     if (sourceId == "baidu.satellite")
     {
@@ -874,6 +933,48 @@ void ConfigureFbxElevation(
         });
 }
 
+void ConfigureTianDiTuMultidateDownloader(
+    DownTool::DownToolBase& downloader,
+    const SatelliteExportSource& source,
+    bool transparentEmptyTiles,
+    bool forceLatestWmts)
+{
+    if (source.id != "tianditu.multidate")
+    {
+        return;
+    }
+
+    auto* multidateDownloader = dynamic_cast<DownTool::TianDiTuMultidateDown*>(&downloader);
+    if (!multidateDownloader)
+    {
+        return;
+    }
+
+    multidateDownloader->SetTransparentPlaceholderForEmptyTiles(transparentEmptyTiles);
+    if (forceLatestWmts)
+    {
+        multidateDownloader->UseLatestWmtsOnly();
+        return;
+    }
+
+    if (!source.multidateGbCode.empty() || !source.multidateRegionName.empty())
+    {
+        multidateDownloader->SetMultidateRegion(
+            source.multidateGbCode, source.multidateRegionName);
+    }
+    if (!source.multidateCookie.empty())
+    {
+        multidateDownloader->SetSessionCookie(source.multidateCookie);
+    }
+    if (!source.multidateYear.empty() && !source.multidateKey.empty())
+    {
+        multidateDownloader->SetYearKey(source.multidateYear, source.multidateKey);
+        return;
+    }
+
+    multidateDownloader->UseLatestYear();
+}
+
 std::string FormatSourceNames(const ExportConfiguration& configuration)
 {
     std::string names;
@@ -993,6 +1094,21 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
                << PathToUtf8(SatelliteOutputRoot(
                       configuration, std::string(taskId), source) / "FBX")
                << "\n";
+        if (source.id == "tianditu.multidate")
+        {
+            output << "  多时相年份: "
+                   << (source.multidateYear.empty() ? "最新影像" : source.multidateYear)
+                   << "\n";
+            if (!source.multidateGbCode.empty() || !source.multidateRegionName.empty())
+            {
+                output << "  多时相区域: " << source.multidateRegionName
+                       << " [" << source.multidateGbCode << "]\n";
+            }
+            if (!source.multidateKey.empty())
+            {
+                output << "  多时相 key: " << source.multidateKey << "\n";
+            }
+        }
     }
     output
            << "GIS 产物根目录: "
@@ -1833,6 +1949,30 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
     std::string& error)
 {
     const ExportConfiguration& configuration = queuedExport.configuration;
+    if (IsTianDiTuMultidateHistorySource(source))
+    {
+        return RunTianDiTuMultidateCompositeExport(
+            queuedExport, source, elevationData, stepIndex, stepCount, error);
+    }
+
+    SatelliteDownloadOptions options;
+    options.outputRoot = SatelliteOutputRoot(configuration, queuedExport.taskId, source);
+    options.mergedImageFormat = NormalizeImageFormat(configuration.mergedImageFormat);
+    options.fbxTextureFormat = NormalizeImageFormat(configuration.fbxTextureFormat);
+    options.forceMultidateLatestWmts = IsTianDiTuMultidateSource(source);
+    return RunSatelliteDownloaderToRoot(
+        queuedExport, source, options, elevationData, stepIndex, stepCount, error);
+}
+
+bool DomDownToolPreview::ExportTaskManager::RunSatelliteDownloaderToRoot(
+    const QueuedExport& queuedExport,
+    const SatelliteExportSource& source,
+    const SatelliteDownloadOptions& options,
+    const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
+    size_t stepIndex, size_t stepCount,
+    std::string& error)
+{
+    const ExportConfiguration& configuration = queuedExport.configuration;
     if (IsCancellationRequested())
     {
         return false;
@@ -1855,9 +1995,16 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
     downloader->SetRadius(configuration.radiusMeters);
     downloader->SetZoom(configuration.zoom);
     downloader->SetCachePath(PathToUtf8(source.cachePath));
-    downloader->SetMaxDownQueue(std::max(1u, std::thread::hardware_concurrency()));
-    const std::filesystem::path outputRoot = SatelliteOutputRoot(
-        configuration, queuedExport.taskId, source);
+    ConfigureTianDiTuMultidateDownloader(
+        *downloader,
+        source,
+        options.transparentMultidateEmptyTiles,
+        options.forceMultidateLatestWmts);
+    const uint32_t hardwareQueue = std::max(1u, std::thread::hardware_concurrency());
+    const uint32_t configuredQueue = options.maxDownloadQueue == 0 ?
+        hardwareQueue : std::min(options.maxDownloadQueue, hardwareQueue);
+    downloader->SetMaxDownQueue(std::max(1u, configuredQueue));
+    const std::filesystem::path outputRoot = options.outputRoot;
     std::error_code outputError;
     std::filesystem::create_directories(outputRoot, outputError);
     if (outputError)
@@ -1870,26 +2017,30 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
     downloader->SetPostProcessOutputPath(PathToUtf8(xyzOutputRoot));
     downloader->SetPostProcessEnabled(configuration.exportTiles);
     downloader->SetPostProcessMergedImageEnabled(configuration.exportMergedImage);
-    std::filesystem::path mergedImagePath = outputRoot / "merged";
-    mergedImagePath.replace_extension(configuration.mergedImageFormat);
+    const std::string mergedImageFormat = NormalizeImageFormat(options.mergedImageFormat);
+    const std::filesystem::path mergedImagePath = MergedImagePath(
+        outputRoot, mergedImageFormat);
     downloader->SetPostProcessMergedImageOutputPath(PathToUtf8(mergedImagePath));
     downloader->SetPostProcessMergedImageResolution(configuration.mergedImageResolution);
     const bool exportFbx = configuration.exportFbx;
     downloader->SetPostProcessFbxEnabled(exportFbx);
     downloader->SetFbxOutputPath(PathToUtf8(fbxOutputRoot));
     downloader->SetFbxTextureSize(configuration.fbxTextureSize);
-    downloader->SetFbxTextureFormat(NormalizeImageFormat(configuration.fbxTextureFormat));
+    downloader->SetFbxTextureFormat(NormalizeImageFormat(options.fbxTextureFormat));
     downloader->SetFbxTerrainSampleRateMeters(
         configuration.fbxTerrainSampleRateMeters);
     ConfigureFbxElevation(*downloader, elevationData);
     downloader->SetProgressCallback(
-        [this, taskId = queuedExport.taskId, stepIndex, stepCount](
+        [this, taskId = queuedExport.taskId, stepIndex, stepCount, options](
             const DownTool::DownToolProgress& progress)
         {
-            const double overall = (static_cast<double>(stepIndex) +
-                                    DownToolPhaseProgress(progress)) /
+            const double phaseProgress = std::clamp(
+                options.stepProgressStart +
+                    DownToolPhaseProgress(progress) * options.stepProgressSpan,
+                0., 1.);
+            const double overall = (static_cast<double>(stepIndex) + phaseProgress) /
                 static_cast<double>(stepCount);
-            UpdateProgress(taskId, progress.stage, overall,
+            UpdateProgress(taskId, options.progressStagePrefix + progress.stage, overall,
                            progress.completed, progress.total);
         });
     SetActiveDownloader(downloader.get());
@@ -1931,6 +2082,151 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
         return false;
     }
 
+    if (options.reportStepComplete)
+    {
+        UpdateProgress(queuedExport.taskId, "卫星图导出完成",
+                       static_cast<double>(stepIndex + 1) / static_cast<double>(stepCount),
+                       1, 1);
+    }
+    return true;
+}
+
+bool DomDownToolPreview::ExportTaskManager::RunTianDiTuMultidateCompositeExport(
+    const QueuedExport& queuedExport,
+    const SatelliteExportSource& source,
+    const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
+    size_t stepIndex, size_t stepCount,
+    std::string& error)
+{
+    const ExportConfiguration& configuration = queuedExport.configuration;
+    const std::filesystem::path finalOutputRoot = SatelliteOutputRoot(
+        configuration, queuedExport.taskId, source);
+    const std::filesystem::path baseOutputRoot = MultidateTemporaryOutputRoot(
+        configuration, queuedExport.taskId, source, "最新底图");
+    const std::filesystem::path historyOutputRoot = MultidateTemporaryOutputRoot(
+        configuration, queuedExport.taskId, source, "历史覆盖");
+    const std::filesystem::path temporaryOutputRoot = baseOutputRoot.parent_path();
+
+    std::error_code cleanupError;
+    std::filesystem::remove_all(temporaryOutputRoot, cleanupError);
+    if (cleanupError)
+    {
+        error = "无法清理多时相临时目录：" + cleanupError.message();
+        return false;
+    }
+    std::filesystem::remove_all(finalOutputRoot, cleanupError);
+    if (cleanupError)
+    {
+        error = "无法清理多时相输出目录：" + cleanupError.message();
+        return false;
+    }
+
+    SatelliteExportSource baseSource = source;
+    baseSource.name = source.name + " 最新底图";
+    baseSource.multidateYear.clear();
+    baseSource.multidateKey.clear();
+    baseSource.multidateGbCode.clear();
+    baseSource.multidateRegionName.clear();
+    baseSource.multidateCookie.clear();
+
+    SatelliteDownloadOptions baseOptions;
+    baseOptions.outputRoot = baseOutputRoot;
+    baseOptions.mergedImageFormat = NormalizeImageFormat(configuration.mergedImageFormat);
+    baseOptions.fbxTextureFormat = NormalizeImageFormat(configuration.fbxTextureFormat);
+    baseOptions.progressStagePrefix = "多时相底图 · ";
+    baseOptions.stepProgressSpan = 0.42;
+    baseOptions.forceMultidateLatestWmts = true;
+    baseOptions.reportStepComplete = false;
+    if (!RunSatelliteDownloaderToRoot(
+            queuedExport, baseSource, baseOptions, elevationData,
+            stepIndex, stepCount, error))
+    {
+        return false;
+    }
+
+    SatelliteDownloadOptions historyOptions;
+    historyOptions.outputRoot = historyOutputRoot;
+    historyOptions.mergedImageFormat = "png";
+    historyOptions.fbxTextureFormat = "png";
+    historyOptions.progressStagePrefix = "多时相历史 · ";
+    historyOptions.stepProgressStart = 0.42;
+    historyOptions.stepProgressSpan = 0.42;
+    historyOptions.maxDownloadQueue = 2;
+    historyOptions.transparentMultidateEmptyTiles = true;
+    historyOptions.reportStepComplete = false;
+    if (!RunSatelliteDownloaderToRoot(
+            queuedExport, source, historyOptions, elevationData,
+            stepIndex, stepCount, error))
+    {
+        return false;
+    }
+
+    const ExportCancellationCallback cancellationRequested =
+        [this] { return IsCancellationRequested(); };
+    UpdateProgress(
+        queuedExport.taskId,
+        "合成多时相输出",
+        (static_cast<double>(stepIndex) + 0.88) / static_cast<double>(stepCount),
+        0,
+        1);
+    if (!ExportImageComposer::CopyDirectory(
+            baseOutputRoot, finalOutputRoot, error, cancellationRequested))
+    {
+        return false;
+    }
+
+    if (configuration.exportTiles &&
+        !ExportImageComposer::CompositeXyzTileTree(
+            finalOutputRoot / "XYZ",
+            historyOutputRoot / "XYZ",
+            finalOutputRoot / "XYZ",
+            error,
+            cancellationRequested))
+    {
+        return false;
+    }
+    if (configuration.exportFbx &&
+        !ExportImageComposer::CompositeTileTree(
+            finalOutputRoot / "FBX",
+            historyOutputRoot / "FBX",
+            finalOutputRoot / "FBX",
+            error,
+            cancellationRequested))
+    {
+        return false;
+    }
+    if (configuration.exportMergedImage &&
+        !ExportImageComposer::CompositeImage(
+            MergedImagePath(finalOutputRoot, NormalizeImageFormat(configuration.mergedImageFormat)),
+            MergedImagePath(historyOutputRoot, "png"),
+            MergedImagePath(finalOutputRoot, NormalizeImageFormat(configuration.mergedImageFormat)),
+            error,
+            cancellationRequested))
+    {
+        return false;
+    }
+
+    if (configuration.exportTiles &&
+        !std::filesystem::exists(finalOutputRoot / "XYZ" / "meta.json"))
+    {
+        error = "卫星 XYZ 瓦片未生成完整元数据。";
+        return false;
+    }
+    if (configuration.exportMergedImage &&
+        !std::filesystem::exists(
+            MergedImagePath(finalOutputRoot, NormalizeImageFormat(configuration.mergedImageFormat))))
+    {
+        error = "卫星合并大图未生成。";
+        return false;
+    }
+    if (configuration.exportFbx &&
+        !std::filesystem::exists(finalOutputRoot / "FBX" / "manifest.json"))
+    {
+        error = "卫星 FBX 贴图清单未生成。";
+        return false;
+    }
+
+    std::filesystem::remove_all(temporaryOutputRoot, cleanupError);
     UpdateProgress(queuedExport.taskId, "卫星图导出完成",
                    static_cast<double>(stepIndex + 1) / static_cast<double>(stepCount),
                    1, 1);

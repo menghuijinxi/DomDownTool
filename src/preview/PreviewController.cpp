@@ -38,6 +38,7 @@ using DomDownToolPreview::ExportConfiguration;
 using DomDownToolPreview::ExportTaskRecord;
 using DomDownToolPreview::FbxPreviewInteractionSettings;
 using DomDownToolPreview::GisExportMode;
+using DomDownToolPreview::SatelliteExportSource;
 using Json = nlohmann::json;
 
 constexpr UINT kPreviewRedrawMessage = WM_APP + 0x642;
@@ -1230,15 +1231,124 @@ constexpr std::array kExportCategories = {
     DownTool::AmapVectorRenderCategory::Other,
     DownTool::AmapVectorRenderCategory::Subway};
 
-constexpr std::array<std::pair<std::string_view, std::string_view>, 7>
+constexpr std::array<std::pair<std::string_view, std::string_view>, 8>
     kExportProviderControls = {
     std::pair{"gaode.satellite", "export-provider-gaode"},
     std::pair{"tencent.satellite", "export-provider-tencent"},
     std::pair{"tianditu.satellite", "export-provider-tianditu"},
+    std::pair{"tianditu.multidate", "export-provider-tianditu-multidate"},
     std::pair{"baidu.satellite", "export-provider-baidu"},
     std::pair{"google.satellite", "export-provider-google"},
     std::pair{"bing.satellite", "export-provider-bing"},
     std::pair{"arcgis.satellite", "export-provider-arcgis"}};
+
+constexpr std::string_view kExportTianDiTuMultidateYearPrefix =
+    "export-tianditu-multidate-year-";
+
+bool isTianDiTuMultidateSource(std::string_view sourceId)
+{
+    return sourceId == "tianditu.multidate";
+}
+
+std::filesystem::path tianDiTuMultidateExportCacheRoot()
+{
+    return std::filesystem::u8path("cache/天地图多时相");
+}
+
+std::string tianDiTuMultidateTimelineYear(
+    const DownTool::TianDiTuMultidateDown::TimelineInfo& timeline)
+{
+    return timeline.year.empty() ? timeline.time : timeline.year;
+}
+
+std::string tianDiTuMultidateTimelineTitle(
+    const DownTool::TianDiTuMultidateDown::TimelineInfo& timeline)
+{
+    const std::string title = timeline.time.empty() ? timeline.year : timeline.time;
+    if (timeline.minZoom == 0 && timeline.maxZoom == 0)
+    {
+        return title;
+    }
+
+    return fmt::format("{} z{}-{}", title, timeline.minZoom, timeline.maxZoom);
+}
+
+bool isExportTianDiTuMultidateYearControl(std::string_view id)
+{
+    return id.starts_with(kExportTianDiTuMultidateYearPrefix);
+}
+
+std::string buildExportTianDiTuMultidateYearsHtml(
+    const std::vector<DownTool::TianDiTuMultidateDown::TimelineInfo>& timelines,
+    const std::set<std::string>& selectedValues)
+{
+    const bool latestSelected = selectedValues.empty() || selectedValues.contains("latest");
+    std::string html;
+    html += "<div id=\"export-tianditu-multidate-years\" "
+        "class=\"export-sub-options\">";
+    html += "<div class=\"export-sub-title\">多时相年份</div>";
+    html += "<div id=\"export-tianditu-multidate-year-options\" "
+        "class=\"check-grid export-year-grid\">";
+    html += fmt::format(
+        "<label class=\"check-item\"><input id=\"{}latest\" type=\"checkbox\" "
+        "value=\"latest\"{}><span>最新影像</span></label>",
+        kExportTianDiTuMultidateYearPrefix,
+        latestSelected ? " checked" : "");
+    for (size_t index = 0; index < timelines.size(); ++index)
+    {
+        const auto& timeline = timelines[index];
+        if (timeline.key.empty())
+        {
+            continue;
+        }
+
+        html += fmt::format(
+            "<label class=\"check-item\"><input id=\"{}{}\" type=\"checkbox\" "
+            "value=\"{}\"{}><span>{}</span></label>",
+            kExportTianDiTuMultidateYearPrefix, index, escapeHtml(timeline.key),
+            selectedValues.contains(timeline.key) ? " checked" : "",
+            escapeHtml(tianDiTuMultidateTimelineTitle(timeline)));
+    }
+    if (timelines.empty())
+    {
+        html += "<span class=\"muted\">等待天地图登录或年份刷新结果</span>";
+    }
+    html += "</div>";
+    html += "</div>";
+    return html;
+}
+
+std::vector<std::string> selectedExportTianDiTuMultidateValuesInDisplayOrder(
+    const std::set<std::string>& selectedValues,
+    const std::vector<DownTool::TianDiTuMultidateDown::TimelineInfo>& timelines)
+{
+    std::vector<std::string> orderedValues;
+    if (selectedValues.contains("latest"))
+    {
+        orderedValues.push_back("latest");
+    }
+    for (const auto& timeline : timelines)
+    {
+        if (!timeline.key.empty() && selectedValues.contains(timeline.key))
+        {
+            orderedValues.push_back(timeline.key);
+        }
+    }
+    for (const std::string& selectedValue : selectedValues)
+    {
+        if (selectedValue != "latest" &&
+            std::ranges::find(orderedValues, selectedValue) == orderedValues.end())
+        {
+            orderedValues.push_back(selectedValue);
+        }
+    }
+    return orderedValues;
+}
+
+std::string buildHiddenExportTianDiTuMultidateYearsHtml()
+{
+    return "<div id=\"export-tianditu-multidate-years\"></div>";
+}
 
 bool isExportProviderSource(std::string_view sourceId)
 {
@@ -1690,6 +1800,24 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                     SelectTianDiTuMultidateTimeline(runtime, event.value);
                     return;
                 }
+                if (isExportTianDiTuMultidateYearControl(event.id))
+                {
+                    const std::string selectedValue = event.value.empty() ?
+                        "latest" : event.value;
+                    if (event.checked)
+                    {
+                        exportTianDiTuMultidateSelectedValues_.insert(selectedValue);
+                        SelectTianDiTuMultidateTimeline(runtime, selectedValue);
+                    }
+                    else
+                    {
+                        exportTianDiTuMultidateSelectedValues_.erase(selectedValue);
+                    }
+                    lastExportTianDiTuMultidateYearsHtml_.clear();
+                    UpdateExportUi(runtime);
+                    requestRedraw();
+                    return;
+                }
                 const auto providerControl = std::find_if(
                     kExportProviderControls.begin(), kExportProviderControls.end(),
                     [&event](const auto& item) { return item.second == event.id; });
@@ -1699,6 +1827,13 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                     if (event.checked)
                     {
                         exportMapSourceIds_.insert(sourceId);
+                        if (isTianDiTuMultidateSource(sourceId) &&
+                            tianDiTuMultidateSelectedValue_ != "latest")
+                        {
+                            exportTianDiTuMultidateSelectedValues_.clear();
+                            exportTianDiTuMultidateSelectedValues_.insert(
+                                tianDiTuMultidateSelectedValue_);
+                        }
                     }
                     else
                     {
@@ -1708,7 +1843,14 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                     {
                         exportGisOverlayOnSatellite_ = false;
                     }
-                    UpdateExportUi(runtime);
+                    if (isTianDiTuMultidateSource(sourceId) && event.checked)
+                    {
+                        EnsureExportTianDiTuMultidateYears(runtime);
+                    }
+                    else
+                    {
+                        UpdateExportUi(runtime);
+                    }
                     requestRedraw();
                     return;
                 }
@@ -3315,7 +3457,8 @@ void DomDownToolPreview::PreviewController::updateSearchUi(skui::Runtime& runtim
                     static_cast<int>(searchState_), searchResults_.size()));
 }
 
-void DomDownToolPreview::PreviewController::LoginTianDiTuMultidate(skui::Runtime& runtime)
+void DomDownToolPreview::PreviewController::LoginTianDiTuMultidate(
+    skui::Runtime& runtime, std::string_view preferredYear)
 {
     tianDiTuMultidateStatus_ = "请在弹出的天地图窗口完成登录。";
     UpdateTianDiTuMultidateUi(runtime, renderer_.activeSource());
@@ -3334,7 +3477,7 @@ void DomDownToolPreview::PreviewController::LoginTianDiTuMultidate(skui::Runtime
     tianDiTuMultidateCookie_ = response.cookie;
     renderer_.SetTianDiTuMultidateCookie(tianDiTuMultidateCookie_);
     tianDiTuMultidateStatus_ = "已同步本次运行的天地图登录态，可刷新历史时相。";
-    RefreshTianDiTuMultidateTimelines(runtime);
+    RefreshTianDiTuMultidateTimelines(runtime, preferredYear);
 }
 
 void DomDownToolPreview::PreviewController::RefreshTianDiTuMultidateTimelines(
@@ -3567,6 +3710,56 @@ std::string DomDownToolPreview::PreviewController::GetSelectedTianDiTuMultidateY
         return {};
     }
     return selected->year.empty() ? selected->time : selected->year;
+}
+
+std::string DomDownToolPreview::PreviewController::GetSelectedExportTianDiTuMultidateYear()
+    const
+{
+    if (exportTianDiTuMultidateSelectedValues_.empty() ||
+        exportTianDiTuMultidateSelectedValues_.contains("latest"))
+    {
+        return GetSelectedTianDiTuMultidateYear();
+    }
+
+    const auto selected = std::ranges::find_if(
+        tianDiTuMultidateTimelines_,
+        [this](const auto& item)
+        {
+            return exportTianDiTuMultidateSelectedValues_.contains(item.key);
+        });
+    if (selected == tianDiTuMultidateTimelines_.end())
+    {
+        return GetSelectedTianDiTuMultidateYear();
+    }
+
+    return tianDiTuMultidateTimelineYear(*selected);
+}
+
+void DomDownToolPreview::PreviewController::EnsureExportTianDiTuMultidateYears(
+    skui::Runtime& runtime)
+{
+    if (!exportMapSourceIds_.contains("tianditu.multidate"))
+    {
+        return;
+    }
+
+    const std::string preferredYear = GetSelectedExportTianDiTuMultidateYear();
+    if (tianDiTuMultidateCookie_.empty())
+    {
+        LoginTianDiTuMultidate(runtime, preferredYear);
+    }
+    else
+    {
+        RefreshTianDiTuMultidateTimelines(runtime, preferredYear);
+    }
+
+    if (exportTianDiTuMultidateSelectedValues_.empty())
+    {
+        exportTianDiTuMultidateSelectedValues_.insert(
+            tianDiTuMultidateSelectedValue_.empty() ? "latest" : tianDiTuMultidateSelectedValue_);
+    }
+    lastExportTianDiTuMultidateYearsHtml_.clear();
+    UpdateExportUi(runtime);
 }
 
 void DomDownToolPreview::PreviewController::RefreshTianDiTuMultidateAfterViewChange(
@@ -4035,6 +4228,7 @@ void DomDownToolPreview::PreviewController::OpenExportPage(skui::Runtime& runtim
     InitializeExportDraft(runtime, configuration ? &*configuration : nullptr);
     page_ = Page::Export;
     updateUi(runtime);
+    EnsureExportTianDiTuMultidateYears(runtime);
     requestRedraw();
 }
 
@@ -4122,17 +4316,37 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
     exportZoomValue_ = fmt::format("{:.0f}", configuration ?
                                    configuration->zoom : std::round(renderer_.zoom()));
     exportMapSourceIds_.clear();
+    exportTianDiTuMultidateSelectedValues_.clear();
     if (configuration)
     {
         for (const SatelliteExportSource& exportSource : configuration->satelliteSources)
         {
             exportMapSourceIds_.insert(exportSource.id);
+            if (isTianDiTuMultidateSource(exportSource.id))
+            {
+                exportTianDiTuMultidateSelectedValues_.insert(
+                    exportSource.multidateKey.empty() ? "latest" : exportSource.multidateKey);
+            }
         }
     }
     else if (source.id != "none" && isExportProviderSource(source.id))
     {
         exportMapSourceIds_.insert(source.id);
+        if (isTianDiTuMultidateSource(source.id) &&
+            !tianDiTuMultidateSelectedValue_.empty())
+        {
+            exportTianDiTuMultidateSelectedValues_.insert(tianDiTuMultidateSelectedValue_);
+        }
     }
+    else if (!tianDiTuMultidateSelectedValue_.empty())
+    {
+        exportTianDiTuMultidateSelectedValues_.insert(tianDiTuMultidateSelectedValue_);
+    }
+    if (exportTianDiTuMultidateSelectedValues_.empty())
+    {
+        exportTianDiTuMultidateSelectedValues_.insert("latest");
+    }
+    lastExportTianDiTuMultidateYearsHtml_.clear();
     exportOutputValue_ = configuration && !configuration->outputRoot.empty() ?
         pathToUtf8(configuration->outputRoot) : "";
     exportValidationMessage_.clear();
@@ -4258,6 +4472,20 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
                     parseFiniteDouble(exportLatitudeValue_).value_or(0.),
                     exportZoomValue_, radius.value_or(0.)));
     runtime.setTextById("export-validation-message", exportValidationMessage_);
+
+    if (exportTianDiTuMultidateSelectedValues_.empty())
+    {
+        exportTianDiTuMultidateSelectedValues_.insert("latest");
+    }
+    const std::string yearOptionsHtml = exportMapSourceIds_.contains("tianditu.multidate")
+        ? buildExportTianDiTuMultidateYearsHtml(
+            tianDiTuMultidateTimelines_, exportTianDiTuMultidateSelectedValues_)
+        : buildHiddenExportTianDiTuMultidateYearsHtml();
+    if (yearOptionsHtml != lastExportTianDiTuMultidateYearsHtml_)
+    {
+        runtime.replaceHtmlById("export-tianditu-multidate-years", yearOptionsHtml);
+        lastExportTianDiTuMultidateYearsHtml_ = yearOptionsHtml;
+    }
 
     for (const ExportGisUiGroup& group : exportGisGroups_)
     {
@@ -4586,8 +4814,73 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
             error = "卫星图来源无效。";
             return std::nullopt;
         }
-        configuration.satelliteSources.push_back(
-            SatelliteExportSource{source->id, source->name, source->cacheRoot});
+
+        if (isTianDiTuMultidateSource(source->id))
+        {
+            const std::vector<std::string> exportYearValues =
+                selectedExportTianDiTuMultidateValuesInDisplayOrder(
+                    exportTianDiTuMultidateSelectedValues_, tianDiTuMultidateTimelines_);
+            if (exportYearValues.empty())
+            {
+                error = "天地图多时相导出至少需要选择一个年份。";
+                return std::nullopt;
+            }
+
+            std::set<std::string> usedSourceNames;
+            for (const std::string& exportYearValue : exportYearValues)
+            {
+                SatelliteExportSource exportSource{source->id, source->name, source->cacheRoot};
+                exportSource.cachePath = tianDiTuMultidateExportCacheRoot();
+                if (exportYearValue == "latest")
+                {
+                    exportSource.name = "天地图多时相 最新影像";
+                }
+                else
+                {
+                    const auto selected = std::ranges::find_if(
+                        tianDiTuMultidateTimelines_,
+                        [&exportYearValue](const auto& item)
+                        {
+                            return item.key == exportYearValue;
+                        });
+                    if (selected == tianDiTuMultidateTimelines_.end() || selected->key.empty())
+                    {
+                        error = "天地图多时相导出需要先刷新并选择有效历史时相。";
+                        return std::nullopt;
+                    }
+                    if (tianDiTuMultidateCookie_.empty())
+                    {
+                        error = "天地图多时相历史导出需要当前登录态，请重新登录后刷新年份。";
+                        return std::nullopt;
+                    }
+                    if (tianDiTuMultidateRegionGbCode_.empty() &&
+                        tianDiTuMultidateRegionName_.empty())
+                    {
+                        error = "天地图多时相历史导出缺少区域参数，请刷新年份后再导出。";
+                        return std::nullopt;
+                    }
+
+                    const std::string year = tianDiTuMultidateTimelineYear(*selected);
+                    exportSource.name = "天地图多时相 " + year;
+                    exportSource.multidateYear = year;
+                    exportSource.multidateKey = selected->key;
+                    exportSource.multidateGbCode = tianDiTuMultidateRegionGbCode_;
+                    exportSource.multidateRegionName = tianDiTuMultidateRegionName_;
+                    exportSource.multidateCookie = tianDiTuMultidateCookie_;
+                }
+
+                const std::string baseName = exportSource.name;
+                for (size_t suffix = 2; usedSourceNames.contains(exportSource.name); ++suffix)
+                {
+                    exportSource.name = fmt::format("{} ({})", baseName, suffix);
+                }
+                usedSourceNames.insert(exportSource.name);
+                configuration.satelliteSources.push_back(std::move(exportSource));
+            }
+            continue;
+        }
+        SatelliteExportSource exportSource{source->id, source->name, source->cacheRoot};
+        configuration.satelliteSources.push_back(std::move(exportSource));
     }
     configuration.gisCategories.clear();
     for (const ExportGisUiGroup& group : exportGisGroups_)

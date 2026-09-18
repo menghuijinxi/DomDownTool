@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <numbers>
+#include <string_view>
+#include <system_error>
 #include <utility>
 
 #include "ArcGISDown.h"
@@ -34,6 +37,7 @@ namespace
 {
 constexpr uint32_t kTileSize = 256;
 constexpr double kEarthRadiusMeters = 6378137.;
+constexpr auto kMultidateEmptyTileRetryDelay = std::chrono::seconds(10);
 
 std::string pathToUtf8(const std::filesystem::path& path)
 {
@@ -71,6 +75,75 @@ std::filesystem::path multidateCacheRoot(std::string layerName)
 {
     return std::filesystem::u8path("cache/天地图多时相") /
         std::filesystem::u8path(sanitizeCacheLayerName(std::move(layerName)));
+}
+
+std::filesystem::path multidateCacheRoot(std::string_view year, std::string_view key,
+                                         std::string_view gbCode,
+                                         std::string_view regionName)
+{
+    return multidateCacheRoot(DownTool::TianDiTuMultidateDown::BuildCacheLayerName(
+        year, key, gbCode, regionName));
+}
+
+std::filesystem::path emptyTileMarkerPath(const std::filesystem::path& tilePath)
+{
+    std::filesystem::path markerPath = tilePath;
+    markerPath += L".empty";
+    return markerPath;
+}
+
+bool shouldRetryEmptyTilePlaceholder(
+    const std::filesystem::path& tilePath,
+    const DomDownToolPreview::TilePersistentFailureState& failureState,
+    bool forceRetry)
+{
+    if (failureState.exhausted)
+    {
+        return false;
+    }
+    if (forceRetry)
+    {
+        return true;
+    }
+
+    const std::filesystem::path markerPath = emptyTileMarkerPath(tilePath);
+    std::error_code existsError;
+    if (!std::filesystem::exists(markerPath, existsError) || existsError)
+    {
+        return true;
+    }
+
+    std::error_code timeError;
+    const std::filesystem::file_time_type markerTime =
+        std::filesystem::last_write_time(markerPath, timeError);
+    if (timeError)
+    {
+        return true;
+    }
+
+    return std::filesystem::file_time_type::clock::now() - markerTime >=
+        kMultidateEmptyTileRetryDelay;
+}
+
+void removeEmptyTileImageForRetry(const std::filesystem::path& tilePath)
+{
+    std::error_code removeError;
+    std::filesystem::remove(tilePath, removeError);
+}
+
+std::string persistentFailureStateText(
+    const DomDownToolPreview::TilePersistentFailureState& failureState)
+{
+    if (failureState.attempts == 0)
+    {
+        return "请求失败";
+    }
+
+    const char* reason = failureState.kind ==
+        DomDownToolPreview::TilePersistentFailureKind::EmptyResponse ? "连续空响应" :
+        "连续失败";
+    return "请求失败（" + std::string(reason) + " " +
+        std::to_string(failureState.attempts) + " 次）";
 }
 
 size_t regularFileSize(const std::filesystem::path& path)
@@ -358,6 +431,33 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
                 TileDebugEntry{visibleTile.left, visibleTile.top, visibleTile.size,
                                std::move(layer)});
         };
+        const auto queueDownload =
+            [&](const VisibleTile& visibleTile, const std::filesystem::path& tilePath)
+        {
+            if (TileDownloadQueue::HasExhaustedPersistentFailures(tilePath))
+            {
+                return;
+            }
+
+            TileDownloadJob job{
+                tilePath,
+                visibleTile.cacheTile,
+                &projection,
+                projection.BuildTileHttpRequest(visibleTile.cacheTile)};
+            job.useTransparentPlaceholderOnEmptyResponse = !drawMissingTiles;
+            if (customDownloader != nullptr && *customDownloader)
+            {
+                job.customDownloader = *customDownloader;
+            }
+            const double tileCenterX =
+                visibleTile.left + static_cast<double>(visibleTile.size) * 0.5;
+            const double tileCenterY =
+                visibleTile.top + static_cast<double>(visibleTile.size) * 0.5;
+            const double distanceX = tileCenterX - mapCenterX;
+            const double distanceY = tileCenterY - mapCenterY;
+            job.priority = distanceX * distanceX + distanceY * distanceY;
+            downloadJobs.push_back(std::move(job));
+        };
         for (const VisibleTile& visibleTile : visibleTiles)
         {
             const std::filesystem::path tilePath =
@@ -365,27 +465,23 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
             sk_sp<SkImage> image = imageCache_.findOrRequest(tilePath, canvas);
             if (!image)
             {
-                const bool knownMissing = imageCache_.isKnownMissing(tilePath);
-                if (knownMissing)
+                const TilePersistentFailureState failureState =
+                    TileDownloadQueue::GetPersistentFailureState(tilePath);
+                if (failureState.exhausted)
                 {
-                    TileDownloadJob job{
-                        tilePath,
-                        visibleTile.cacheTile,
-                        &projection,
-                        projection.BuildTileHttpRequest(visibleTile.cacheTile)};
-                    job.useTransparentPlaceholderOnEmptyResponse = !drawMissingTiles;
-                    if (customDownloader != nullptr && *customDownloader)
+                    rememberTileDebug(visibleTile, tilePath,
+                                      persistentFailureStateText(failureState), 0, 0);
+                    if (drawMissingTiles)
                     {
-                        job.customDownloader = *customDownloader;
+                        drawMissingTile(canvas, visibleTile);
                     }
-                    const double tileCenterX =
-                        visibleTile.left + static_cast<double>(visibleTile.size) * 0.5;
-                    const double tileCenterY =
-                        visibleTile.top + static_cast<double>(visibleTile.size) * 0.5;
-                    const double distanceX = tileCenterX - mapCenterX;
-                    const double distanceY = tileCenterY - mapCenterY;
-                    job.priority = distanceX * distanceX + distanceY * distanceY;
-                    downloadJobs.push_back(std::move(job));
+                    continue;
+                }
+
+                const bool knownMissing = imageCache_.isKnownMissing(tilePath);
+                if (knownMissing || failureState.attempts != 0)
+                {
+                    queueDownload(visibleTile, tilePath);
                 }
                 const size_t fileBytes = regularFileSize(tilePath);
                 rememberTileDebug(visibleTile, tilePath,
@@ -399,17 +495,39 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
                 continue;
             }
 
-            result.readyTiles++;
             const SkRect sourceRect = SkRect::MakeIWH(image->width(), image->height());
             const bool transparentPlaceholder = !drawMissingTiles && image->width() == 1 &&
                 image->height() == 1;
             if (transparentPlaceholder)
             {
+                const TilePersistentFailureState failureState =
+                    TileDownloadQueue::GetPersistentFailureState(tilePath);
+                if (failureState.exhausted)
+                {
+                    rememberTileDebug(visibleTile, tilePath,
+                                      persistentFailureStateText(failureState), image->width(),
+                                      image->height());
+                    continue;
+                }
+
+                if (shouldRetryEmptyTilePlaceholder(tilePath, failureState,
+                                                    forceRetryKnownTileFailures_))
+                {
+                    imageCache_.invalidate(tilePath);
+                    removeEmptyTileImageForRetry(tilePath);
+                    queueDownload(visibleTile, tilePath);
+                    rememberTileDebug(visibleTile, tilePath, "透明占位重试", image->width(),
+                                      image->height());
+                    continue;
+                }
+
+                result.readyTiles++;
                 result.emptyTiles++;
                 rememberTileDebug(visibleTile, tilePath, "服务端空白占位", image->width(),
                                   image->height());
                 continue;
             }
+            result.readyTiles++;
             rememberTileDebug(visibleTile, tilePath, "已显示", image->width(), image->height());
             const SkRect destinationRect = SkRect::MakeXYWH(
                 static_cast<float>(visibleTile.left), static_cast<float>(visibleTile.top),
@@ -455,6 +573,7 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
     }
 
     downloadQueue_.updateVisibleRequests(downloadJobs);
+    forceRetryKnownTileFailures_ = false;
 
     const double worldPixels =
         static_cast<double>(kTileSize) * std::pow(2., viewport_.sourceZoom());
@@ -607,7 +726,7 @@ bool DomDownToolPreview::MapRenderer::ConfigureTianDiTuMultidateLayer(
     projection->SetMultidateRegion(gbCode, name);
     projection->SetSessionCookie(cookie);
     projection->SetYearKey(year, key);
-    sourceIterator->summary.cacheRoot = multidateCacheRoot(year.empty() ? key : year);
+    sourceIterator->summary.cacheRoot = multidateCacheRoot(year, key, gbCode, name);
     projection->SetCachePath(pathToUtf8(sourceIterator->summary.cacheRoot));
     downloadQueue_.cancelPending();
     tileDebugEntries_.clear();
@@ -759,9 +878,16 @@ DomDownToolPreview::MapRenderer::TileDebugAt(double screenX, double screenY) con
 void DomDownToolPreview::MapRenderer::clearCache()
 {
     downloadQueue_.cancelPending();
+    const MapSource& source = currentSource();
+    TileDownloadQueue::ClearPersistentFailureStatesUnder(source.summary.cacheRoot);
+    if (source.summary.id == "tianditu.multidate")
+    {
+        TileDownloadQueue::ClearPersistentFailureStatesUnder(multidateCacheRoot("latest"));
+    }
     imageCache_.clear();
     gisOverlay_.Clear();
     tileDebugEntries_.clear();
+    forceRetryKnownTileFailures_ = true;
 }
 
 DomDownToolPreview::MapRenderer::MapSource& DomDownToolPreview::MapRenderer::currentSource()

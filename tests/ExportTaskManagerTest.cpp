@@ -7,6 +7,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -146,6 +147,81 @@ class ProgressBurstDownloader final : public DownTool::DownToolBase
             std::ofstream(outputRoot / "meta.json", std::ios::binary) << "{}\n";
         }
     }
+};
+
+class ImageOutputDownloader final : public DownTool::DownToolBase
+{
+  public:
+    explicit ImageOutputDownloader(cv::Scalar color) : color_(color)
+    {
+    }
+
+    void StartDown() override
+    {
+        ReportProgress("下载瓦片", 1, 2);
+        if (GetPostProcessEnabled())
+        {
+            const std::filesystem::path outputRoot =
+                std::filesystem::u8path(GetPostProcessOutputPath());
+            const std::filesystem::path tilePath = outputRoot / "15" / "1" / "2.png";
+            writeImage(tilePath);
+            std::ofstream(outputRoot / "meta.json", std::ios::binary) << "{}\n";
+        }
+        if (GetPostProcessMergedImageEnabled())
+        {
+            writeImage(std::filesystem::u8path(GetPostProcessMergedImageOutputPath()));
+        }
+        if (GetPostProcessFbxEnabled())
+        {
+            const std::filesystem::path fbxRoot = std::filesystem::u8path(GetFbxOutputPath());
+            writeImage(fbxRoot / "0_0.png");
+            std::ofstream(fbxRoot / "manifest.json", std::ios::binary) << "{}\n";
+        }
+        ReportProgress("合并大图", 1, 1);
+    }
+
+  private:
+    void writeImage(const std::filesystem::path& path) const
+    {
+        std::error_code directoryError;
+        std::filesystem::create_directories(path.parent_path(), directoryError);
+        if (directoryError)
+        {
+            return;
+        }
+
+        const cv::Mat image(2, 2, CV_8UC4, color_);
+        std::string extension = path.extension().string();
+        if (extension.empty())
+        {
+            extension = ".png";
+        }
+
+        cv::Mat convertedImage;
+        const cv::Mat* imageToEncode = &image;
+        if (extension == ".jpg" || extension == ".jpeg")
+        {
+            cv::cvtColor(image, convertedImage, cv::COLOR_BGRA2BGR);
+            imageToEncode = &convertedImage;
+        }
+
+        std::vector<unsigned char> encoded;
+        if (!cv::imencode(extension, *imageToEncode, encoded))
+        {
+            return;
+        }
+
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        if (!output.is_open())
+        {
+            return;
+        }
+        output.write(
+            reinterpret_cast<const char*>(encoded.data()),
+            static_cast<std::streamsize>(encoded.size()));
+    }
+
+    cv::Scalar color_;
 };
 
 DomDownToolPreview::ExportConfiguration makeCancelableConfiguration(
@@ -734,6 +810,149 @@ bool runTest()
                     configuration->satelliteSources.size() == 1 &&
                     configuration->satelliteSources.front().id == "test.satellite",
                 "重启后没有完整恢复任务导出参数"))
+        {
+            return false;
+        }
+    }
+
+    {
+        const std::filesystem::path multidateRecordsPath =
+            testRoot / "multidate-records.json";
+        const auto multidateDownloaderIndex = std::make_shared<std::atomic_uint32_t>(0);
+        DomDownToolPreview::ExportTaskManager manager(
+            {}, multidateRecordsPath,
+            [multidateDownloaderIndex](std::string_view)
+            {
+                const uint32_t index = multidateDownloaderIndex->fetch_add(
+                    1, std::memory_order_relaxed);
+                const bool historyOverlay = index % 2 == 1;
+                return std::make_unique<ImageOutputDownloader>(historyOverlay ?
+                    cv::Scalar(110, 120, 130, 128) :
+                    cv::Scalar(10, 20, 30, 255));
+            });
+        DomDownToolPreview::ExportConfiguration configuration =
+            makeCancelableConfiguration(testRoot / "multidate-output");
+        configuration.exportMergedImage = true;
+        configuration.mergedImageFormat = "png";
+        configuration.satelliteSources.clear();
+        DomDownToolPreview::SatelliteExportSource source{
+            "tianditu.multidate", "天地图多时相 2024", testRoot / "multidate-cache"};
+        source.multidateYear = "2024";
+        source.multidateKey = "key-2024";
+        source.multidateGbCode = "156110000";
+        source.multidateRegionName = "北京";
+        source.multidateCookie = "session-cookie";
+        configuration.satelliteSources.push_back(source);
+        DomDownToolPreview::SatelliteExportSource secondSource{
+            "tianditu.multidate", "天地图多时相 2023", testRoot / "multidate-cache"};
+        secondSource.multidateYear = "2023";
+        secondSource.multidateKey = "key-2023";
+        secondSource.multidateGbCode = "156110000";
+        secondSource.multidateRegionName = "北京";
+        secondSource.multidateCookie = "session-cookie";
+        configuration.satelliteSources.push_back(secondSource);
+        const std::string taskId = manager.Enqueue(configuration);
+        const bool finished = waitForFinished(manager, taskId);
+        const std::vector<DomDownToolPreview::ExportTaskRecord> records =
+            manager.GetRecords();
+        const DomDownToolPreview::ExportTaskRecord* record = findRecord(records, taskId);
+        const Json persisted = loadJsonFile(multidateRecordsPath);
+        bool persistedHasMultidate = false;
+        bool persistedDroppedCookie = false;
+        if (persisted.is_object())
+        {
+            const auto tasks = persisted.find("tasks");
+            if (tasks != persisted.end() && tasks->is_array() && !tasks->empty())
+            {
+                const Json& savedTask = tasks->front();
+                const auto savedConfiguration = savedTask.find("configuration");
+                const Json* savedSources = nullptr;
+                if (savedConfiguration != savedTask.end() && savedConfiguration->is_object())
+                {
+                    const auto sources = savedConfiguration->find("satelliteSources");
+                    if (sources != savedConfiguration->end())
+                    {
+                        savedSources = &*sources;
+                    }
+                }
+                if (savedSources && savedSources->is_array() && savedSources->size() == 2)
+                {
+                    const Json& savedSource = (*savedSources)[0];
+                    const Json& secondSavedSource = (*savedSources)[1];
+                    persistedHasMultidate =
+                        savedSource.value("multidateYear", "") == "2024" &&
+                        savedSource.value("multidateKey", "") == "key-2024" &&
+                        savedSource.value("multidateGbCode", "") == "156110000" &&
+                        savedSource.value("multidateRegionName", "") == "北京" &&
+                        secondSavedSource.value("multidateYear", "") == "2023" &&
+                        secondSavedSource.value("multidateKey", "") == "key-2023" &&
+                        secondSavedSource.value("multidateGbCode", "") == "156110000" &&
+                        secondSavedSource.value("multidateRegionName", "") == "北京";
+                    persistedDroppedCookie = !savedSource.contains("multidateCookie") &&
+                        !secondSavedSource.contains("multidateCookie");
+                }
+            }
+        }
+        const std::filesystem::path conversionRecord =
+            configuration.outputRoot / std::filesystem::u8path("导出任务") /
+            std::filesystem::u8path(taskId) /
+            std::filesystem::u8path("转换记录-" + taskId + ".txt");
+        const std::filesystem::path firstMergedImage =
+            configuration.outputRoot / std::filesystem::u8path("导出任务") /
+            std::filesystem::u8path(taskId) / std::filesystem::u8path("卫星图") /
+            std::filesystem::u8path("天地图多时相 2024") / "merged.png";
+        const std::filesystem::path asciiMultidateMergedImage =
+            testRoot / "multidate-composed.png";
+        std::filesystem::copy_file(
+            firstMergedImage,
+            asciiMultidateMergedImage,
+            std::filesystem::copy_options::overwrite_existing,
+            fileError);
+        const cv::Mat composedMultidateImage = cv::imread(
+            postprocess_test::PathToUtf8String(asciiMultidateMergedImage),
+            cv::IMREAD_UNCHANGED);
+        const cv::Vec4b composedMultidatePixel = composedMultidateImage.empty() ?
+            cv::Vec4b(0, 0, 0, 0) : composedMultidateImage.at<cv::Vec4b>(0, 0);
+        if (!postprocess_test::Require(
+                finished && record &&
+                    record->state == DomDownToolPreview::ExportTaskState::Succeeded &&
+                    persistedHasMultidate && persistedDroppedCookie &&
+                    !fileError &&
+                    multidateDownloaderIndex->load(std::memory_order_relaxed) == 4 &&
+                    composedMultidatePixel[0] == 60 && composedMultidatePixel[1] == 70 &&
+                    composedMultidatePixel[2] == 80 && composedMultidatePixel[3] == 255 &&
+                    postprocess_test::ContainsText(conversionRecord, "多时相年份: 2024") &&
+                    postprocess_test::ContainsText(conversionRecord, "多时相年份: 2023") &&
+                    postprocess_test::ContainsText(conversionRecord, "多时相区域: 北京") &&
+                    !postprocess_test::ContainsText(conversionRecord, "session-cookie"),
+                "天地图多时相导出参数没有正确持久化，或泄露了一次性登录 cookie"))
+        {
+            return false;
+        }
+    }
+
+    {
+        DomDownToolPreview::ExportTaskManager manager(
+            {}, testRoot / "multidate-records.json");
+        const std::vector<DomDownToolPreview::ExportTaskRecord> records =
+            manager.GetRecords();
+        const std::optional<DomDownToolPreview::ExportConfiguration> configuration =
+            records.size() == 1 ? records.front().configuration : std::nullopt;
+        if (!postprocess_test::Require(
+                configuration.has_value() && configuration->satelliteSources.size() == 2 &&
+                    configuration->satelliteSources[0].id == "tianditu.multidate" &&
+                    configuration->satelliteSources[0].multidateYear == "2024" &&
+                    configuration->satelliteSources[0].multidateKey == "key-2024" &&
+                    configuration->satelliteSources[0].multidateGbCode == "156110000" &&
+                    configuration->satelliteSources[0].multidateRegionName == "北京" &&
+                    configuration->satelliteSources[0].multidateCookie.empty() &&
+                    configuration->satelliteSources[1].id == "tianditu.multidate" &&
+                    configuration->satelliteSources[1].multidateYear == "2023" &&
+                    configuration->satelliteSources[1].multidateKey == "key-2023" &&
+                    configuration->satelliteSources[1].multidateGbCode == "156110000" &&
+                    configuration->satelliteSources[1].multidateRegionName == "北京" &&
+                    configuration->satelliteSources[1].multidateCookie.empty(),
+                "重启后没有恢复天地图多时相导出参数，或恢复了不该持久化的 cookie"))
         {
             return false;
         }

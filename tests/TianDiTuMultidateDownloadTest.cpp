@@ -1,11 +1,15 @@
 #include "PostProcessTestSupport.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "TianDiTuMultidateDown.h"
@@ -23,6 +27,61 @@ namespace
         using DownTool::TianDiTuMultidateDown::TryGetSourceTileMatrixSize;
         using DownTool::TianDiTuMultidateDown::TryGetSourceTilePixelForLonLat;
     };
+
+    class EmptyTileTianDiTuMultidateDown final : public TestTianDiTuMultidateDown
+    {
+    public:
+        explicit EmptyTileTianDiTuMultidateDown(std::string url) : url_(std::move(url))
+        {
+        }
+
+        void SetResponseUrl(std::string url)
+        {
+            url_ = std::move(url);
+        }
+
+        std::string MakeUri(const DownTool::Tile& tile) override
+        {
+            (void)tile;
+            return url_;
+        }
+
+    private:
+        std::string url_;
+    };
+
+    class PartialUnavailableTianDiTuMultidateDown final : public TestTianDiTuMultidateDown
+    {
+    public:
+        explicit PartialUnavailableTianDiTuMultidateDown(std::string url) : url_(std::move(url))
+        {
+        }
+
+        std::string MakeUri(const DownTool::Tile& tile) override
+        {
+            (void)tile;
+            return url_;
+        }
+
+    protected:
+        bool IsUnavailableTileResponseHeader(
+            const std::map<std::string, std::string>& responseHeaders,
+            const DownTool::Tile& tile) const override
+        {
+            (void)responseHeaders;
+            return tile.X != 26978 || tile.Y != 4560;
+        }
+
+    private:
+        std::string url_;
+    };
+
+    std::string FileUrl(const std::filesystem::path& path)
+    {
+        std::string value = postprocess_test::PathToUtf8String(path);
+        std::replace(value.begin(), value.end(), '\\', '/');
+        return value.starts_with('/') ? "file://" + value : "file:///" + value;
+    }
 
     bool ContainsText(const std::string& text, const std::string& expected)
     {
@@ -102,6 +161,23 @@ namespace
                 ContainsText(yearUrl, "gb=156110000") &&
                 ContainsText(yearUrl, "name=%E5%8C%97%E4%BA%AC"),
             "TianDiTu multidate selected year URL did not include key and region"))
+        {
+            return false;
+        }
+
+        const std::string beijingLayer =
+            DownTool::TianDiTuMultidateDown::BuildCacheLayerName(
+                "2024", "time-key-2024", "156110000", "北京");
+        const std::string langfangLayer =
+            DownTool::TianDiTuMultidateDown::BuildCacheLayerName(
+                "2024", "time-key-2024", "156130000", "廊坊市");
+        const std::string otherKeyLayer =
+            DownTool::TianDiTuMultidateDown::BuildCacheLayerName(
+                "2024", "another-time-key-2024", "156110000", "北京");
+        if (!postprocess_test::Require(
+                beijingLayer != "2024" && beijingLayer != "latest" &&
+                    beijingLayer != langfangLayer && beijingLayer != otherKeyLayer,
+                "TianDiTu multidate cache layer did not isolate year, key and region"))
         {
             return false;
         }
@@ -348,6 +424,106 @@ namespace
                 records.front().projection == "c" &&
                 records.front().minZoom == 12 && records.front().maxZoom == 18,
             "TianDiTu multidate timeline parser did not decode GetRegion response"))
+        {
+            return false;
+        }
+
+        const std::filesystem::path emptyHistoryRoot =
+            postprocess_test::MakeTestRoot("tianditu-multidate-empty-history");
+        const std::filesystem::path emptyResponsePath = emptyHistoryRoot / "empty.bin";
+        const std::filesystem::path mergedImagePath = emptyHistoryRoot / "merged.png";
+        if (!postprocess_test::Require(
+                postprocess_test::ResetDirectory(emptyHistoryRoot),
+                "无法准备多时相空瓦片测试目录"))
+        {
+            return false;
+        }
+
+        std::ofstream(emptyResponsePath, std::ios::binary | std::ios::trunc).close();
+        EmptyTileTianDiTuMultidateDown emptyTileTool(FileUrl(emptyResponsePath));
+        emptyTileTool.SetCenterLonLat(DownTool::LonLat(116.397389, 39.908722));
+        emptyTileTool.SetRadius(1.);
+        emptyTileTool.SetZoom(15);
+        emptyTileTool.SetMaxDownQueue(1);
+        emptyTileTool.SetCachePath(
+            postprocess_test::PathToUtf8String(emptyHistoryRoot / "cache"));
+        emptyTileTool.SetMultidateRegion("156110000", "北京");
+        emptyTileTool.SetYearKey("1966", "empty-response-key");
+        emptyTileTool.SetTransparentPlaceholderForEmptyTiles(true);
+        emptyTileTool.SetPostProcessMergedImageEnabled(true);
+        emptyTileTool.SetPostProcessMergedImageOutputPath(
+            postprocess_test::PathToUtf8String(mergedImagePath));
+        emptyTileTool.SetPostProcessMergedImageResolution(256);
+        emptyTileTool.StartDown();
+        const cv::Mat emptyHistoryImage = cv::imread(
+            postprocess_test::PathToUtf8String(mergedImagePath), cv::IMREAD_UNCHANGED);
+        const cv::Vec4b emptyHistoryPixel = emptyHistoryImage.empty() ?
+            cv::Vec4b(1, 1, 1, 1) : emptyHistoryImage.at<cv::Vec4b>(0, 0);
+        if (!postprocess_test::Require(
+                !emptyHistoryImage.empty() && emptyHistoryImage.channels() == 4 &&
+                    emptyHistoryPixel[3] == 0,
+                "多时相历史空瓦片没有生成透明合并图"))
+        {
+            return false;
+        }
+
+        const std::filesystem::path validResponsePath = emptyHistoryRoot / "valid.png";
+        const std::filesystem::path refreshedMergedImagePath = emptyHistoryRoot / "refreshed.png";
+        const cv::Mat validTile(4, 4, CV_8UC4, cv::Scalar(20, 40, 60, 255));
+        if (!postprocess_test::Require(
+                cv::imwrite(postprocess_test::PathToUtf8String(validResponsePath), validTile),
+                "无法准备多时相有效瓦片测试数据"))
+        {
+            return false;
+        }
+        emptyTileTool.SetResponseUrl(FileUrl(validResponsePath));
+        emptyTileTool.SetPostProcessMergedImageOutputPath(
+            postprocess_test::PathToUtf8String(refreshedMergedImagePath));
+        emptyTileTool.StartDown();
+        const cv::Mat refreshedHistoryImage = cv::imread(
+            postprocess_test::PathToUtf8String(refreshedMergedImagePath), cv::IMREAD_UNCHANGED);
+        const cv::Vec4b refreshedHistoryPixel = refreshedHistoryImage.empty() ?
+            cv::Vec4b(0, 0, 0, 0) : refreshedHistoryImage.at<cv::Vec4b>(0, 0);
+        if (!postprocess_test::Require(
+                !refreshedHistoryImage.empty() && refreshedHistoryPixel[3] == 255 &&
+                    std::abs(static_cast<int>(refreshedHistoryPixel[0]) - 20) <= 2 &&
+                    std::abs(static_cast<int>(refreshedHistoryPixel[1]) - 40) <= 2 &&
+                    std::abs(static_cast<int>(refreshedHistoryPixel[2]) - 60) <= 2,
+                "多时相历史导出没有清理旧透明占位并重新下载真实瓦片"))
+        {
+            return false;
+        }
+
+        const std::filesystem::path partialHistoryRoot =
+            postprocess_test::MakeTestRoot("tianditu-multidate-partial-history");
+        const std::filesystem::path partialMergedImagePath = partialHistoryRoot / "merged.png";
+        if (!postprocess_test::Require(
+                postprocess_test::ResetDirectory(partialHistoryRoot),
+                "无法准备多时相部分失败瓦片测试目录"))
+        {
+            return false;
+        }
+
+        PartialUnavailableTianDiTuMultidateDown partialTileTool(FileUrl(validResponsePath));
+        partialTileTool.SetCenterLonLat(DownTool::LonLat(116.397389, 39.908722));
+        partialTileTool.SetRadius(1.);
+        partialTileTool.SetZoom(15);
+        partialTileTool.SetMaxDownQueue(1);
+        partialTileTool.SetCachePath(
+            postprocess_test::PathToUtf8String(partialHistoryRoot / "cache"));
+        partialTileTool.SetMultidateRegion("156110000", "北京");
+        partialTileTool.SetYearKey("2024", "partial-response-key");
+        partialTileTool.SetTransparentPlaceholderForEmptyTiles(true);
+        partialTileTool.SetPostProcessMergedImageEnabled(true);
+        partialTileTool.SetPostProcessMergedImageOutputPath(
+            postprocess_test::PathToUtf8String(partialMergedImagePath));
+        partialTileTool.SetPostProcessMergedImageResolution(256);
+        partialTileTool.StartDown();
+        const cv::Mat partialHistoryImage = cv::imread(
+            postprocess_test::PathToUtf8String(partialMergedImagePath), cv::IMREAD_UNCHANGED);
+        if (!postprocess_test::Require(
+                !partialHistoryImage.empty() && partialHistoryImage.channels() == 4,
+                "多时相历史覆盖部分瓦片失败时没有补透明并生成合并图"))
         {
             return false;
         }

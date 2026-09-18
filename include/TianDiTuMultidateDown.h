@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "TianDiTuDown.h"
@@ -23,6 +24,12 @@ namespace DownTool
 		};
 
 		TianDiTuMultidateDown();
+
+		static std::string BuildCacheLayerName(
+			std::string_view year,
+			std::string_view key,
+			std::string_view gbCode,
+			std::string_view regionName);
 
 		virtual void StartDown() override;
 
@@ -54,6 +61,8 @@ namespace DownTool
 		const std::string& GetYear() const { return SelectedYear; }
 
 		void UseLatestYear();
+
+		void UseLatestWmtsOnly();
 
 		void DownloadYear(const std::string& year);
 
@@ -88,6 +97,16 @@ namespace DownTool
 		void SetSessionCookie(const std::string& cookie);
 
 		void SetYearKey(const std::string& year, const std::string& key);
+
+		void SetTransparentPlaceholderForEmptyTiles(bool enabled)
+		{
+			bTransparentPlaceholderForEmptyTiles = enabled;
+		}
+
+		bool GetTransparentPlaceholderForEmptyTiles() const
+		{
+			return bTransparentPlaceholderForEmptyTiles;
+		}
 
 	protected:
 
@@ -124,6 +143,14 @@ namespace DownTool
 
 		std::string GetLayerCacheName() const;
 
+		void StartDownWithTransparentEmptyTiles();
+
+		uint32_t RemoveTransparentPlaceholderTiles(
+			const std::vector<Tile>& targetTiles) const;
+
+		uint32_t ReplaceUnavailableTilesWithTransparentPlaceholders(
+			const std::vector<Tile>& targetTiles) const;
+
 		bool TryGetGeographicTilePixelForLonLat(
 			const LonLat& lonLat,
 			uint32_t zoom,
@@ -139,5 +166,7 @@ namespace DownTool
 		std::string SessionCookie;
 		bool bUseLatestYear = true;
 		bool bHasPresetYearKey = false;
+		bool bTransparentPlaceholderForEmptyTiles = false;
+		bool bForceLatestWmtsOnly = false;
 	};
 }

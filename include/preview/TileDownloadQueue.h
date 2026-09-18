@@ -36,6 +36,22 @@ struct TileDownloadStats
     size_t failedTiles = 0;
 };
 
+inline constexpr size_t kPreviewTileFailureAttemptLimit = 12;
+
+enum class TilePersistentFailureKind
+{
+    None,
+    EmptyResponse,
+    RequestFailed
+};
+
+struct TilePersistentFailureState
+{
+    TilePersistentFailureKind kind = TilePersistentFailureKind::None;
+    size_t attempts = 0;
+    bool exhausted = false;
+};
+
 class TileDownloadQueue
 {
   public:
@@ -56,6 +72,16 @@ class TileDownloadQueue
     [[nodiscard]] std::vector<std::filesystem::path> takeCompletedPaths();
 
     [[nodiscard]] TileDownloadStats stats() const;
+
+    [[nodiscard]] static TilePersistentFailureState GetPersistentFailureState(
+        const std::filesystem::path& tilePath);
+
+    [[nodiscard]] static bool HasExhaustedPersistentFailures(
+        const std::filesystem::path& tilePath);
+
+    static void ClearPersistentFailureState(const std::filesystem::path& tilePath);
+
+    static void ClearPersistentFailureStatesUnder(const std::filesystem::path& root);
 
   private:
     struct PendingJob

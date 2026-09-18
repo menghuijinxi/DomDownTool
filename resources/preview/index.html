@@ -1349,11 +1349,19 @@
             min-width: 0;
         }
 
+        .export-content-body {
+            min-width: 0;
+        }
+
         .content-group > h3 {
             margin: 0 0 12px;
             color: #c9cfcc;
             font-size: 13px;
             font-weight: 400;
+        }
+
+        .content-group {
+            min-width: 0;
         }
 
         .check-grid {
@@ -1404,6 +1412,48 @@
             border: solid #ffffff;
             border-width: 0 2px 2px 0;
             transform: rotate(45deg);
+        }
+
+        .export-sub-options {
+            display: block;
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid #303634;
+            min-width: 0;
+        }
+
+        .export-sub-title {
+            display: block;
+            margin: 0 0 10px;
+            color: #aeb7b2;
+            font-size: 12px;
+            font-weight: 400;
+        }
+
+        .export-year-grid {
+            display: flex;
+            flex-wrap: wrap;
+            row-gap: 10px;
+            column-gap: 18px;
+            min-width: 0;
+        }
+
+        .export-year-grid .check-item {
+            flex: 0 0 128px;
+            max-width: 150px;
+            white-space: nowrap;
+        }
+
+        .export-year-grid .check-item span {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .export-sub-options .muted {
+            color: #89938f;
+            font-size: 12px;
+            white-space: nowrap;
         }
 
         .gis-combine-row {
@@ -2219,99 +2269,106 @@
 
             <section class="form-section">
                 <h2>导出内容</h2>
-                <div class="content-groups">
-                    <div class="content-group">
-                        <h3>卫星图</h3>
-                        <div class="check-grid">
-                            <label class="check-item">
-                                <input id="export-provider-gaode" type="checkbox">
-                                <span>高德卫星</span>
-                            </label>
-                            <label class="check-item">
-                                <input id="export-provider-tencent" type="checkbox">
-                                <span>腾讯卫星</span>
-                            </label>
-                            <label class="check-item">
-                                <input id="export-provider-tianditu" type="checkbox">
-                                <span>天地图影像</span>
-                            </label>
-                            <label class="check-item">
-                                <input id="export-provider-baidu" type="checkbox">
-                                <span>百度卫星</span>
-                            </label>
-                            <label class="check-item">
-                                <input id="export-provider-google" type="checkbox">
-                                <span>Google 卫星</span>
-                            </label>
-                            <label class="check-item">
-                                <input id="export-provider-bing" type="checkbox">
-                                <span>Bing 卫星</span>
-                            </label>
-                            <label class="check-item">
-                                <input id="export-provider-arcgis" type="checkbox">
-                                <span>ArcGIS 影像</span>
-                            </label>
-                        </div>
-                    </div>
-                    <div class="content-group">
-                        <h3>GIS 数据</h3>
-                        <div id="export-gis-groups" class="check-grid">
-                            <label id="export-gis-static-road" class="check-item">
-                                <input id="export-gis-group-1" type="checkbox" value="1">
-                                <span>道路</span>
-                            </label>
-                            <label id="export-gis-static-building" class="check-item">
-                                <input id="export-gis-group-2" type="checkbox" value="2">
-                                <span>建筑</span>
-                            </label>
-                            <label id="export-gis-static-water" class="check-item">
-                                <input id="export-gis-group-3" type="checkbox" value="3">
-                                <span>水</span>
-                            </label>
-                            <label id="export-gis-static-point" class="check-item">
-                                <input id="export-gis-group-4" type="checkbox" value="4">
-                                <span>点</span>
-                            </label>
-                            <label id="export-gis-static-green" class="check-item">
-                                <input id="export-gis-group-5" type="checkbox" value="5">
-                                <span>绿地</span>
-                            </label>
-                            <label id="export-gis-static-boundary" class="check-item">
-                                <input id="export-gis-group-6" type="checkbox" value="6">
-                                <span>边界</span>
-                            </label>
-                            <label id="export-gis-static-highway" class="check-item">
-                                <input id="export-gis-group-7" type="checkbox" value="7">
-                                <span>高速</span>
-                            </label>
-                            <label id="export-gis-static-other" class="check-item">
-                                <input id="export-gis-group-8" type="checkbox" value="8">
-                                <span>其他</span>
-                            </label>
-                            <label id="export-gis-static-subway" class="check-item">
-                                <input id="export-gis-group-9" type="checkbox" value="9">
-                                <span>地铁</span>
-                            </label>
-                        </div>
-                        <div class="gis-combine-row">
-                            <span class="gis-combine-title">GIS 组合方式</span>
-                            <div id="export-gis-combine-options" class="gis-combine-options">
-                                <label id="export-gis-combine-overlay-item" class="check-item">
-                                    <input id="export-gis-combine-overlay" type="checkbox" disabled>
-                                    <span>叠加到所选卫星图</span>
+                <div class="export-content-body">
+                    <div class="content-groups">
+                        <div class="content-group">
+                            <h3>卫星图</h3>
+                            <div class="check-grid">
+                                <label class="check-item">
+                                    <input id="export-provider-gaode" type="checkbox">
+                                    <span>高德卫星</span>
                                 </label>
-                                <label id="export-gis-combine-merged-item" class="check-item">
-                                    <input id="export-gis-combine-merged" type="checkbox" disabled>
-                                    <span>所选 GIS 图层合并输出</span>
+                                <label class="check-item">
+                                    <input id="export-provider-tencent" type="checkbox">
+                                    <span>腾讯卫星</span>
                                 </label>
-                                <label id="export-gis-combine-separate-item" class="check-item">
-                                    <input id="export-gis-combine-separate" type="checkbox" disabled>
-                                    <span>每个 GIS 图层单独输出</span>
+                                <label class="check-item">
+                                    <input id="export-provider-tianditu" type="checkbox">
+                                    <span>天地图影像</span>
+                                </label>
+                                <label class="check-item">
+                                    <input id="export-provider-tianditu-multidate" type="checkbox">
+                                    <span>天地图多时相</span>
+                                </label>
+                                <label class="check-item">
+                                    <input id="export-provider-baidu" type="checkbox">
+                                    <span>百度卫星</span>
+                                </label>
+                                <label class="check-item">
+                                    <input id="export-provider-google" type="checkbox">
+                                    <span>Google 卫星</span>
+                                </label>
+                                <label class="check-item">
+                                    <input id="export-provider-bing" type="checkbox">
+                                    <span>Bing 卫星</span>
+                                </label>
+                                <label class="check-item">
+                                    <input id="export-provider-arcgis" type="checkbox">
+                                    <span>ArcGIS 影像</span>
                                 </label>
                             </div>
-                            <span class="gis-combine-hint">可多选，勾选几种即生成几套输出</span>
+                        </div>
+                        <div class="content-group">
+                            <h3>GIS 数据</h3>
+                            <div id="export-gis-groups" class="check-grid">
+                                <label id="export-gis-static-road" class="check-item">
+                                    <input id="export-gis-group-1" type="checkbox" value="1">
+                                    <span>道路</span>
+                                </label>
+                                <label id="export-gis-static-building" class="check-item">
+                                    <input id="export-gis-group-2" type="checkbox" value="2">
+                                    <span>建筑</span>
+                                </label>
+                                <label id="export-gis-static-water" class="check-item">
+                                    <input id="export-gis-group-3" type="checkbox" value="3">
+                                    <span>水</span>
+                                </label>
+                                <label id="export-gis-static-point" class="check-item">
+                                    <input id="export-gis-group-4" type="checkbox" value="4">
+                                    <span>点</span>
+                                </label>
+                                <label id="export-gis-static-green" class="check-item">
+                                    <input id="export-gis-group-5" type="checkbox" value="5">
+                                    <span>绿地</span>
+                                </label>
+                                <label id="export-gis-static-boundary" class="check-item">
+                                    <input id="export-gis-group-6" type="checkbox" value="6">
+                                    <span>边界</span>
+                                </label>
+                                <label id="export-gis-static-highway" class="check-item">
+                                    <input id="export-gis-group-7" type="checkbox" value="7">
+                                    <span>高速</span>
+                                </label>
+                                <label id="export-gis-static-other" class="check-item">
+                                    <input id="export-gis-group-8" type="checkbox" value="8">
+                                    <span>其他</span>
+                                </label>
+                                <label id="export-gis-static-subway" class="check-item">
+                                    <input id="export-gis-group-9" type="checkbox" value="9">
+                                    <span>地铁</span>
+                                </label>
+                            </div>
+                            <div class="gis-combine-row">
+                                <span class="gis-combine-title">GIS 组合方式</span>
+                                <div id="export-gis-combine-options" class="gis-combine-options">
+                                    <label id="export-gis-combine-overlay-item" class="check-item">
+                                        <input id="export-gis-combine-overlay" type="checkbox" disabled>
+                                        <span>叠加到所选卫星图</span>
+                                    </label>
+                                    <label id="export-gis-combine-merged-item" class="check-item">
+                                        <input id="export-gis-combine-merged" type="checkbox" disabled>
+                                        <span>所选 GIS 图层合并输出</span>
+                                    </label>
+                                    <label id="export-gis-combine-separate-item" class="check-item">
+                                        <input id="export-gis-combine-separate" type="checkbox" disabled>
+                                        <span>每个 GIS 图层单独输出</span>
+                                    </label>
+                                </div>
+                                <span class="gis-combine-hint">可多选，勾选几种即生成几套输出</span>
+                            </div>
                         </div>
                     </div>
+                    <div id="export-tianditu-multidate-years"></div>
                 </div>
             </section>
 

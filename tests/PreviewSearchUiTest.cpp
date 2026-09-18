@@ -29,6 +29,67 @@ void sendMouse(skui::Runtime& runtime, skui::EventType type, float x, float y)
     runtime.handleEvent(event);
 }
 
+std::string buildFakeMultidateYearOptions(size_t yearCount)
+{
+    std::string html =
+        "<div id=\"export-tianditu-multidate-years\" "
+        "class=\"export-sub-options\">"
+        "<div class=\"export-sub-title\">多时相年份</div>"
+        "<div id=\"export-tianditu-multidate-year-options\" "
+        "class=\"check-grid export-year-grid\">"
+        "<label class=\"check-item\"><input "
+        "id=\"export-tianditu-multidate-year-latest\" type=\"checkbox\" "
+        "value=\"latest\" checked><span>最新影像</span></label>";
+    for (size_t index = 0; index < yearCount; ++index)
+    {
+        const int year = 2025 - static_cast<int>(index);
+        html += "<label class=\"check-item\"><input id=\"export-tianditu-multidate-year-" +
+            std::to_string(year) + "\" type=\"checkbox\" value=\"" + std::to_string(year) +
+            "\"" + (index % 5 == 0 ? " checked" : "") + "><span>" +
+            std::to_string(year) + " z12-18</span></label>";
+    }
+    html += "</div>";
+    html += "</div>";
+    return html;
+}
+
+bool setExportMultidateYearFixture(skui::Runtime& runtime, size_t yearCount)
+{
+    return runtime.setAttributeById("export-provider-tianditu-multidate", "checked", "") &&
+        runtime.replaceHtmlById(
+            "export-tianditu-multidate-years",
+            buildFakeMultidateYearOptions(yearCount));
+}
+
+bool writeRuntimeScreenshot(skui::Runtime& runtime,
+                            const std::filesystem::path& outputPath,
+                            int width,
+                            int height)
+{
+    std::vector<uint32_t> pixels(static_cast<size_t>(width) * height);
+    if (!postprocess_test::Require(
+            runtime.renderToBgraPixels(pixels.data(), width, height,
+                                       static_cast<size_t>(width) * sizeof(uint32_t), 1.F),
+            "UI 离屏渲染失败：" + postprocess_test::PathToUtf8String(outputPath)))
+    {
+        return false;
+    }
+
+    std::error_code directoryError;
+    std::filesystem::create_directories(outputPath.parent_path(), directoryError);
+    if (!postprocess_test::Require(
+            !directoryError,
+            "无法创建 UI 截图目录：" + postprocess_test::PathToUtf8String(outputPath)))
+    {
+        return false;
+    }
+
+    cv::Mat image(height, width, CV_8UC4, pixels.data());
+    return postprocess_test::Require(
+        cv::imwrite(outputPath.string(), image),
+        "无法写入 UI 截图：" + postprocess_test::PathToUtf8String(outputPath));
+}
+
 bool runTest()
 {
     const std::filesystem::path sourceRoot = DOMDOWNTOOL_SOURCE_DIR;
@@ -47,17 +108,18 @@ bool runTest()
     {
         return false;
     }
-    const std::array<std::string_view, 26> exportCheckboxIds = {
+    const std::array<std::string_view, 27> exportCheckboxIds = {
         "export-provider-gaode", "export-provider-tencent",
-        "export-provider-tianditu", "export-provider-baidu",
-        "export-provider-google", "export-provider-bing", "export-provider-arcgis",
-        "export-gis-group-1", "export-gis-group-2", "export-gis-group-3",
-        "export-gis-group-4", "export-gis-group-5", "export-gis-group-6",
-        "export-gis-group-7", "export-gis-group-8", "export-gis-group-9",
-        "export-gis-combine-overlay", "export-gis-combine-merged",
-        "export-gis-combine-separate", "export-satellite-tiles",
-        "export-satellite-merged", "export-fbx", "export-terrain-height", "export-geojson",
-        "export-building-height-colors", "export-building-fbx"};
+        "export-provider-tianditu", "export-provider-tianditu-multidate",
+        "export-provider-baidu", "export-provider-google", "export-provider-bing",
+        "export-provider-arcgis", "export-gis-group-1", "export-gis-group-2",
+        "export-gis-group-3", "export-gis-group-4", "export-gis-group-5",
+        "export-gis-group-6", "export-gis-group-7", "export-gis-group-8",
+        "export-gis-group-9", "export-gis-combine-overlay",
+        "export-gis-combine-merged", "export-gis-combine-separate",
+        "export-satellite-tiles", "export-satellite-merged", "export-fbx",
+        "export-terrain-height", "export-geojson", "export-building-height-colors",
+        "export-building-fbx"};
     for (const std::string_view checkboxId : exportCheckboxIds)
     {
         const std::string checkedMarkup =
@@ -80,6 +142,12 @@ bool runTest()
     if (!postprocess_test::Require(
             postprocess_test::ContainsText(
                 documentPath, "<option value=\"tianditu.multidate\">天地图多时相</option>") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "id=\"export-provider-tianditu-multidate\"") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "class=\"export-content-body\"") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "id=\"export-tianditu-multidate-years\"") &&
                 postprocess_test::ContainsText(documentPath,
                                                "id=\"tianditu-multidate-panel\"") &&
                 postprocess_test::ContainsText(documentPath,
@@ -122,6 +190,26 @@ bool runTest()
                 postprocess_test::ContainsText(
                     controllerPath, "RefreshTianDiTuMultidateAfterViewChange") &&
                 postprocess_test::ContainsText(
+                    controllerPath, "export-provider-tianditu-multidate") &&
+                postprocess_test::ContainsText(
+                    controllerPath, "tianDiTuMultidateExportCacheRoot") &&
+                postprocess_test::ContainsText(
+                    controllerPath, "buildExportTianDiTuMultidateYearsHtml") &&
+                postprocess_test::ContainsText(
+                    controllerPath, "isExportTianDiTuMultidateYearControl") &&
+                postprocess_test::ContainsText(
+                    controllerPath, "exportTianDiTuMultidateSelectedValues_") &&
+                postprocess_test::ContainsText(
+                    controllerPath, "selectedExportTianDiTuMultidateValuesInDisplayOrder") &&
+                postprocess_test::ContainsText(
+                    controllerPath, "EnsureExportTianDiTuMultidateYears") &&
+                postprocess_test::ContainsText(
+                    controllerPath, "GetSelectedExportTianDiTuMultidateYear") &&
+                postprocess_test::ContainsText(
+                    controllerPath, "LoginTianDiTuMultidate(runtime, preferredYear)") &&
+                postprocess_test::ContainsText(
+                    controllerPath, "class=\\\"check-grid export-year-grid\\\"") &&
+                postprocess_test::ContainsText(
                     controllerPath, "tianDiTuMultidateYearPickerActive_") &&
                 postprocess_test::ContainsText(
                     controllerPath, "!tianDiTuMultidateYearPickerActive_") &&
@@ -132,6 +220,13 @@ bool runTest()
                 postprocess_test::ContainsText(mapRendererPath,
                                                "multidateHistoryEmptyTiles") &&
                 postprocess_test::ContainsText(mapRendererPath, "服务端空白占位") &&
+                postprocess_test::ContainsText(mapRendererPath, "请求失败") &&
+                postprocess_test::ContainsText(
+                    mapRendererPath, "HasExhaustedPersistentFailures") &&
+                postprocess_test::ContainsText(
+                    mapRendererPath, "ClearPersistentFailureStatesUnder") &&
+                postprocess_test::ContainsText(
+                    mapRendererPath, "forceRetryKnownTileFailures_") &&
                 postprocess_test::ContainsText(mapRendererPath, "最新底图") &&
                 postprocess_test::ContainsText(mapRendererPath, "drawTileDebugOverlay") &&
                 postprocess_test::ContainsText(mapRendererPath, "drawString") &&
@@ -149,6 +244,13 @@ bool runTest()
                 postprocess_test::ContainsText(
                     documentPath,
                     "grid-template-columns: repeat(3, minmax(0, 1fr))") &&
+                postprocess_test::ContainsText(
+                    documentPath,
+                    "flex-wrap: wrap") &&
+                postprocess_test::ContainsText(
+                    documentPath, ".export-sub-options") &&
+                postprocess_test::ContainsText(documentPath,
+                                               ".export-year-grid .check-item") &&
                 !postprocess_test::ContainsText(
                     documentPath,
                     "grid-template-columns: repeat(auto-fit, minmax(250px, 1fr))") &&
@@ -936,6 +1038,8 @@ bool runTest()
                                    "无法填充导出缩放级别") ||
         !postprocess_test::Require(runtime.setValueById("export-output", ""),
                                    "无法清空导出目录") ||
+        !postprocess_test::Require(setExportMultidateYearFixture(runtime, 12),
+                                   "无法填充 12 个假年份") ||
         !postprocess_test::Require(runtime.setAttributeById("export-gis-group-1", "checked", ""),
                                    "无法勾选导出 GIS 道路项") ||
         !postprocess_test::Require(runtime.setAttributeById("export-gis-group-2", "checked", ""),
@@ -969,22 +1073,53 @@ bool runTest()
     {
         return false;
     }
-    std::fill(pixels.begin(), pixels.end(), 0);
-    if (!postprocess_test::Require(
-            runtime.renderToBgraPixels(pixels.data(), kWidth, kHeight,
-                                       static_cast<size_t>(kWidth) * sizeof(uint32_t), 1.F),
-            "导出配置 UI 离屏渲染失败"))
-    {
-        return false;
-    }
     const std::filesystem::path exportOutputPath =
         sourceRoot / "tmp" / "preview-export-config-ui.png";
-    cv::Mat exportImage(kHeight, kWidth, CV_8UC4, pixels.data());
-    if (!postprocess_test::Require(cv::imwrite(exportOutputPath.string(), exportImage),
-                                   "无法写入导出配置 UI 截图"))
+    if (!writeRuntimeScreenshot(runtime, exportOutputPath, kWidth, kHeight) ||
+        !writeRuntimeScreenshot(
+            runtime, sourceRoot / "tmp" / "preview-export-config-ui-12-years.png", kWidth,
+            kHeight) ||
+        !postprocess_test::Require(setExportMultidateYearFixture(runtime, 24),
+                                   "无法填充 24 个假年份") ||
+        !writeRuntimeScreenshot(
+            runtime, sourceRoot / "tmp" / "preview-export-config-ui-24-years.png", kWidth,
+            kHeight))
     {
         return false;
     }
+    if (!postprocess_test::Require(setExportMultidateYearFixture(runtime, 60),
+                                   "无法填充 60 个假年份") ||
+        !writeRuntimeScreenshot(
+            runtime, sourceRoot / "tmp" / "preview-export-config-ui-60-years.png", kWidth,
+            kHeight))
+    {
+        return false;
+    }
+    runtime.resize(1100, kHeight, 1.F);
+    if (!postprocess_test::Require(setExportMultidateYearFixture(runtime, 36),
+                                   "无法填充 36 个假年份") ||
+        !writeRuntimeScreenshot(
+            runtime, sourceRoot / "tmp" / "preview-export-config-ui-36-years-narrow.png",
+            1100, kHeight))
+    {
+        return false;
+    }
+    if (!postprocess_test::Require(setExportMultidateYearFixture(runtime, 60),
+                                   "无法填充 60 个假年份") ||
+        !writeRuntimeScreenshot(
+            runtime, sourceRoot / "tmp" / "preview-export-config-ui-60-years-narrow.png",
+            1100, kHeight))
+    {
+        return false;
+    }
+    runtime.resize(1100, 1400, 1.F);
+    if (!writeRuntimeScreenshot(
+            runtime, sourceRoot / "tmp" / "preview-export-config-ui-60-years-narrow-tall.png",
+            1100, 1400))
+    {
+        return false;
+    }
+    runtime.resize(kWidth, kHeight, 1.F);
 
     if (!postprocess_test::Require(
             runtime.setVisibleById("export-page", false) &&

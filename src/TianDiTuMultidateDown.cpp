@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cctype>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <set>
@@ -27,6 +29,102 @@ namespace
 	constexpr const char* TianDiTuMultidateToken = "b88bfb160c81dab8d9d20aaa74846360";
 	constexpr const char* TianDiTuMultidateHost = "https://image.tianditu.gov.cn";
 	constexpr const char* TianDiTuMapHost = "https://map.tianditu.gov.cn";
+	constexpr unsigned char TransparentPngBytes[] = {
+		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+		0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+		0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+		0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+		0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82};
+
+	bool WriteTransparentPng(const std::filesystem::path& path)
+	{
+		std::error_code directoryError;
+		std::filesystem::create_directories(path.parent_path(), directoryError);
+		if (directoryError)
+		{
+			return false;
+		}
+
+		std::ofstream output(path, std::ios::binary | std::ios::trunc);
+		if (!output.is_open())
+		{
+			return false;
+		}
+
+		output.write(
+			reinterpret_cast<const char*>(TransparentPngBytes),
+			static_cast<std::streamsize>(sizeof(TransparentPngBytes)));
+		return output.good();
+	}
+
+	bool IsTransparentPlaceholderPng(const std::filesystem::path& path)
+	{
+		std::ifstream input(path, std::ios::binary);
+		if (!input.is_open())
+		{
+			return false;
+		}
+
+		std::array<unsigned char, sizeof(TransparentPngBytes)> bytes{};
+		input.read(
+			reinterpret_cast<char*>(bytes.data()),
+			static_cast<std::streamsize>(bytes.size()));
+		if (input.gcount() != static_cast<std::streamsize>(bytes.size()))
+		{
+			return false;
+		}
+
+		char extraByte = 0;
+		if (input.read(&extraByte, 1))
+		{
+			return false;
+		}
+
+		return std::equal(bytes.begin(), bytes.end(), TransparentPngBytes);
+	}
+
+	std::string SanitizeCacheLayerComponent(std::string value)
+	{
+		if (value.empty())
+		{
+			return "unknown";
+		}
+
+		for (char& character : value)
+		{
+			const unsigned char byte = static_cast<unsigned char>(character);
+			if (byte < 32 || character == '<' || character == '>' || character == ':' ||
+				character == '"' || character == '/' || character == '\\' || character == '|' ||
+				character == '?' || character == '*')
+			{
+				character = '_';
+			}
+		}
+		return value;
+	}
+
+	uint64_t HashCacheLayerText(std::string_view year, std::string_view key,
+		std::string_view gbCode, std::string_view regionName)
+	{
+		uint64_t hash = 1469598103934665603ull;
+		auto append = [&hash](std::string_view text)
+		{
+			for (const unsigned char character : text)
+			{
+				hash ^= static_cast<uint64_t>(character);
+				hash *= 1099511628211ull;
+			}
+			hash ^= static_cast<uint64_t>('|');
+			hash *= 1099511628211ull;
+		};
+
+		append(year);
+		append(key);
+		append(gbCode);
+		append(regionName);
+		return hash;
+	}
 
     std::string GetJsonString(const Json& object, const char* fieldName)
     {
@@ -372,6 +470,27 @@ DownTool::TianDiTuMultidateDown::TianDiTuMultidateDown()
 	SetCachePath("cache/天地图多时相");
 }
 
+std::string DownTool::TianDiTuMultidateDown::BuildCacheLayerName(
+	std::string_view year,
+	std::string_view key,
+	std::string_view gbCode,
+	std::string_view regionName)
+{
+	if (key.empty())
+	{
+		return "latest";
+	}
+
+	const std::string sanitizedYear = SanitizeCacheLayerComponent(
+		std::string(year.empty() ? std::string_view("timeline") : year));
+	const std::string sanitizedGbCode = SanitizeCacheLayerComponent(std::string(gbCode));
+	return fmt::format(
+		"{}_{}_{:016x}",
+		sanitizedYear,
+		sanitizedGbCode,
+		HashCacheLayerText(year, key, gbCode, regionName));
+}
+
 void DownTool::TianDiTuMultidateDown::StartDown()
 {
 	CalculateDownRange();
@@ -383,8 +502,113 @@ void DownTool::TianDiTuMultidateDown::StartDown()
 	const std::string originalCachePath = CachePath;
 	CachePath = fmt::format("{}/{}", originalCachePath, GetLayerCacheName());
 	fmt::print("多时相天地图：下载年份：{}\n", GetLayerCacheName());
-	TianDiTuDown::StartDown();
+	if (bTransparentPlaceholderForEmptyTiles && !bUseLatestYear)
+	{
+		StartDownWithTransparentEmptyTiles();
+	}
+	else
+	{
+		TianDiTuDown::StartDown();
+	}
 	CachePath = originalCachePath;
+}
+
+void DownTool::TianDiTuMultidateDown::StartDownWithTransparentEmptyTiles()
+{
+	std::vector<Tile> targetTiles;
+	BuildTargetTiles(targetTiles);
+	const uint32_t stalePlaceholderCount = RemoveTransparentPlaceholderTiles(targetTiles);
+	if (stalePlaceholderCount != 0)
+	{
+		fmt::print("多时相天地图：{} 个历史透明占位已清理并重新请求。\n",
+			stalePlaceholderCount);
+	}
+
+	const bool postProcessEnabled = GetPostProcessEnabled();
+	const bool postProcessMergedImageEnabled = GetPostProcessMergedImageEnabled();
+	const bool postProcessFbxEnabled = GetPostProcessFbxEnabled();
+	SetPostProcessEnabled(false);
+	SetPostProcessMergedImageEnabled(false);
+	SetPostProcessFbxEnabled(false);
+	TianDiTuDown::StartDown();
+	SetPostProcessEnabled(postProcessEnabled);
+	SetPostProcessMergedImageEnabled(postProcessMergedImageEnabled);
+	SetPostProcessFbxEnabled(postProcessFbxEnabled);
+
+	if (IsStopRequested())
+	{
+		return;
+	}
+
+	const uint32_t placeholderCount =
+		ReplaceUnavailableTilesWithTransparentPlaceholders(targetTiles);
+	if (placeholderCount != 0)
+	{
+		fmt::print("多时相天地图：{} 个历史覆盖不可用瓦片已转为透明占位。\n",
+			placeholderCount);
+	}
+
+	std::vector<Tile> failedTiles = ScanCacheAndCollectPendingTiles(
+		targetTiles, "透明占位后缓存检测", false, true);
+	if (!failedTiles.empty())
+	{
+		fmt::print("多时相天地图：透明占位后仍有 {} 个瓦片不可用，跳过后处理。\n",
+			failedTiles.size());
+		return;
+	}
+
+	if (postProcessEnabled || postProcessMergedImageEnabled || postProcessFbxEnabled)
+	{
+		RunPostProcess();
+	}
+}
+
+uint32_t DownTool::TianDiTuMultidateDown::RemoveTransparentPlaceholderTiles(
+	const std::vector<Tile>& targetTiles) const
+{
+	uint32_t removedCount = 0;
+	for (const Tile& tile : targetTiles)
+	{
+		if (IsStopRequested())
+		{
+			break;
+		}
+
+		const std::filesystem::path tilePath = GetTileFilePath(tile);
+		if (!IsTransparentPlaceholderPng(tilePath))
+		{
+			continue;
+		}
+
+		std::error_code removeError;
+		std::filesystem::remove(tilePath, removeError);
+		if (!removeError)
+		{
+			removedCount++;
+		}
+	}
+	return removedCount;
+}
+
+uint32_t DownTool::TianDiTuMultidateDown::ReplaceUnavailableTilesWithTransparentPlaceholders(
+	const std::vector<Tile>& targetTiles) const
+{
+	uint32_t placeholderCount = 0;
+	for (const Tile& tile : targetTiles)
+	{
+		if (IsStopRequested())
+		{
+			break;
+		}
+
+		const std::filesystem::path tilePath = GetTileFilePath(tile);
+		if (GetTileCacheState(tile, false) != TileCacheState::Ready &&
+			WriteTransparentPng(tilePath))
+		{
+			placeholderCount++;
+		}
+	}
+	return placeholderCount;
 }
 
 DownTool::TileRange DownTool::TianDiTuMultidateDown::GetOffsetTiles(
@@ -520,6 +744,7 @@ void DownTool::TianDiTuMultidateDown::SetYear(const std::string& year)
 	ResolvedKey.clear();
 	bUseLatestYear = false;
 	bHasPresetYearKey = false;
+	bForceLatestWmtsOnly = false;
 	SetLatestWmtsUrlTemplate();
 }
 
@@ -530,6 +755,18 @@ void DownTool::TianDiTuMultidateDown::UseLatestYear()
 	ResolvedKey.clear();
 	bUseLatestYear = true;
 	bHasPresetYearKey = false;
+	bForceLatestWmtsOnly = false;
+	SetLatestWmtsUrlTemplate();
+}
+
+void DownTool::TianDiTuMultidateDown::UseLatestWmtsOnly()
+{
+	SelectedYear.clear();
+	ResolvedYear.clear();
+	ResolvedKey.clear();
+	bUseLatestYear = true;
+	bHasPresetYearKey = false;
+	bForceLatestWmtsOnly = true;
 	SetLatestWmtsUrlTemplate();
 }
 
@@ -640,6 +877,7 @@ void DownTool::TianDiTuMultidateDown::SetYearKey(
 	ResolvedKey = key;
 	bUseLatestYear = false;
 	bHasPresetYearKey = !year.empty() && !key.empty();
+	bForceLatestWmtsOnly = false;
 	SetTimelineTileUrlTemplate();
 }
 
@@ -678,6 +916,11 @@ void DownTool::TianDiTuMultidateDown::SetTimelineTileUrlTemplate()
 bool DownTool::TianDiTuMultidateDown::PrepareMultidateLayer()
 {
 	SetLatestWmtsUrlTemplate();
+	if (bForceLatestWmtsOnly)
+	{
+		return true;
+	}
+
 	if (bHasPresetYearKey && !ResolvedKey.empty())
 	{
 		if (!EnsureRegion())
@@ -998,12 +1241,7 @@ std::string DownTool::TianDiTuMultidateDown::BuildChangeCityUrl() const
 
 std::string DownTool::TianDiTuMultidateDown::GetLayerCacheName() const
 {
-	if (!ResolvedYear.empty())
-	{
-		return ResolvedYear;
-	}
-
-	return "latest";
+	return BuildCacheLayerName(ResolvedYear, ResolvedKey, RegionGbCode, RegionName);
 }
 
 bool DownTool::TianDiTuMultidateDown::TryGetGeographicTilePixelForLonLat(

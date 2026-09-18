@@ -226,5 +226,6 @@ class MapRenderer
     double toolbarHeight_ = 52.;
     double statusBarHeight_ = 28.;
     bool tileDebugEnabled_ = false;
+    bool forceRetryKnownTileFailures_ = false;
 };
 } // namespace DomDownToolPreview
