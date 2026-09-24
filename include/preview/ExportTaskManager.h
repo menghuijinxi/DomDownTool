@@ -207,6 +207,9 @@ struct ExportTaskRecord
 // 分组配置不合法时返回错误；没有分组时返回空字符串，交给旧导出校验。
 [[nodiscard]] std::string GroupedExportError(const ExportConfiguration& configuration);
 
+[[nodiscard]] std::string GroupedMergedImageWorkingFormat(
+    const ExportComponent& component);
+
 class ExportGroupedRunner;
 
 class ExportTaskManager

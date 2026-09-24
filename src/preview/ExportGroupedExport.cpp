@@ -786,6 +786,18 @@ std::string GroupedExportError(const ExportConfiguration& configuration)
     }
     return {};
 }
+
+std::string GroupedMergedImageWorkingFormat(const ExportComponent& component)
+{
+    if (component.kind == ExportComponentKind::MergedImage &&
+        HasImagery(component) && HasGis(component))
+    {
+        // 中间图必须保留 GIS 透明通道，用户格式只用于最后一次合成编码。
+        return "png";
+    }
+    return NormalizeFormat(component.imageFormat);
+}
+
 bool ExportGroupedRunner::Run(
     ExportTaskManager& manager, const ExportTaskManager::QueuedExport& queuedExport,
     std::string& error)
@@ -976,6 +988,18 @@ bool ExportGroupedRunner::Run(
         const std::shared_ptr<DownTool::CopernicusDemData> componentElevation =
             wantsElevation ? elevationData : nullptr;
         const std::string imageFormat = NormalizeFormat(component.imageFormat);
+        const std::string workingImageFormat =
+            GroupedMergedImageWorkingFormat(component);
+        const bool composeMergedLayers =
+            component.kind == ExportComponentKind::MergedImage &&
+            HasImagery(component) && HasGis(component);
+        const std::filesystem::path temporaryRoot =
+            taskRoot / std::filesystem::u8path("临时") /
+            std::filesystem::u8path(SanitizeFileName(component.id));
+        const std::filesystem::path mergedImageryRoot =
+            composeMergedLayers ?
+            temporaryRoot / std::filesystem::u8path("影像") :
+            componentDirectory;
         std::set<std::string> usedSourceNames;
 
         const auto uniqueSourceName = [&usedSourceNames](std::string name)
@@ -992,12 +1016,14 @@ bool ExportGroupedRunner::Run(
         const auto makeStep = [&](bool tiles, bool merged, bool fbx)
         {
             ExportTaskManager::QueuedExport step = queuedExport;
-            step.configuration.executionRootOverride = componentDirectory;
+            step.configuration.executionRootOverride =
+                merged ? mergedImageryRoot : componentDirectory;
             step.configuration.flatSourceOutput = true;
             step.configuration.exportTiles = tiles;
             step.configuration.exportMergedImage = merged;
             step.configuration.exportFbx = fbx;
-            step.configuration.mergedImageFormat = imageFormat;
+            step.configuration.mergedImageFormat =
+                merged ? workingImageFormat : imageFormat;
             step.configuration.mergedImageResolution = component.maxEdge;
             step.configuration.fbxTextureSize = component.textureSize;
             step.configuration.fbxTextureFormat = NormalizeFormat(component.textureFormat);
@@ -1074,20 +1100,30 @@ bool ExportGroupedRunner::Run(
                     break;
                 }
                 const std::filesystem::path sourceDirectory =
-                    componentDirectory / std::filesystem::u8path(outputName);
+                    (merged ? mergedImageryRoot : componentDirectory) /
+                    std::filesystem::u8path(outputName);
                 if (merged)
                 {
-                    const std::filesystem::path finalImage =
-                        componentDirectory / std::filesystem::u8path(outputName + "." + imageFormat);
-                    if (!MovePathReplacing(
-                            sourceDirectory / ("merged." + imageFormat), finalImage, error))
+                    const std::filesystem::path workingImage =
+                        sourceDirectory / ("merged." + workingImageFormat);
+                    if (composeMergedLayers)
                     {
-                        succeeded = false;
-                        break;
+                        imageryOutputs.push_back(workingImage);
                     }
-                    std::error_code removeError;
-                    std::filesystem::remove_all(sourceDirectory, removeError);
-                    imageryOutputs.push_back(finalImage);
+                    else
+                    {
+                        const std::filesystem::path finalImage =
+                            componentDirectory /
+                            std::filesystem::u8path(outputName + "." + imageFormat);
+                        if (!MovePathReplacing(workingImage, finalImage, error))
+                        {
+                            succeeded = false;
+                            break;
+                        }
+                        std::error_code removeError;
+                        std::filesystem::remove_all(sourceDirectory, removeError);
+                        imageryOutputs.push_back(finalImage);
+                    }
                 }
                 else if (tiles)
                 {
@@ -1129,12 +1165,8 @@ bool ExportGroupedRunner::Run(
             }
             if (succeeded && HasGis(component))
             {
-                const std::filesystem::path temporaryRoot =
-                    taskRoot / std::filesystem::u8path("临时") /
-                    std::filesystem::u8path(SanitizeFileName(component.id));
                 const std::filesystem::path gisXyz = temporaryRoot / "XYZ";
-                const std::filesystem::path gisImage =
-                    temporaryRoot / ("gis." + (merged ? imageFormat : "png"));
+                const std::filesystem::path gisImage = temporaryRoot / "gis.png";
                 const std::filesystem::path gisFbx = temporaryRoot / "FBX";
                 const std::string gisName = uniqueSourceName(JoinedGisName(component));
                 const std::filesystem::path directXyz =
@@ -1227,17 +1259,19 @@ bool ExportGroupedRunner::Run(
                     {
                         if (merged)
                         {
-                            const std::filesystem::path composite =
-                                imageryOutput.parent_path() /
-                                (imageryOutput.stem().string() + ".overlay" +
-                                 imageryOutput.extension().string());
+                            std::filesystem::path composite =
+                                componentDirectory /
+                                imageryOutput.parent_path().filename();
+                            composite += "." + imageFormat;
                             if (!ExportImageComposer::CompositeImage(
-                                    imageryOutput, gisImage, composite, error, cancelled) ||
-                                !MovePathReplacing(composite, imageryOutput, error))
+                                    imageryOutput, gisImage, composite, error, cancelled))
                             {
                                 succeeded = false;
                                 break;
                             }
+                            std::error_code removeError;
+                            std::filesystem::remove_all(
+                                imageryOutput.parent_path(), removeError);
                         }
                         else if (tiles)
                         {
@@ -1263,6 +1297,11 @@ bool ExportGroupedRunner::Run(
                             break;
                         }
                     }
+                }
+                if (succeeded && composeMergedLayers)
+                {
+                    std::error_code removeError;
+                    std::filesystem::remove_all(temporaryRoot, removeError);
                 }
             }
         }

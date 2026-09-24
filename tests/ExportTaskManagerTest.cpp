@@ -238,6 +238,67 @@ DomDownToolPreview::ExportConfiguration makeCancelableConfiguration(
     return configuration;
 }
 
+bool verifyGroupedMergedImageWorkingFormat(const std::filesystem::path& testRoot)
+{
+    DomDownToolPreview::ExportComponent mixedMergedImage;
+    mixedMergedImage.kind = DomDownToolPreview::ExportComponentKind::MergedImage;
+    mixedMergedImage.imageFormat = "jpg";
+    mixedMergedImage.sources.push_back({
+        "test.satellite", "测试卫星",
+        DomDownToolPreview::ExportSourceKind::Imagery,
+        testRoot / "mixed-format-satellite-cache"});
+    mixedMergedImage.sources.push_back({
+        "test.gis", "道路",
+        DomDownToolPreview::ExportSourceKind::Gis,
+        testRoot / "mixed-format-gis-cache"});
+    DomDownToolPreview::ExportComponent imageryOnlyMergedImage = mixedMergedImage;
+    imageryOnlyMergedImage.sources.pop_back();
+    return postprocess_test::Require(
+               DomDownToolPreview::GroupedMergedImageWorkingFormat(
+                   mixedMergedImage) == "png",
+               "影像与 GIS 组合大图没有固定使用 PNG 中间格式") &&
+        postprocess_test::Require(
+               DomDownToolPreview::GroupedMergedImageWorkingFormat(
+                   imageryOnlyMergedImage) == "jpg",
+               "纯影像大图不应改写用户选择的最终格式");
+}
+
+bool verifyFinalJpegComposition(const std::filesystem::path& testRoot)
+{
+    const cv::Mat baseImage(32, 32, CV_8UC4, cv::Scalar(10, 20, 30, 255));
+    const cv::Mat overlayImage(32, 32, CV_8UC4, cv::Scalar(110, 120, 130, 128));
+    const std::filesystem::path baseImagePath = testRoot / "final-base.png";
+    const std::filesystem::path overlayImagePath = testRoot / "final-overlay.png";
+    const std::filesystem::path jpegPath = testRoot / "final-composed.jpg";
+    std::string composeError;
+    if (!postprocess_test::Require(
+            cv::imwrite(
+                postprocess_test::PathToUtf8String(baseImagePath),
+                baseImage) &&
+                cv::imwrite(
+                    postprocess_test::PathToUtf8String(overlayImagePath),
+                    overlayImage) &&
+                DomDownToolPreview::ExportImageComposer::CompositeImage(
+                    baseImagePath, overlayImagePath, jpegPath, composeError),
+            "PNG 中间图无法生成用户选择的 JPG 最终大图：" + composeError) ||
+        !postprocess_test::RequireJpegEncoding(jpegPath))
+    {
+        return false;
+    }
+
+    const cv::Mat jpegImage = cv::imread(
+        postprocess_test::PathToUtf8String(jpegPath),
+        cv::IMREAD_UNCHANGED);
+    const cv::Vec3b pixel = jpegImage.empty() ?
+        cv::Vec3b(0, 0, 0) : jpegImage.at<cv::Vec3b>(16, 16);
+    return postprocess_test::Require(
+        jpegImage.channels() == 3 &&
+            std::abs(static_cast<int>(pixel[0]) - 60) <= 3 &&
+            std::abs(static_cast<int>(pixel[1]) - 70) <= 3 &&
+            std::abs(static_cast<int>(pixel[2]) - 80) <= 3,
+        "最终 JPG 没有保留 PNG 中间图的透明叠加结果");
+}
+
 bool runTest()
 {
     const std::filesystem::path testRoot =
@@ -442,6 +503,10 @@ bool runTest()
     {
         return false;
     }
+    if (!verifyGroupedMergedImageWorkingFormat(testRoot))
+    {
+        return false;
+    }
     for (const uint32_t tileSize : {512u, 1024u})
     {
         const std::filesystem::path xyzRoot =
@@ -554,6 +619,10 @@ bool runTest()
                 transparentBasePixel[1] == 120 && transparentBasePixel[2] == 130 &&
                 transparentBasePixel[3] == 128,
             "GIS alpha 合成结果不符合标准 source-over 公式"))
+    {
+        return false;
+    }
+    if (!verifyFinalJpegComposition(testRoot))
     {
         return false;
     }
