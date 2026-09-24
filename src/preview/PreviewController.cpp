@@ -1664,6 +1664,12 @@ DownTool::AmapVectorColor fromHsv(const HsvColor& color)
 
 } // namespace
 
+std::optional<std::filesystem::path>
+DomDownToolPreview::PreviewController::SelectExportDirectory() const
+{
+    return selectOutputDirectory(window_.load(std::memory_order_relaxed));
+}
+
 DomDownToolPreview::PreviewController::PreviewController()
     : tianDiTuMultidateSession_(),
       renderer_([this] { requestRedraw(); }),
@@ -1700,6 +1706,18 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                     renderer_.SetExportRadiusMeters(*radius);
                     requestRedraw();
                 }
+                return;
+            }
+
+            if ((event.type == skui::ElementEventType::Click ||
+                 event.type == skui::ElementEventType::Change ||
+                 event.type == skui::ElementEventType::Input) &&
+                event.id.starts_with("export-act-") &&
+                HandleExportComposerEvent(
+                    runtime, event.id, event.value, event.checked,
+                    event.type == skui::ElementEventType::Click,
+                    event.type == skui::ElementEventType::Change))
+            {
                 return;
             }
 
@@ -2222,7 +2240,7 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             if (event.id == "export-browse-output")
             {
                 const std::optional<std::filesystem::path> selectedPath =
-                    selectOutputDirectory(window_.load(std::memory_order_relaxed));
+                    SelectExportDirectory();
                 if (selectedPath.has_value())
                 {
                     exportOutputValue_ = pathToUtf8(*selectedPath);
@@ -4363,12 +4381,14 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
     exportBuildingRoofTexturePathValue_ = configuration ?
         pathToUtf8(configuration->buildingRoofTexturePath) : "贴图/房顶";
     exportBuildingWallTextureModeValue_ = configuration ?
-        buildingFbxTextureModeValue(configuration->buildingFbxWallTextureMode) : "scattered";
+        buildingFbxTextureModeValue(configuration->buildingFbxWallTextureMode) :
+        "merged-atlas";
     exportBuildingRoofTextureModeValue_ = configuration ?
         buildingFbxRoofTextureModeValue(configuration->buildingFbxRoofTextureMode) :
-        "scattered";
+        "merged-atlas";
     exportBuildingAtlasFormatValue_ = configuration ?
-        buildingFbxAtlasImageFormatValue(configuration->buildingFbxAtlasImageFormat) : "png";
+        buildingFbxAtlasImageFormatValue(configuration->buildingFbxAtlasImageFormat) :
+        "jpg";
     exportBuildingLayerHeightValue_ = configuration ?
         fmt::format("{:.0f}", configuration->buildingLayerHeightCentimeters) : "45";
     exportBuildingMaxWallMaterialsValue_ = configuration ?
@@ -4459,6 +4479,7 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
     setCheckboxChecked(runtime, "export-geojson", exportGeoJson_);
     setCheckboxChecked(runtime, "export-building-height-colors", exportBuildingHeightColors_);
     setCheckboxChecked(runtime, "export-building-fbx", exportBuildingFbx_);
+    ResetExportComposer(configuration);
     UpdateExportUi(runtime);
 }
 
@@ -4471,84 +4492,32 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
                     parseFiniteDouble(exportLongitudeValue_).value_or(0.),
                     parseFiniteDouble(exportLatitudeValue_).value_or(0.),
                     exportZoomValue_, radius.value_or(0.)));
-    runtime.setTextById("export-validation-message", exportValidationMessage_);
-
-    if (exportTianDiTuMultidateSelectedValues_.empty())
-    {
-        exportTianDiTuMultidateSelectedValues_.insert("latest");
-    }
-    const std::string yearOptionsHtml = exportMapSourceIds_.contains("tianditu.multidate")
-        ? buildExportTianDiTuMultidateYearsHtml(
-            tianDiTuMultidateTimelines_, exportTianDiTuMultidateSelectedValues_)
-        : buildHiddenExportTianDiTuMultidateYearsHtml();
-    if (yearOptionsHtml != lastExportTianDiTuMultidateYearsHtml_)
-    {
-        runtime.replaceHtmlById("export-tianditu-multidate-years", yearOptionsHtml);
-        lastExportTianDiTuMultidateYearsHtml_ = yearOptionsHtml;
-    }
-
-    for (const ExportGisUiGroup& group : exportGisGroups_)
-    {
-        setCheckboxChecked(runtime, fmt::format("export-gis-group-{}", group.id),
-                           group.selected);
-    }
-
-    const bool hasGisData = std::ranges::any_of(
-        exportGisGroups_, [](const ExportGisUiGroup& group) { return group.selected; });
-    const bool canExportBuildingFbx = exportFbx_ && hasSelectedBuildingExportGroup();
-    const auto setDisabled = [&runtime](std::string_view id, bool disabled)
-    {
-        if (disabled)
+    RenderExportComposer(runtime);
+    const bool canSubmit = std::ranges::any_of(
+        exportContentGroups_,
+        [](const ExportContentGroup& group)
         {
-            runtime.setAttributeById(id, "disabled", "");
-        }
-        else
-        {
-            runtime.removeAttributeById(id, "disabled");
-        }
-    };
-    setDisabled("export-geojson", !hasGisData);
-    setDisabled("export-gis-combine-merged", !hasGisData);
-    setDisabled("export-gis-combine-separate", !hasGisData);
-    setDisabled("export-gis-combine-overlay",
-                !hasGisData || exportMapSourceIds_.empty());
-    setDisabled("export-fbx-size", !exportFbx_);
-    setDisabled("export-fbx-texture-format", !exportFbx_);
-    setDisabled("export-terrain-height", !exportFbx_);
-    setDisabled("export-terrain-sample-rate", !exportFbx_ || !exportTerrainHeight_);
-    setDisabled("export-building-wall-textures", !exportBuildingFbx_);
-    setDisabled("export-building-roof-textures",
-                !exportBuildingFbx_ || exportBuildingRoofTextureModeValue_ == "satellite");
-    setDisabled("export-building-wall-texture-mode", !exportBuildingFbx_);
-    setDisabled("export-building-roof-texture-mode", !exportBuildingFbx_);
-    setDisabled(
-        "export-building-atlas-format",
-        !exportBuildingFbx_ ||
-            (exportBuildingWallTextureModeValue_ != "merged-atlas" &&
-             exportBuildingRoofTextureModeValue_ != "merged-atlas"));
-    setDisabled("export-building-layer-height", !exportBuildingFbx_);
-    setDisabled("export-building-max-wall-materials", !exportBuildingFbx_);
-    setDisabled("export-building-texture-seed", !exportBuildingFbx_);
-    runtime.setTextById(
-        "export-building-fbx-hint",
-        exportBuildingFbx_ && canExportBuildingFbx ?
-            buildingFbxTextureModeHint(exportBuildingRoofTextureModeValue_ == "satellite" ?
-                exportBuildingRoofTextureModeValue_ : exportBuildingWallTextureModeValue_) :
-            "默认关闭；启用后需要同时勾选 FBX 和 GIS 建筑图层。");
-    runtime.setVisibleById("export-terrain-height-item", exportFbx_);
-    setDisabled("export-merged-format", !exportMergedImage_);
-    setDisabled("export-merged-resolution", !exportMergedImage_);
-    setDisabled("export-building-height-colors", !hasGisData);
-    setCheckboxChecked(runtime, "export-geojson", exportGeoJson_);
-    setCheckboxChecked(runtime, "export-gis-combine-overlay",
-                       exportGisOverlayOnSatellite_);
-    setCheckboxChecked(runtime, "export-gis-combine-merged", exportGisLayersMerged_);
-    setCheckboxChecked(runtime, "export-gis-combine-separate",
-                       exportGisLayersSeparate_);
-    setCheckboxChecked(runtime, "export-building-height-colors",
-                       exportBuildingHeightColors_);
-    setCheckboxChecked(runtime, "export-building-fbx", exportBuildingFbx_);
-    setCheckboxChecked(runtime, "export-terrain-height", exportTerrainHeight_);
+            return group.enabled && !group.components.empty();
+        });
+    if (canSubmit)
+    {
+        runtime.removeAttributeById("export-submit", "disabled");
+    }
+    else
+    {
+        runtime.setAttributeById("export-submit", "disabled", "");
+    }
+    if (exportValidationMessage_.empty() && !canSubmit)
+    {
+        runtime.setTextById(
+            "export-validation-message",
+            exportContentGroups_.empty() ? "当前内容区不可用，请重新打开导出配置。" :
+                "至少需要一个已勾选内容组，并且其中有一个组件。");
+    }
+    else
+    {
+        runtime.setTextById("export-validation-message", exportValidationMessage_);
+    }
 }
 
 void DomDownToolPreview::PreviewController::UpdateTaskUi(skui::Runtime& runtime)
@@ -4760,17 +4729,6 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
     const std::optional<double> lat = parseFiniteDouble(exportLatitudeValue_);
     const std::optional<double> radius = parseFiniteDouble(exportRadiusValue_);
     const std::optional<uint32_t> zoom = parseUint32(exportZoomValue_);
-    const std::optional<uint32_t> mergedResolution = parseUint32(exportMergedResolutionValue_);
-    const std::optional<uint32_t> fbxSize = parseUint32(exportFbxSizeValue_);
-    const std::optional<double> terrainSampleRate =
-        parseFiniteDouble(exportTerrainSampleRateValue_);
-    const bool buildingFbxRequested = exportBuildingFbx_;
-    const std::optional<double> buildingLayerHeight = buildingFbxRequested ?
-        parseFiniteDouble(exportBuildingLayerHeightValue_) : std::optional<double>(45.);
-    const std::optional<uint32_t> buildingMaxWallMaterials = buildingFbxRequested ?
-        parseUint32(exportBuildingMaxWallMaterialsValue_) : std::optional<uint32_t>(1);
-    const std::optional<uint32_t> buildingTextureSeed = buildingFbxRequested ?
-        parseUint32(exportBuildingTextureSeedValue_) : std::optional<uint32_t>(0);
     if (!lon || *lon < -180. || *lon > 180. || !lat || *lat < -85. || *lat > 85.)
     {
         error = "中心经纬度无效。";
@@ -4781,221 +4739,88 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
         error = "导出半径必须大于 0 米。";
         return std::nullopt;
     }
-    if (!zoom || *zoom > 30 || !mergedResolution || *mergedResolution == 0 ||
-        !fbxSize || !terrainSampleRate || *terrainSampleRate <= 0.)
+    if (!zoom || *zoom < 1 || *zoom > 30)
     {
-        error = "层级、合并大图尺寸、FBX 贴图尺寸或高度采样率无效。";
-        return std::nullopt;
-    }
-    if (buildingFbxRequested &&
-        (exportBuildingWallTexturePathValue_.empty() ||
-         (exportBuildingRoofTextureModeValue_ != "satellite" &&
-          exportBuildingRoofTexturePathValue_.empty()) || !buildingLayerHeight ||
-         *buildingLayerHeight <= 0. || !buildingMaxWallMaterials ||
-         *buildingMaxWallMaterials == 0 || !buildingTextureSeed))
-    {
-        error = "建筑 FBX 贴图目录、楼层高度、材质上限或随机种子无效。";
+        error = "导出层级必须在 1 到 30 之间。";
         return std::nullopt;
     }
 
     ExportConfiguration configuration;
-    const std::vector<MapSourceSummary> sources = renderer_.sources();
     configuration.centerWgs84 = {*lon, *lat};
     configuration.radiusMeters = *radius;
     configuration.zoom = *zoom;
     configuration.outputRoot = std::filesystem::u8path(exportOutputValue_);
-    for (const std::string& sourceId : exportMapSourceIds_)
+    std::string resolveError;
+    configuration.groups = ResolveExportGroups(resolveError);
+    if (!resolveError.empty())
     {
-        const auto source = std::find_if(
-            sources.begin(), sources.end(),
-            [&sourceId](const MapSourceSummary& item) { return item.id == sourceId; });
-        if (source == sources.end() || source->id == "none")
+        error = resolveError;
+        return std::nullopt;
+    }
+    if (configuration.groups.empty())
+    {
+        error = "当前内容区不可用，请重新打开导出配置。";
+        return std::nullopt;
+    }
+    for (const ExportContentGroup& group : configuration.groups)
+    {
+        if (!group.enabled)
         {
-            error = "卫星图来源无效。";
-            return std::nullopt;
+            continue;
         }
-
-        if (isTianDiTuMultidateSource(source->id))
+        for (const ExportComponent& component : group.components)
         {
-            const std::vector<std::string> exportYearValues =
-                selectedExportTianDiTuMultidateValuesInDisplayOrder(
-                    exportTianDiTuMultidateSelectedValues_, tianDiTuMultidateTimelines_);
-            if (exportYearValues.empty())
+            if (component.kind == ExportComponentKind::MergedImage)
             {
-                error = "天地图多时相导出至少需要选择一个年份。";
-                return std::nullopt;
+                configuration.exportMergedImage = true;
+                configuration.mergedImageFormat = component.imageFormat;
+                configuration.mergedImageResolution = component.maxEdge;
             }
-
-            std::set<std::string> usedSourceNames;
-            for (const std::string& exportYearValue : exportYearValues)
+            else if (component.kind == ExportComponentKind::StandardXyz)
             {
-                SatelliteExportSource exportSource{source->id, source->name, source->cacheRoot};
-                exportSource.cachePath = tianDiTuMultidateExportCacheRoot();
-                if (exportYearValue == "latest")
+                configuration.exportTiles = true;
+            }
+            else if (component.kind == ExportComponentKind::BasePlate)
+            {
+                configuration.exportFbx = true;
+                configuration.fbxTextureSize = component.textureSize;
+                configuration.fbxTextureFormat = component.textureFormat;
+                configuration.exportTerrainHeight = configuration.exportTerrainHeight ||
+                    component.exportElevation;
+            }
+            else if (component.kind == ExportComponentKind::BuildingModel)
+            {
+                configuration.exportBuildingFbx = true;
+                configuration.exportFbx = true;
+            }
+            else if (component.kind == ExportComponentKind::GeoJson)
+            {
+                configuration.exportGeoJson = true;
+            }
+            for (const ExportSourceEntry& source : component.sources)
+            {
+                if (source.kind == ExportSourceKind::Imagery)
                 {
-                    exportSource.name = "天地图多时相 最新影像";
+                    SatelliteExportSource satellite{source.id, source.name, source.cachePath};
+                    satellite.multidateYear = source.multidateYear;
+                    satellite.multidateKey = source.multidateKey;
+                    satellite.multidateGbCode = source.multidateGbCode;
+                    satellite.multidateRegionName = source.multidateRegionName;
+                    satellite.multidateCookie = source.multidateCookie;
+                    configuration.satelliteSources.push_back(std::move(satellite));
                 }
                 else
                 {
-                    const auto selected = std::ranges::find_if(
-                        tianDiTuMultidateTimelines_,
-                        [&exportYearValue](const auto& item)
-                        {
-                            return item.key == exportYearValue;
-                        });
-                    if (selected == tianDiTuMultidateTimelines_.end() || selected->key.empty())
-                    {
-                        error = "天地图多时相导出需要先刷新并选择有效历史时相。";
-                        return std::nullopt;
-                    }
-                    if (tianDiTuMultidateCookie_.empty())
-                    {
-                        error = "天地图多时相历史导出需要当前登录态，请重新登录后刷新年份。";
-                        return std::nullopt;
-                    }
-                    if (tianDiTuMultidateRegionGbCode_.empty() &&
-                        tianDiTuMultidateRegionName_.empty())
-                    {
-                        error = "天地图多时相历史导出缺少区域参数，请刷新年份后再导出。";
-                        return std::nullopt;
-                    }
-
-                    const std::string year = tianDiTuMultidateTimelineYear(*selected);
-                    exportSource.name = "天地图多时相 " + year;
-                    exportSource.multidateYear = year;
-                    exportSource.multidateKey = selected->key;
-                    exportSource.multidateGbCode = tianDiTuMultidateRegionGbCode_;
-                    exportSource.multidateRegionName = tianDiTuMultidateRegionName_;
-                    exportSource.multidateCookie = tianDiTuMultidateCookie_;
+                    configuration.gisCategories.insert(source.gisCategory);
+                    configuration.gisColors[source.gisCategory] = source.color;
                 }
-
-                const std::string baseName = exportSource.name;
-                for (size_t suffix = 2; usedSourceNames.contains(exportSource.name); ++suffix)
-                {
-                    exportSource.name = fmt::format("{} ({})", baseName, suffix);
-                }
-                usedSourceNames.insert(exportSource.name);
-                configuration.satelliteSources.push_back(std::move(exportSource));
             }
-            continue;
-        }
-        SatelliteExportSource exportSource{source->id, source->name, source->cacheRoot};
-        configuration.satelliteSources.push_back(std::move(exportSource));
-    }
-    configuration.gisCategories.clear();
-    for (const ExportGisUiGroup& group : exportGisGroups_)
-    {
-        if (group.selected)
-        {
-            configuration.gisCategories.insert(group.categories.begin(), group.categories.end());
         }
     }
-    if (exportGisOverlayOnSatellite_)
+    const std::string groupedError = GroupedExportError(configuration);
+    if (!groupedError.empty())
     {
-        configuration.gisModes.insert(GisExportMode::OverlayOnSatellite);
-    }
-    if (exportGisLayersMerged_)
-    {
-        configuration.gisModes.insert(GisExportMode::MergeSelectedLayers);
-    }
-    if (exportGisLayersSeparate_)
-    {
-        configuration.gisModes.insert(GisExportMode::SeparateLayers);
-    }
-    configuration.exportTiles = exportTiles_;
-    configuration.exportMergedImage = exportMergedImage_;
-    configuration.exportFbx = exportFbx_;
-    configuration.exportTerrainHeight = exportFbx_ && exportTerrainHeight_;
-    configuration.exportGeoJson = exportGeoJson_;
-    configuration.colorBuildingsByHeight = exportBuildingHeightColors_;
-    configuration.exportBuildingFbx = buildingFbxRequested;
-    configuration.buildingWallTexturePath = std::filesystem::u8path(
-        exportBuildingWallTexturePathValue_);
-    configuration.buildingRoofTexturePath = std::filesystem::u8path(
-        exportBuildingRoofTexturePathValue_);
-    configuration.buildingFbxWallTextureMode = buildingFbxTextureModeFromValue(
-        exportBuildingWallTextureModeValue_);
-    configuration.buildingFbxRoofTextureMode = buildingFbxRoofTextureModeFromValue(
-        exportBuildingRoofTextureModeValue_);
-    configuration.buildingFbxAtlasImageFormat = buildingFbxAtlasImageFormatFromValue(
-        exportBuildingAtlasFormatValue_);
-    configuration.buildingLayerHeightCentimeters = *buildingLayerHeight;
-    configuration.buildingMaxWallMaterialsPerBucket = *buildingMaxWallMaterials;
-    configuration.buildingTextureRandomSeed = *buildingTextureSeed;
-    configuration.mergedImageResolution = *mergedResolution;
-    configuration.mergedImageFormat = exportMergedFormat_ == "jpg" ? "jpg" : "png";
-    configuration.fbxTextureSize = *fbxSize;
-    configuration.fbxTextureFormat = imageFormatValue(exportFbxTextureFormatValue_);
-    configuration.fbxTerrainSampleRateMeters = *terrainSampleRate;
-    if (exportTerrainHeight_ && !exportFbx_)
-    {
-        error = "导出高度需要同时选择 FBX。";
-        return std::nullopt;
-    }
-    if (buildingFbxRequested && !exportFbx_)
-    {
-        error = "建筑 FBX 需要同时选择 FBX 切片与网格。";
-        return std::nullopt;
-    }
-    if (buildingFbxRequested && !hasSelectedBuildingExportGroup())
-    {
-        error = "建筑 FBX 需要同时选择 GIS 建筑图层。";
-        return std::nullopt;
-    }
-    if (buildingFbxRequested && exportBuildingRoofTextureModeValue_ == "satellite" &&
-        exportMapSourceIds_.empty())
-    {
-        error = "屋顶卫星图模式需要至少选择一个卫星图来源。";
-        return std::nullopt;
-    }
-    for (const DownTool::AmapVectorRenderCategory category : kExportCategories)
-    {
-        const auto color = exportGisColors_.find(category);
-        const DownTool::AmapVectorColor value = color != exportGisColors_.end() ?
-            color->second : renderer_.GetGisOverlayColor(previewCategory(category));
-        configuration.gisColors[category] = value;
-    }
-    if (!configuration.exportTiles && !configuration.exportMergedImage &&
-        !configuration.exportFbx && !configuration.exportGeoJson)
-    {
-        error = "至少选择一种输出内容。";
-        return std::nullopt;
-    }
-    const bool visualOutputRequested = configuration.exportTiles ||
-        configuration.exportMergedImage || configuration.exportFbx;
-    if (!configuration.gisModes.empty() && !visualOutputRequested)
-    {
-        error = "GIS 组合方式需要选择 XYZ、合并大图或 FBX。";
-        return std::nullopt;
-    }
-    if (!configuration.gisCategories.empty() && visualOutputRequested &&
-        configuration.gisModes.empty() && !configuration.exportGeoJson &&
-        !configuration.exportBuildingFbx)
-    {
-        error = "所选 GIS 数据需要至少一种 GIS 组合方式。";
-        return std::nullopt;
-    }
-    const bool satelliteRequested = !configuration.satelliteSources.empty() &&
-        visualOutputRequested;
-    const bool gisVisualRequested = !configuration.gisCategories.empty() &&
-        ((!configuration.gisModes.empty() && visualOutputRequested) ||
-         configuration.exportBuildingFbx);
-    if (configuration.gisModes.contains(GisExportMode::OverlayOnSatellite) &&
-        configuration.satelliteSources.empty())
-    {
-        error = "卫星图导出需要选择地图来源。";
-        return std::nullopt;
-    }
-    if (!satelliteRequested && !gisVisualRequested && !configuration.exportGeoJson)
-    {
-        error = "所选导出类型没有对应的卫星图或 GIS 组合方式。";
-        return std::nullopt;
-    }
-    if ((configuration.exportGeoJson || !configuration.gisModes.empty() ||
-         configuration.exportBuildingFbx) &&
-        configuration.gisCategories.empty())
-    {
-        error = "GIS 输出至少需要选择一个 GIS 数据图层。";
+        error = groupedError;
         return std::nullopt;
     }
     return configuration;

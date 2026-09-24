@@ -40,6 +40,17 @@ namespace
         double y = 0.;
     };
 
+    struct SphereCoordinateContext
+    {
+        double centerMercatorX = 0.;
+        double centerMercatorY = 0.;
+        std::array<double, 3> centerEcef = { 0., 0., 0. };
+        double sinCenterLon = 0.;
+        double cosCenterLon = 1.;
+        double sinCenterLat = 0.;
+        double cosCenterLat = 1.;
+    };
+
     using Ring = std::vector<Point2>;
 
     struct PolygonRing
@@ -277,6 +288,144 @@ namespace
         const double latitudeRadians = clampedLatitude * std::numbers::pi / 180.;
         return earthRadius * std::log(
             std::tan(std::numbers::pi / 4. + latitudeRadians / 2.));
+    }
+
+    SphereCoordinateContext BuildSphereCoordinateContext(
+        const DownTool::LonLat& centerWgs84)
+    {
+        constexpr double semiMajorAxis = 6378137.;
+        constexpr double firstEccentricitySquared = 6.69437999014e-3;
+        const double centerLonRadians =
+            centerWgs84.lon * std::numbers::pi / 180.;
+        const double centerLatRadians =
+            centerWgs84.lat * std::numbers::pi / 180.;
+        const double sinCenterLat = std::sin(centerLatRadians);
+        const double cosCenterLat = std::cos(centerLatRadians);
+        const double sinCenterLon = std::sin(centerLonRadians);
+        const double cosCenterLon = std::cos(centerLonRadians);
+        const double primeVerticalRadius =
+            semiMajorAxis /
+            std::sqrt(
+                1. - firstEccentricitySquared * sinCenterLat * sinCenterLat);
+
+        SphereCoordinateContext context;
+        context.centerMercatorX = LongitudeToWebMercatorX(centerWgs84.lon);
+        context.centerMercatorY = LatitudeToWebMercatorY(centerWgs84.lat);
+        context.centerEcef = {
+            primeVerticalRadius * cosCenterLat * cosCenterLon,
+            primeVerticalRadius * cosCenterLat * sinCenterLon,
+            primeVerticalRadius * (1. - firstEccentricitySquared) *
+                sinCenterLat};
+        context.sinCenterLon = sinCenterLon;
+        context.cosCenterLon = cosCenterLon;
+        context.sinCenterLat = sinCenterLat;
+        context.cosCenterLat = cosCenterLat;
+        return context;
+    }
+
+    DownTool::LonLat PlanePointToWgs84(
+        const Point2& point,
+        const SphereCoordinateContext& context)
+    {
+        constexpr double earthRadius = 6378137.;
+        const double mercatorX = context.centerMercatorX + point.x / 100.;
+        const double mercatorY = context.centerMercatorY + point.y / 100.;
+        return {
+            mercatorX / earthRadius * 180. / std::numbers::pi,
+            (2. * std::atan(std::exp(mercatorY / earthRadius)) -
+             std::numbers::pi / 2.) *
+                180. / std::numbers::pi};
+    }
+
+    std::array<double, 3> LonLatToEcef(const DownTool::LonLat& lonLat)
+    {
+        constexpr double semiMajorAxis = 6378137.;
+        constexpr double firstEccentricitySquared = 6.69437999014e-3;
+        const double lonRadians = lonLat.lon * std::numbers::pi / 180.;
+        const double latRadians = lonLat.lat * std::numbers::pi / 180.;
+        const double sinLat = std::sin(latRadians);
+        const double cosLat = std::cos(latRadians);
+        const double sinLon = std::sin(lonRadians);
+        const double cosLon = std::cos(lonRadians);
+        const double primeVerticalRadius =
+            semiMajorAxis /
+            std::sqrt(1. - firstEccentricitySquared * sinLat * sinLat);
+        return {
+            primeVerticalRadius * cosLat * cosLon,
+            primeVerticalRadius * cosLat * sinLon,
+            primeVerticalRadius * (1. - firstEccentricitySquared) * sinLat};
+    }
+
+    void RecalculateMeshNormals(BuildingMeshData& mesh)
+    {
+        for (BuildingVertex& vertex : mesh.vertices)
+        {
+            vertex.normal = { 0., 0., 0. };
+        }
+        for (size_t index = 0; index + 2 < mesh.indices.size(); index += 3)
+        {
+            BuildingVertex& first = mesh.vertices[mesh.indices[index]];
+            BuildingVertex& second = mesh.vertices[mesh.indices[index + 1]];
+            BuildingVertex& third = mesh.vertices[mesh.indices[index + 2]];
+            const double firstX = second.x - first.x;
+            const double firstY = second.y - first.y;
+            const double firstZ = second.z - first.z;
+            const double secondX = third.x - first.x;
+            const double secondY = third.y - first.y;
+            const double secondZ = third.z - first.z;
+            const std::array<double, 3> normal = {
+                firstY * secondZ - firstZ * secondY,
+                firstZ * secondX - firstX * secondZ,
+                firstX * secondY - firstY * secondX};
+            for (BuildingVertex* vertex : { &first, &second, &third })
+            {
+                vertex->normal[0] += normal[0];
+                vertex->normal[1] += normal[1];
+                vertex->normal[2] += normal[2];
+            }
+        }
+        for (BuildingVertex& vertex : mesh.vertices)
+        {
+            const double length = std::sqrt(
+                vertex.normal[0] * vertex.normal[0] +
+                vertex.normal[1] * vertex.normal[1] +
+                vertex.normal[2] * vertex.normal[2]);
+            if (length > 1.e-12)
+            {
+                vertex.normal[0] /= length;
+                vertex.normal[1] /= length;
+                vertex.normal[2] /= length;
+            }
+        }
+    }
+
+    void ConvertMeshToSphere(
+        BuildingMeshData& mesh,
+        const SphereCoordinateContext& context)
+    {
+        for (BuildingVertex& vertex : mesh.vertices)
+        {
+            const DownTool::LonLat lonLat =
+                PlanePointToWgs84({ vertex.x, vertex.y }, context);
+            const std::array<double, 3> ecef = LonLatToEcef(lonLat);
+            const double dx = ecef[0] - context.centerEcef[0];
+            const double dy = ecef[1] - context.centerEcef[1];
+            const double dz = ecef[2] - context.centerEcef[2];
+            const double east =
+                -context.sinCenterLon * dx + context.cosCenterLon * dy;
+            const double north =
+                -context.sinCenterLat * context.cosCenterLon * dx -
+                context.sinCenterLat * context.sinCenterLon * dy +
+                context.cosCenterLat * dz;
+            const double up =
+                context.cosCenterLat * context.cosCenterLon * dx +
+                context.cosCenterLat * context.sinCenterLon * dy +
+                context.sinCenterLat * dz;
+            vertex.x = east * 100.;
+            vertex.y = north * 100.;
+            vertex.z += up * 100.;
+        }
+        RecalculateMeshNormals(mesh);
     }
 
     Point2 ProjectGcj02ToFbxPlane(
@@ -2660,6 +2809,15 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
     {
         result.success = true;
         return result;
+    }
+    if (options.shape == FbxPlanetShape::Sphere)
+    {
+        const SphereCoordinateContext coordinateContext =
+            BuildSphereCoordinateContext(options.centerWgs84);
+        for (BuildingMeshData& meshData : meshDatas)
+        {
+            ConvertMeshToSphere(meshData, coordinateContext);
+        }
     }
     if (!ExportAssimpFbx(meshDatas, options.outputPath, result.error))
     {

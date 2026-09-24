@@ -4913,18 +4913,27 @@ bool DownTool::DownToolBase::WritePostProcessTileFromSourceZoom(
             return false;
         }
 
-        if (sourceImageType == ImageType::Jpeg)
-        {
-            return CopyFileReplacing(sourcePath, outputPath);
-        }
-
         const cv::Mat sourceImage = ReadImageUnchanged(sourcePath);
-        if (HasTransparentPixels(sourceImage))
+        if (sourceImage.empty())
+        {
+            return false;
+        }
+        const int tileSize = static_cast<int>(TileSize);
+        const bool matchesTargetSize =
+            sourceImage.cols == tileSize && sourceImage.rows == tileSize;
+        if (matchesTargetSize && sourceImageType == ImageType::Jpeg)
         {
             return CopyFileReplacing(sourcePath, outputPath);
         }
 
-        return WriteXyzTileImage(outputPath, sourceImage);
+        if (matchesTargetSize && HasTransparentPixels(sourceImage))
+        {
+            return CopyFileReplacing(sourcePath, outputPath);
+        }
+
+        return WriteXyzTileImage(
+            outputPath,
+            ResizeImageToSize(sourceImage, tileSize, tileSize));
     }
 
     const int tileSize = static_cast<int>(TileSize);

@@ -29,36 +29,280 @@ void sendMouse(skui::Runtime& runtime, skui::EventType type, float x, float y)
     runtime.handleEvent(event);
 }
 
-std::string buildFakeMultidateYearOptions(size_t yearCount)
+bool setExportComposerFixture(skui::Runtime& runtime, bool sourceMenuOpen = false)
 {
-    std::string html =
-        "<div id=\"export-tianditu-multidate-years\" "
-        "class=\"export-sub-options\">"
-        "<div class=\"export-sub-title\">多时相年份</div>"
-        "<div id=\"export-tianditu-multidate-year-options\" "
-        "class=\"check-grid export-year-grid\">"
-        "<label class=\"check-item\"><input "
-        "id=\"export-tianditu-multidate-year-latest\" type=\"checkbox\" "
-        "value=\"latest\" checked><span>最新影像</span></label>";
-    for (size_t index = 0; index < yearCount; ++index)
-    {
-        const int year = 2025 - static_cast<int>(index);
-        html += "<label class=\"check-item\"><input id=\"export-tianditu-multidate-year-" +
-            std::to_string(year) + "\" type=\"checkbox\" value=\"" + std::to_string(year) +
-            "\"" + (index % 5 == 0 ? " checked" : "") + "><span>" +
-            std::to_string(year) + " z12-18</span></label>";
-    }
-    html += "</div>";
-    html += "</div>";
-    return html;
+    const std::string groups =
+        "<div id=\"export-group-list\" class=\"export-group-list\">"
+        "<section id=\"export-group-satellite\" class=\"export-group-card is-only-group\">"
+        "<header class=\"export-group-head\"><label class=\"export-group-check\">"
+        "<span class=\"export-check-control\">"
+        "<input id=\"export-act-toggle-group__g1\" type=\"checkbox\" checked>"
+        "<span class=\"export-check-indicator is-checked\">&#10003;</span></span>"
+        "<input id=\"export-act-rename-group__g1\" type=\"text\" value=\"卫星底图\" "
+        "aria-label=\"内容组名称\"></label></header>"
+        "<div id=\"export-act-select-component__c1\" class=\"export-component-row\" "
+        "data-action=\"export-composer\">"
+        "<span class=\"export-drag-handle\">&#10303;</span>"
+        "<strong>大图</strong><span>高德卫星、百度卫星 · PNG · 16384</span>"
+        "<button id=\"export-act-open-params__c1\" "
+        "class=\"export-quiet-button export-component-action\" type=\"button\" "
+        "data-action=\"export-composer\">参数</button>"
+        "<button id=\"export-act-remove-component__c1\" "
+        "class=\"export-quiet-button export-component-action\" type=\"button\" "
+        "data-action=\"export-composer\">移除</button></div>"
+        "<div id=\"export-act-select-component__c2\" class=\"export-component-row\" "
+        "data-action=\"export-composer\">"
+        "<span class=\"export-drag-handle\">&#10303;</span>"
+        "<strong>原始瓦片</strong><span>高德卫星、百度卫星</span>"
+        "<button id=\"export-act-open-params__c2\" "
+        "class=\"export-quiet-button export-component-action\" type=\"button\" "
+        "data-action=\"export-composer\">参数</button>"
+        "<button id=\"export-act-remove-component__c2\" "
+        "class=\"export-quiet-button export-component-action\" type=\"button\" "
+        "data-action=\"export-composer\">移除</button></div>"
+        "<div id=\"export-act-select-component__c3\" "
+        "class=\"export-component-row is-selected\" data-action=\"export-composer\">"
+        "<span class=\"export-drag-handle\">&#10303;</span>"
+        "<strong>标准 XYZ</strong><span>高德卫星 · 512</span>"
+        "<button id=\"export-act-open-params__c3\" "
+        "class=\"export-quiet-button export-component-action is-active\" "
+        "type=\"button\" data-action=\"export-composer\">参数</button>"
+        "<button id=\"export-act-remove-component__c3\" "
+        "class=\"export-quiet-button export-component-action\" type=\"button\" "
+        "data-action=\"export-composer\">移除</button></div>"
+        "<div class=\"export-add-row\"><button id=\"export-act-open-components__g1\" "
+        "class=\"export-quiet-button export-add-component-button\" "
+        "type=\"button\" data-action=\"export-composer\">添加组件</button></div></section>"
+        "</div>";
+    const std::string sourceMenu = sourceMenuOpen ?
+        "<div id=\"export-source-menu\" class=\"export-menu\">"
+        "<button type=\"button\" data-action=\"export-composer\">高德卫星</button>"
+        "<button type=\"button\" data-action=\"export-composer\">高德电子</button>"
+        "<button type=\"button\" data-action=\"export-composer\">高德路网</button>"
+        "<button type=\"button\" data-action=\"export-composer\">百度卫星</button>"
+        "<button type=\"button\" data-action=\"export-composer\">天地图影像</button>"
+        "<button type=\"button\" data-action=\"export-composer\">天地图多时相</button>"
+        "<button type=\"button\" data-action=\"export-composer\">Google 卫星</button>"
+        "<button type=\"button\" data-action=\"export-composer\">Bing 卫星</button>"
+        "<button type=\"button\" data-action=\"export-composer\">ArcGIS 影像</button>"
+        "<button type=\"button\" data-action=\"export-composer\">道路</button>"
+        "<button type=\"button\" data-action=\"export-composer\">建筑</button>"
+        "<button type=\"button\" data-action=\"export-composer\">水</button>"
+        "<button type=\"button\" data-action=\"export-composer\">点</button>"
+        "<button type=\"button\" data-action=\"export-composer\">绿地</button>"
+        "<button type=\"button\" data-action=\"export-composer\">边界</button>"
+        "<button type=\"button\" data-action=\"export-composer\">高速</button>"
+        "<button type=\"button\" data-action=\"export-composer\">地铁</button>"
+        "<button type=\"button\" data-action=\"export-composer\">其他</button></div>" :
+        "";
+    std::string panel =
+        "<aside id=\"export-param-panel\" class=\"export-param-panel\">"
+        "<header class=\"export-panel-head\"><h2>标准 XYZ</h2>"
+        "<button id=\"export-act-close-panel\" class=\"export-icon-button\" type=\"button\" "
+        "data-action=\"export-composer\" aria-label=\"关闭参数\">×</button></header>"
+        "<div id=\"export-panel-body\" class=\"export-panel-body\">"
+        "<div class=\"export-panel-scroll-content\">"
+        "<div class=\"export-panel-section\">"
+        "<span class=\"export-panel-label\">图源</span>"
+        "<div class=\"export-source-list\"><div class=\"export-source-row\">"
+        "<span>高德卫星</span><button id=\"export-act-remove-source__c3__0\" "
+        "class=\"export-icon-button\" "
+        "type=\"button\" data-action=\"export-composer\" "
+        "aria-label=\"移除图源\">×</button></div></div>"
+        "<button id=\"export-act-open-sources__c3\" class=\"export-link-button\" type=\"button\" "
+        "data-action=\"export-composer\">添加图源</button>";
+    panel += sourceMenu;
+    panel +=
+        "</div>"
+        "<div class=\"export-panel-section\"><span class=\"export-panel-label\">输出</span>"
+        "<label class=\"export-field-row\"><span>分辨率</span>"
+        "<select id=\"export-xyz-resolution\" class=\"export-select\">"
+        "<option value=\"256\">256</option><option value=\"512\" selected>512</option>"
+        "<option value=\"1024\">1024</option></select></label></div></div></div>"
+        "<button id=\"export-act-done-panel\" class=\"primary-command export-panel-done\" "
+        "type=\"button\" "
+        "data-action=\"export-composer\">完成</button>"
+        "</aside>";
+    return runtime.replaceHtmlById("export-group-list", groups) &&
+        runtime.replaceHtmlById("export-param-panel", panel) &&
+        runtime.setVisibleById("export-footer", false);
 }
 
-bool setExportMultidateYearFixture(skui::Runtime& runtime, size_t yearCount)
+bool setExportComponentMenuOverflowFixture(skui::Runtime& runtime)
 {
-    return runtime.setAttributeById("export-provider-tianditu-multidate", "checked", "") &&
-        runtime.replaceHtmlById(
-            "export-tianditu-multidate-years",
-            buildFakeMultidateYearOptions(yearCount));
+    std::string rows;
+    constexpr std::array<std::string_view, 5> kComponentNames = {
+        "大图", "建筑模型", "GeoJSON", "大图", "底板模型"};
+    for (size_t index = 0; index < kComponentNames.size(); ++index)
+    {
+        const std::string componentId = "menu-c" + std::to_string(index + 1);
+        rows +=
+            "<div id=\"export-act-select-component__" + componentId +
+            "\" class=\"export-component-row\" data-action=\"export-composer\">"
+            "<span class=\"export-drag-handle\">&#10303;</span><strong>" +
+            std::string(kComponentNames[index]) +
+            "</strong><span>测试组件</span>"
+            "<button class=\"export-quiet-button export-component-action\" "
+            "type=\"button\" data-action=\"export-composer\">参数</button>"
+            "<button class=\"export-quiet-button export-component-action\" "
+            "type=\"button\" data-action=\"export-composer\">移除</button></div>";
+    }
+
+    const std::string groups =
+        "<div id=\"export-group-list\" class=\"export-group-list\">"
+        "<section id=\"export-group-overflow\" class=\"export-group-card is-only-group\">"
+        "<header class=\"export-group-head\"><label class=\"export-group-check\">"
+        "<span class=\"export-check-control\">"
+        "<input type=\"checkbox\" checked>"
+        "<span class=\"export-check-indicator is-checked\">&#10003;</span></span>"
+        "<input type=\"text\" value=\"当前预览\" aria-label=\"内容组名称\">"
+        "</label></header>" +
+        rows +
+        "<div class=\"export-add-row\">"
+        "<button class=\"export-quiet-button export-add-component-button\" "
+        "type=\"button\" data-action=\"export-composer\">添加组件</button>"
+        "<div id=\"export-component-menu\" class=\"export-menu\">"
+        "<button id=\"export-act-add-component__g1__merged-image\" type=\"button\" "
+        "data-action=\"export-composer\">大图</button>"
+        "<button id=\"export-act-add-component__g1__standard-xyz\" type=\"button\" "
+        "data-action=\"export-composer\">标准 XYZ</button>"
+        "<button id=\"export-act-add-component__g1__raw-tiles\" type=\"button\" "
+        "data-action=\"export-composer\">原始瓦片</button>"
+        "<button id=\"export-act-add-component__g1__base-plate\" type=\"button\" "
+        "data-action=\"export-composer\">底板模型</button>"
+        "<button id=\"export-act-add-component__g1__building-model\" type=\"button\" "
+        "data-action=\"export-composer\">建筑模型</button>"
+        "<button id=\"export-act-add-component__g1__geojson\" type=\"button\" "
+        "data-action=\"export-composer\">GeoJSON</button></div></div></section></div>";
+    return runtime.replaceHtmlById("export-group-list", groups);
+}
+
+std::string exportBasePlatePanelScrollContentFixture()
+{
+    return
+        "<div id=\"export-panel-scroll-content\" class=\"export-panel-scroll-content\">"
+        "<div class=\"export-panel-section\"><span class=\"export-panel-label\">图源</span>"
+        "<button class=\"export-link-button\" type=\"button\" "
+        "data-action=\"export-composer\">添加图源</button></div>"
+        "<div class=\"export-panel-section\"><span class=\"export-panel-label\">贴图</span>"
+        "<label class=\"export-field-row\"><span>贴图尺寸</span>"
+        "<select class=\"export-select\"><option>4096</option></select></label>"
+        "<label class=\"export-field-row\"><span>贴图格式</span>"
+        "<select class=\"export-select\"><option>PNG</option></select></label></div>"
+        "<div class=\"export-panel-section\"><span class=\"export-panel-label\">形态</span>"
+        "<div class=\"export-segment\">"
+        "<button id=\"export-act-set-shape__c-base__plane\" "
+        "class=\"export-segment-button\" type=\"button\" "
+        "data-action=\"export-composer\">平面</button>"
+        "<button id=\"export-act-set-shape__c-base__sphere\" "
+        "class=\"export-segment-button is-active\" type=\"button\" "
+        "data-action=\"export-composer\">球面</button></div></div>"
+        "<label class=\"export-switch-row\"><span>导出高度</span>"
+        "<input id=\"export-act-toggle-elevation__c-base\" "
+        "class=\"export-switch\" type=\"checkbox\"></label>"
+        "<label class=\"export-field-row is-disabled\"><span>采样率（米）</span>"
+        "<input id=\"export-act-set-sample__c-base\" type=\"number\" "
+        "value=\"30\" disabled></label>"
+        "<label class=\"export-field-row is-disabled\"><span>网格细分</span>"
+        "<input id=\"export-act-set-subdivision__c-base\" type=\"number\" "
+        "value=\"32\" disabled></label>"
+        "<p class=\"export-hint\">零面取范围内最低高程。</p></div>";
+}
+
+bool setExportBasePlatePanelFixture(skui::Runtime& runtime)
+{
+    const std::string panel =
+        "<aside id=\"export-param-panel\" class=\"export-param-panel\">"
+        "<header class=\"export-panel-head\"><h2>底板模型</h2>"
+        "<button id=\"export-act-close-panel\" class=\"export-icon-button\" type=\"button\" "
+        "data-action=\"export-composer\" aria-label=\"关闭参数\">×</button></header>"
+        "<div id=\"export-panel-body\" class=\"export-panel-body\">" +
+        exportBasePlatePanelScrollContentFixture() +
+        "</div>"
+        "<button id=\"export-act-done-panel\" class=\"primary-command export-panel-done\" "
+        "type=\"button\" data-action=\"export-composer\">完成</button></aside>";
+    return runtime.replaceHtmlById("export-param-panel", panel);
+}
+
+bool setExportBuildingPanelFixture(skui::Runtime& runtime)
+{
+    const std::string panel =
+        "<aside id=\"export-param-panel\" class=\"export-param-panel\">"
+        "<header class=\"export-panel-head\"><h2>建筑模型</h2>"
+        "<button id=\"export-act-close-panel\" class=\"export-icon-button\" type=\"button\" "
+        "data-action=\"export-composer\" aria-label=\"关闭参数\">×</button></header>"
+        "<div id=\"export-panel-body\" class=\"export-panel-body\">"
+        "<div id=\"export-panel-scroll-content\" class=\"export-panel-scroll-content\">"
+        "<div class=\"export-panel-section\"><span class=\"export-panel-label\">图源</span>"
+        "<div class=\"export-source-list\"><div class=\"export-source-row is-fixed\">"
+        "<span class=\"export-source-name\">建筑</span></div></div></div>"
+        "<div class=\"export-field-row export-building-mode-row\"><span>形态</span>"
+        "<div class=\"export-segment\">"
+        "<button id=\"export-act-set-shape__c-building__plane\" "
+        "class=\"export-segment-button\" type=\"button\" "
+        "data-action=\"export-composer\">平面</button>"
+        "<button id=\"export-act-set-shape__c-building__sphere\" "
+        "class=\"export-segment-button is-active\" type=\"button\" "
+        "data-action=\"export-composer\">球面</button></div></div>"
+        "<div class=\"export-field-row export-building-mode-row\"><span>墙体模式</span>"
+        "<div class=\"export-segment\">"
+        "<button id=\"export-act-set-wall-mode__c-building__scattered\" "
+        "class=\"export-segment-button\" type=\"button\" "
+        "data-action=\"export-composer\">散图</button>"
+        "<button id=\"export-act-set-wall-mode__c-building__merged-atlas\" "
+        "class=\"export-segment-button is-active\" type=\"button\" "
+        "data-action=\"export-composer\">合并贴图</button></div></div>"
+        "<div class=\"export-field-row export-building-mode-row\"><span>屋顶模式</span>"
+        "<div class=\"export-segment\">"
+        "<button id=\"export-act-set-roof-mode__c-building__scattered\" "
+        "class=\"export-segment-button\" type=\"button\" "
+        "data-action=\"export-composer\">散图</button>"
+        "<button id=\"export-act-set-roof-mode__c-building__merged-atlas\" "
+        "class=\"export-segment-button is-active\" type=\"button\" "
+        "data-action=\"export-composer\">合并贴图</button>"
+        "<button id=\"export-act-set-roof-mode__c-building__satellite\" "
+        "class=\"export-segment-button\" type=\"button\" "
+        "data-action=\"export-composer\">卫星图</button></div></div>"
+        "<label class=\"export-field-row\"><span>合并格式</span>"
+        "<select class=\"export-select\"><option>PNG</option>"
+        "<option selected>JPG</option></select></label>"
+        "<label class=\"export-field-row\"><span>楼层高度</span>"
+        "<input type=\"number\" value=\"45\"></label>"
+        "<label class=\"export-field-row\"><span>墙体材质上限</span>"
+        "<input type=\"number\" value=\"1\"></label>"
+        "<label class=\"export-field-row\"><span>随机种子</span>"
+        "<input type=\"number\" value=\"0\"></label>"
+        "<label class=\"export-switch-row\"><span>跟随底板高程</span>"
+        "<input class=\"export-switch\" type=\"checkbox\"></label>"
+        "<div class=\"export-field-row export-directory-row\">"
+        "<span>墙体贴图目录</span><div class=\"export-directory-control\">"
+        "<input id=\"export-act-set-wall-path__c-building\" type=\"text\" "
+        "value=\"贴图/墙体\">"
+        "<button id=\"export-act-browse-wall-path__c-building\" "
+        "class=\"export-directory-button\" type=\"button\" "
+        "data-action=\"export-composer\" title=\"选择墙体贴图目录\" "
+        "aria-label=\"选择墙体贴图目录\"><svg viewBox=\"0 0 24 24\" "
+        "aria-hidden=\"true\"><path fill=\"none\" stroke=\"#c9cfcc\" "
+        "stroke-width=\"1.6\" stroke-linecap=\"round\" "
+        "stroke-linejoin=\"round\" d=\"M3 7a2 2 0 0 1 2-2h4l2 2.5h8"
+        "a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\">"
+        "</path></svg></button></div></div>"
+        "<div class=\"export-field-row export-directory-row\">"
+        "<span>屋顶贴图目录</span><div class=\"export-directory-control\">"
+        "<input id=\"export-act-set-roof-path__c-building\" type=\"text\" "
+        "value=\"贴图/房顶\">"
+        "<button id=\"export-act-browse-roof-path__c-building\" "
+        "class=\"export-directory-button\" type=\"button\" "
+        "data-action=\"export-composer\" title=\"选择屋顶贴图目录\" "
+        "aria-label=\"选择屋顶贴图目录\"><svg viewBox=\"0 0 24 24\" "
+        "aria-hidden=\"true\"><path fill=\"none\" stroke=\"#c9cfcc\" "
+        "stroke-width=\"1.6\" stroke-linecap=\"round\" "
+        "stroke-linejoin=\"round\" d=\"M3 7a2 2 0 0 1 2-2h4l2 2.5h8"
+        "a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\">"
+        "</path></svg></button></div></div></div></div>"
+        "<button id=\"export-act-done-panel\" class=\"primary-command export-panel-done\" "
+        "type=\"button\" data-action=\"export-composer\">完成</button></aside>";
+    return runtime.replaceHtmlById("export-param-panel", panel);
 }
 
 bool writeRuntimeScreenshot(skui::Runtime& runtime,
@@ -97,6 +341,12 @@ bool runTest()
         sourceRoot / "resources" / "preview" / "index.html";
     const std::filesystem::path controllerPath =
         sourceRoot / "src" / "preview" / "PreviewController.cpp";
+    const std::filesystem::path composerPath =
+        sourceRoot / "src" / "preview" / "ExportComposer.cpp";
+    const std::filesystem::path groupedExportPath =
+        sourceRoot / "src" / "preview" / "ExportGroupedExport.cpp";
+    const std::filesystem::path exportTaskManagerHeaderPath =
+        sourceRoot / "include" / "preview" / "ExportTaskManager.h";
     const std::filesystem::path mapRendererPath =
         sourceRoot / "src" / "preview" / "MapRenderer.cpp";
     skui::RuntimeOptions options;
@@ -108,30 +358,6 @@ bool runTest()
     {
         return false;
     }
-    const std::array<std::string_view, 27> exportCheckboxIds = {
-        "export-provider-gaode", "export-provider-tencent",
-        "export-provider-tianditu", "export-provider-tianditu-multidate",
-        "export-provider-baidu", "export-provider-google", "export-provider-bing",
-        "export-provider-arcgis", "export-gis-group-1", "export-gis-group-2",
-        "export-gis-group-3", "export-gis-group-4", "export-gis-group-5",
-        "export-gis-group-6", "export-gis-group-7", "export-gis-group-8",
-        "export-gis-group-9", "export-gis-combine-overlay",
-        "export-gis-combine-merged", "export-gis-combine-separate",
-        "export-satellite-tiles", "export-satellite-merged", "export-fbx",
-        "export-terrain-height", "export-geojson", "export-building-height-colors",
-        "export-building-fbx"};
-    for (const std::string_view checkboxId : exportCheckboxIds)
-    {
-        const std::string checkedMarkup =
-            "id=\"" + std::string(checkboxId) + "\" type=\"checkbox\" checked";
-        if (!postprocess_test::Require(
-                !postprocess_test::ContainsText(documentPath, checkedMarkup),
-                "export checkbox has an unexpected static checked state: " +
-                    std::string(checkboxId)))
-        {
-            return false;
-        }
-    }
     if (!postprocess_test::Require(
             postprocess_test::ContainsText(
                 documentPath, "fill=\"none\" stroke=\"#c9cfcc\" stroke-width=\"1.6\""),
@@ -140,14 +366,15 @@ bool runTest()
         return false;
     }
     if (!postprocess_test::Require(
-            postprocess_test::ContainsText(
-                documentPath, "<option value=\"tianditu.multidate\">天地图多时相</option>") &&
+            postprocess_test::ContainsText(composerPath, "\"tianditu.multidate\"") &&
+                postprocess_test::ContainsText(composerPath, "\"天地图多时相\"") &&
+                postprocess_test::ContainsText(
+                    composerPath,
+                    "{{\"256\", \"256\"}, {\"512\", \"512\"}, {\"1024\", \"1024\"}}") &&
                 postprocess_test::ContainsText(documentPath,
-                                               "id=\"export-provider-tianditu-multidate\"") &&
+                                               "id=\"export-group-list\"") &&
                 postprocess_test::ContainsText(documentPath,
-                                               "class=\"export-content-body\"") &&
-                postprocess_test::ContainsText(documentPath,
-                                               "id=\"export-tianditu-multidate-years\"") &&
+                                               "id=\"export-param-panel\"") &&
                 postprocess_test::ContainsText(documentPath,
                                                "id=\"tianditu-multidate-panel\"") &&
                 postprocess_test::ContainsText(documentPath,
@@ -258,8 +485,7 @@ bool runTest()
                     documentPath,
                     "grid-template-columns: minmax(0, 1fr)") &&
                 postprocess_test::ContainsText(documentPath, ".param-field select") &&
-                postprocess_test::ContainsText(
-                    documentPath, "id=\"export-fbx-texture-format\"") &&
+                postprocess_test::ContainsText(documentPath, "id=\"export-submit\"") &&
                 postprocess_test::ContainsText(documentPath, "min-width: 0"),
             "导出参数行没有提供窗口变窄时的换行和收缩布局"))
     {
@@ -276,8 +502,7 @@ bool runTest()
             "预览、导出配置或导出任务页面结构缺失") ||
         !postprocess_test::Require(
             runtime.setValueById("export-radius", "2000") &&
-                runtime.setValueById("export-config-radius", "2000") &&
-                runtime.setValueById("export-terrain-sample-rate", "30"),
+                runtime.setValueById("export-config-radius", "2000"),
             "预览页或导出配置页缺少半径输入"))
     {
         return false;
@@ -441,8 +666,8 @@ bool runTest()
         return false;
     }
 
-    const std::vector<std::string> exportHeaderChildren =
-        runtime.childElementIdsById("export-page-header");
+    const std::vector<std::string> exportHeaderActionChildren =
+        runtime.childElementIdsById("export-header-actions");
     const std::vector<std::string> taskHeaderChildren =
         runtime.childElementIdsById("task-page-header");
     const std::vector<std::string> taskClearConfirmChildren =
@@ -456,9 +681,9 @@ bool runTest()
     const std::vector<std::string> taskDeleteTargetChildren =
         runtime.childElementIdsById("task-delete-target");
     const auto exportTasksButton =
-        std::ranges::find(exportHeaderChildren, "export-open-tasks");
+        std::ranges::find(exportHeaderActionChildren, "export-open-tasks");
     const auto exportBackButton =
-        std::ranges::find(exportHeaderChildren, "export-back-preview");
+        std::ranges::find(exportHeaderActionChildren, "export-back-preview");
     const auto taskClearButton =
         std::ranges::find(taskHeaderChildren, "tasks-clear-finished");
     const auto taskNewButton =
@@ -466,7 +691,7 @@ bool runTest()
     const auto taskBackButton =
         std::ranges::find(taskHeaderChildren, "tasks-back-preview");
     if (!postprocess_test::Require(
-            exportTasksButton != exportHeaderChildren.end() &&
+            exportTasksButton != exportHeaderActionChildren.end() &&
                 exportBackButton == std::next(exportTasksButton),
             "导出配置页的返回按钮没有紧跟在导出任务按钮后") ||
         !postprocess_test::Require(
@@ -499,41 +724,109 @@ bool runTest()
         return false;
     }
 
-    const std::vector<std::string> expectedInitialGisItems = {
-        "export-gis-static-road", "export-gis-static-building",
-        "export-gis-static-water", "export-gis-static-point",
-        "export-gis-static-green", "export-gis-static-boundary",
-        "export-gis-static-highway", "export-gis-static-other",
-        "export-gis-static-subway"};
-    const std::vector<std::string> expectedGisCombinationItems = {
-        "export-gis-combine-overlay-item", "export-gis-combine-merged-item",
-        "export-gis-combine-separate-item"};
-    const std::vector<std::string> expectedBuildingFbxFields = {
-        "export-building-wall-textures", "export-building-roof-textures",
-        "export-building-wall-texture-mode", "export-building-roof-texture-mode",
-        "export-building-atlas-format", "export-building-layer-height",
-        "export-building-max-wall-materials", "export-building-texture-seed"};
     if (!postprocess_test::Require(
-            runtime.childElementIdsById("export-gis-groups") == expectedInitialGisItems,
-            "GIS 数据初始结构没有使用单层两列网格") ||
-        !postprocess_test::Require(
-            runtime.childElementIdsById("export-gis-combine-options") ==
-                expectedGisCombinationItems,
-            "GIS 组合方式初始结构不是三个独立复选项") ||
-        !postprocess_test::Require(
-            postprocess_test::ContainsText(documentPath, "id=\"export-building-fbx\"") &&
-                !postprocess_test::ContainsText(
+            postprocess_test::ContainsText(documentPath, "id=\"export-group-list\"") &&
+                postprocess_test::ContainsText(documentPath, "id=\"export-param-panel\"") &&
+                postprocess_test::ContainsText(documentPath, "class=\"export-workspace\"") &&
+                postprocess_test::ContainsText(documentPath, "id=\"export-submit\"") &&
+                postprocess_test::ContainsText(
                     documentPath,
-                    "id=\"export-building-fbx\" type=\"checkbox\" disabled") &&
-                std::ranges::all_of(
-                    expectedBuildingFbxFields,
-                    [&documentPath](const std::string& id)
-                    {
-                        return postprocess_test::ContainsText(
-                            documentPath,
-                            "id=\"" + id + "\"");
-                    }),
-            "建筑 FBX 配置区缺少墙体/屋顶贴图模式控件"))
+                    "grid-template-columns: repeat(2, minmax(0, 1fr));") &&
+                postprocess_test::ContainsText(documentPath,
+                                               ".export-panel-scroll-content") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "margin-right: 24px;") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "flex: 0 1 180px;") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "flex: 1 1 0;") &&
+                postprocess_test::ContainsText(documentPath,
+                                               ".export-field-row.is-disabled") &&
+                postprocess_test::ContainsText(documentPath,
+                                               ".export-field-row input:disabled") &&
+                postprocess_test::ContainsText(documentPath,
+                                               ".export-source-name") &&
+                postprocess_test::ContainsText(documentPath,
+                                               ".export-building-mode-row") &&
+                postprocess_test::ContainsText(documentPath,
+                                               ".export-directory-row") &&
+                postprocess_test::ContainsText(documentPath,
+                                               ".export-directory-control") &&
+                postprocess_test::ContainsText(documentPath,
+                                               ".export-directory-button") &&
+                postprocess_test::ContainsText(
+                    documentPath,
+                    ".export-building-mode-row > .export-segment") &&
+                postprocess_test::ContainsText(documentPath,
+                                               "min-width: 240px;") &&
+                postprocess_test::ContainsText(composerPath, "ResetExportComposer") &&
+                postprocess_test::ContainsText(composerPath, "RenderExportComposer") &&
+                postprocess_test::ContainsText(composerPath,
+                                               "export-panel-scroll-content") &&
+                postprocess_test::ContainsText(
+                    composerPath,
+                    "class=\\\"export-segment-button{}\\\" type=\\\"button\\\" ") &&
+                postprocess_test::ContainsText(
+                    composerPath,
+                    "const bool subdivisionEnabled = !component.exportElevation &&") &&
+                postprocess_test::ContainsText(
+                    composerPath,
+                    "component.shape != DownTool::FbxPlanetShape::Plane;") &&
+                !postprocess_test::ContainsText(
+                    composerPath,
+                    "SegmentButton(\"export-act-set-shape__\" + component.id + "
+                    "\"__both\"") &&
+                postprocess_test::ContainsText(
+                    composerPath,
+                    "class=\\\"export-source-row is-fixed\\\"") &&
+                postprocess_test::ContainsText(
+                    composerPath,
+                    "class=\\\"export-source-name\\\"") &&
+                postprocess_test::ContainsText(
+                    composerPath,
+                    "export-field-row export-building-mode-row") &&
+                postprocess_test::ContainsText(
+                    composerPath,
+                    "export-act-browse-wall-path__") &&
+                postprocess_test::ContainsText(
+                    composerPath,
+                    "export-act-browse-roof-path__") &&
+                postprocess_test::ContainsText(
+                    composerPath,
+                    "SelectExportDirectory()") &&
+                postprocess_test::ContainsText(
+                    composerPath,
+                    "id=\\\"export-panel-scroll-content\\\"") &&
+                postprocess_test::ContainsText(
+                    composerPath,
+                    "selected->id == lastExportParamPanelComponentId_;") &&
+                postprocess_test::ContainsText(
+                    composerPath,
+                    "replaceHtmlById(") &&
+                postprocess_test::ContainsText(
+                    composerPath,
+                    "\"export-panel-scroll-content\", panelScrollContentHtml") &&
+                postprocess_test::ContainsText(
+                    exportTaskManagerHeaderPath,
+                    "shape = DownTool::FbxPlanetShape::Sphere;") &&
+                postprocess_test::ContainsText(
+                    groupedExportPath,
+                    "JsonString(json, \"shape\", \"sphere\")") &&
+                postprocess_test::ContainsText(
+                    groupedExportPath,
+                    "step.configuration.executionFbxShape = component.shape;") &&
+                !postprocess_test::ContainsText(composerPath,
+                                                "export-act-add-group") &&
+                !postprocess_test::ContainsText(composerPath,
+                                                "verb == \"add-group\"") &&
+                !postprocess_test::ContainsText(composerPath,
+                                                "添加内容组") &&
+                postprocess_test::ContainsText(composerPath,
+                                               "export-act-select-component__") &&
+                postprocess_test::ContainsText(composerPath,
+                                               "verb == \"select-component\"") &&
+                postprocess_test::ContainsText(controllerPath, "HandleExportComposerEvent"),
+            "export composer is missing its group list or parameter panel"))
     {
         return false;
     }
@@ -543,7 +836,14 @@ bool runTest()
             postprocess_test::ContainsText(exportManagerPath, "RunBuildingFbxExport") &&
                 postprocess_test::ContainsText(exportManagerPath, "BuildingFbxModeName") &&
                 postprocess_test::ContainsText(exportManagerPath,
-                                               "ExportAmapBuildingsToFbx"),
+                                               "ExportAmapBuildingsToFbx") &&
+                postprocess_test::ContainsText(
+                    exportManagerPath,
+                    "exportOptions.shape = configuration.executionFbxShape.value_or(") &&
+                postprocess_test::ContainsText(groupedExportPath,
+                                               "ExportGroupedRunner::Run") &&
+                postprocess_test::ContainsText(groupedExportPath,
+                                               "GroupedExportError"),
             "建筑 FBX 没有独立导出调度入口"))
     {
         return false;
@@ -601,6 +901,8 @@ bool runTest()
     bool gisPanelOpen = false;
     std::string activePage = "preview";
     bool navigationSucceeded = false;
+    bool rerenderBasePlateOnShapeClick = false;
+    bool basePlateRerenderSucceeded = false;
     runtime.setElementEventCallback(
         [&](const skui::ElementEvent& event)
         {
@@ -620,7 +922,14 @@ bool runTest()
             else if (event.type == skui::ElementEventType::Click)
             {
                 lastClickId = event.id;
-                if (event.id == "gis-overlay-toggle")
+                if (rerenderBasePlateOnShapeClick &&
+                    event.id.starts_with("export-act-set-shape__c-base__"))
+                {
+                    basePlateRerenderSucceeded = runtime.replaceHtmlById(
+                        "export-panel-scroll-content",
+                        exportBasePlatePanelScrollContentFixture());
+                }
+                else if (event.id == "gis-overlay-toggle")
                 {
                     gisPanelOpen = !gisPanelOpen;
                     runtime.setVisibleById("gis-overlay-panel", gisPanelOpen);
@@ -1034,87 +1343,451 @@ bool runTest()
                                    "无法填充导出中心经度") ||
         !postprocess_test::Require(runtime.setValueById("export-lat", "39.908722"),
                                    "无法填充导出中心纬度") ||
+        !postprocess_test::Require(runtime.setValueById("export-config-radius", "2000"),
+                                   "无法填充导出半径") ||
         !postprocess_test::Require(runtime.setValueById("export-zoom", "15"),
                                    "无法填充导出缩放级别") ||
         !postprocess_test::Require(runtime.setValueById("export-output", ""),
                                    "无法清空导出目录") ||
-        !postprocess_test::Require(setExportMultidateYearFixture(runtime, 12),
-                                   "无法填充 12 个假年份") ||
-        !postprocess_test::Require(runtime.setAttributeById("export-gis-group-1", "checked", ""),
-                                   "无法勾选导出 GIS 道路项") ||
-        !postprocess_test::Require(runtime.setAttributeById("export-gis-group-2", "checked", ""),
-                                   "无法勾选导出 GIS 建筑项") ||
-        !postprocess_test::Require(runtime.setAttributeById("export-gis-group-3", "checked", ""),
-                                   "无法预置导出 GIS 水系项") ||
-        !postprocess_test::Require(runtime.removeAttributeById("export-gis-group-3", "checked"),
-                                   "无法取消导出 GIS 水系项"))
+        !postprocess_test::Require(setExportComposerFixture(runtime),
+                                   "无法填充组件式导出配置") ||
+        !postprocess_test::Require(runtime.setValueById("export-xyz-resolution", "1024"),
+                                   "标准 XYZ 分辨率选择不可用"))
     {
         return false;
     }
-    const std::vector<std::string> gisGroupChildren =
-        runtime.childElementIdsById("export-gis-static-road");
+    const std::vector<std::string> composerChildren =
+        runtime.childElementIdsById("export-group-list");
+    const std::vector<std::string> satelliteGroupChildren =
+        runtime.childElementIdsById("export-group-satellite");
     if (!postprocess_test::Require(
-            runtime.childElementIdsById("export-gis-groups") == expectedInitialGisItems,
-            "更新 GIS 勾选状态后破坏了静态两列网格") ||
-        !postprocess_test::Require(
-            std::ranges::find(gisGroupChildren, "export-gis-group-1") !=
-                gisGroupChildren.end(),
-            "GIS 数据项没有使用真实的多选框"))
+            composerChildren ==
+                    std::vector<std::string>{"export-group-satellite"} &&
+                std::ranges::find(satelliteGroupChildren,
+                                  "export-act-select-component__c1") !=
+                    satelliteGroupChildren.end() &&
+                std::ranges::find(satelliteGroupChildren,
+                                  "export-act-select-component__c2") !=
+                    satelliteGroupChildren.end() &&
+                std::ranges::find(satelliteGroupChildren,
+                                  "export-act-select-component__c3") !=
+                    satelliteGroupChildren.end(),
+            "内容组没有保持组件列表和添加入口"))
     {
         return false;
     }
-    if (!postprocess_test::Require(
-            runtime.childElementIdsById("export-gis-combine-options") ==
-                expectedGisCombinationItems &&
-                runtime.setAttributeById("export-gis-combine-overlay", "checked", "") &&
-                runtime.setAttributeById("export-gis-combine-merged", "checked", "") &&
-                runtime.setAttributeById("export-gis-combine-separate", "checked", ""),
-            "GIS 组合方式没有提供三个可同时勾选的复选框"))
-    {
-        return false;
-    }
+
     const std::filesystem::path exportOutputPath =
         sourceRoot / "tmp" / "preview-export-config-ui.png";
     if (!writeRuntimeScreenshot(runtime, exportOutputPath, kWidth, kHeight) ||
-        !writeRuntimeScreenshot(
-            runtime, sourceRoot / "tmp" / "preview-export-config-ui-12-years.png", kWidth,
-            kHeight) ||
-        !postprocess_test::Require(setExportMultidateYearFixture(runtime, 24),
-                                   "无法填充 24 个假年份") ||
-        !writeRuntimeScreenshot(
-            runtime, sourceRoot / "tmp" / "preview-export-config-ui-24-years.png", kWidth,
-            kHeight))
+        !writeRuntimeScreenshot(runtime,
+                                sourceRoot / "tmp" /
+                                    "preview-export-config-ui-component.png",
+                                kWidth, kHeight))
     {
         return false;
     }
-    if (!postprocess_test::Require(setExportMultidateYearFixture(runtime, 60),
-                                   "无法填充 60 个假年份") ||
+    const std::optional<skui::ScrollState> standardPanelScroll =
+        runtime.scrollStateById("export-panel-body");
+    const std::optional<skui::ScrollState> standardGroupListScroll =
+        runtime.scrollStateById("export-group-list");
+    if (!postprocess_test::Require(
+            standardPanelScroll.has_value() &&
+                standardPanelScroll->maxScrollX <= 0.5F,
+            "短参数面板产生了横向溢出") ||
+        !postprocess_test::Require(
+            standardGroupListScroll.has_value() &&
+                standardGroupListScroll->maxScrollY <= 0.5F,
+            "组件较少时左侧列表不应出现纵向滚动"))
+    {
+        return false;
+    }
+
+    lastClickId.clear();
+    lastMouseDownId.clear();
+    lastMouseUpId.clear();
+    sendMouse(runtime, skui::EventType::MouseMove, 122.F, 338.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 122.F, 338.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 122.F, 338.F);
+    if (!postprocess_test::Require(
+            lastClickId == "export-act-select-component__c1",
+            "点击组件行名称区域无法切换参数，实际命中：" + lastClickId))
+    {
+        return false;
+    }
+
+    lastClickId.clear();
+    lastMouseDownId.clear();
+    lastMouseUpId.clear();
+    sendMouse(runtime, skui::EventType::MouseMove, 736.F, 338.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 736.F, 338.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 736.F, 338.F);
+    if (!postprocess_test::Require(
+            lastClickId == "export-act-open-params__c1",
+            "组件参数按钮的可见文字区域无法点击，MouseDown：" +
+                lastMouseDownId + "，MouseUp：" + lastMouseUpId +
+                "，Click：" + lastClickId))
+    {
+        return false;
+    }
+
+    lastClickId.clear();
+    lastMouseDownId.clear();
+    lastMouseUpId.clear();
+    sendMouse(runtime, skui::EventType::MouseMove, 844.F, 338.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 844.F, 338.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 844.F, 338.F);
+    if (!postprocess_test::Require(
+            lastClickId == "export-act-remove-component__c1",
+            "组件移除按钮的可见文字区域无法点击，实际命中：" + lastClickId))
+    {
+        return false;
+    }
+
+    lastClickId.clear();
+    lastMouseDownId.clear();
+    lastMouseUpId.clear();
+    sendMouse(runtime, skui::EventType::MouseMove, 116.F, 600.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 116.F, 600.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 116.F, 600.F);
+    if (!postprocess_test::Require(
+            lastClickId == "export-act-open-components__g1",
+            "添加组件按钮的可见文字区域无法点击，实际命中：" + lastClickId))
+    {
+        return false;
+    }
+
+    lastClickId.clear();
+    lastMouseDownId.clear();
+    lastMouseUpId.clear();
+    sendMouse(runtime, skui::EventType::MouseMove, 1000.F, 456.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 1000.F, 456.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 1000.F, 456.F);
+    if (!postprocess_test::Require(
+            lastClickId == "export-act-open-sources__c3",
+            "添加图源按钮的可见文字区域无法点击，实际命中：" + lastClickId))
+    {
+        return false;
+    }
+
+    lastClickId.clear();
+    lastMouseDownId.clear();
+    lastMouseUpId.clear();
+    sendMouse(runtime, skui::EventType::MouseMove, 1182.F, 822.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 1182.F, 822.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 1182.F, 822.F);
+    if (!postprocess_test::Require(
+            lastClickId == "export-act-done-panel",
+            "参数面板完成按钮的可见文字区域无法点击，实际命中：" + lastClickId))
+    {
+        return false;
+    }
+
+    if (!postprocess_test::Require(setExportComposerFixture(runtime, true),
+                                   "无法展开完整图源菜单") ||
         !writeRuntimeScreenshot(
-            runtime, sourceRoot / "tmp" / "preview-export-config-ui-60-years.png", kWidth,
-            kHeight))
+            runtime, sourceRoot / "tmp" / "preview-export-source-menu.png",
+            kWidth, kHeight))
     {
         return false;
     }
     runtime.resize(1100, kHeight, 1.F);
-    if (!postprocess_test::Require(setExportMultidateYearFixture(runtime, 36),
-                                   "无法填充 36 个假年份") ||
-        !writeRuntimeScreenshot(
-            runtime, sourceRoot / "tmp" / "preview-export-config-ui-36-years-narrow.png",
+    if (!writeRuntimeScreenshot(
+            runtime, sourceRoot / "tmp" / "preview-export-source-menu-narrow.png",
             1100, kHeight))
     {
         return false;
     }
-    if (!postprocess_test::Require(setExportMultidateYearFixture(runtime, 60),
-                                   "无法填充 60 个假年份") ||
+    runtime.resize(kWidth, kHeight, 1.F);
+    if (
+        !postprocess_test::Require(setExportComposerFixture(runtime),
+                                   "无法恢复导出配置夹具"))
+    {
+        return false;
+    }
+
+    if (!postprocess_test::Require(
+            setExportComponentMenuOverflowFixture(runtime),
+            "无法填充多组件添加菜单") ||
         !writeRuntimeScreenshot(
-            runtime, sourceRoot / "tmp" / "preview-export-config-ui-60-years-narrow.png",
+            runtime,
+            sourceRoot / "tmp" / "preview-export-component-menu-overflow.png",
+            kWidth, kHeight))
+    {
+        return false;
+    }
+    const std::optional<skui::ScrollState> componentMenuListScroll =
+        runtime.scrollStateById("export-group-list");
+    if (!postprocess_test::Require(
+            componentMenuListScroll.has_value() &&
+                componentMenuListScroll->maxScrollX <= 0.5F &&
+                componentMenuListScroll->maxScrollY > 0.F,
+            "组件较多时添加菜单没有进入左侧纵向滚动区"))
+    {
+        return false;
+    }
+    if (!postprocess_test::Require(
+            runtime.setScrollOffsetById("export-group-list", 0.F,
+                                        componentMenuListScroll->maxScrollY),
+            "无法滚动到添加组件菜单底部") ||
+        !writeRuntimeScreenshot(
+            runtime,
+            sourceRoot / "tmp" / "preview-export-component-menu-scrolled.png",
+            kWidth, kHeight))
+    {
+        return false;
+    }
+    const std::optional<skui::ScrollState> scrolledComponentMenuList =
+        runtime.scrollStateById("export-group-list");
+    if (!postprocess_test::Require(
+            scrolledComponentMenuList.has_value() &&
+                scrolledComponentMenuList->scrollY > 0.F,
+            "添加组件菜单无法通过左侧列表滚动完整显示"))
+    {
+        return false;
+    }
+    lastClickId.clear();
+    sendMouse(runtime, skui::EventType::MouseMove, 680.F, 823.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 680.F, 823.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 680.F, 823.F);
+    if (!postprocess_test::Require(
+            lastClickId == "export-act-add-component__g1__geojson",
+            "滚动到底部后 GeoJSON 组件按钮仍无法点击，实际命中：" +
+                lastClickId) ||
+        !postprocess_test::Require(setExportComposerFixture(runtime),
+                                   "无法在菜单滚动测试后恢复导出配置夹具"))
+    {
+        return false;
+    }
+
+    if (!postprocess_test::Require(setExportBasePlatePanelFixture(runtime),
+                                   "无法填充底板模型长参数面板") ||
+        !writeRuntimeScreenshot(
+            runtime, sourceRoot / "tmp" / "preview-export-base-plate-panel.png",
+            kWidth, kHeight))
+    {
+        return false;
+    }
+    const std::optional<skui::ScrollState> basePlatePanelScroll =
+        runtime.scrollStateById("export-panel-body");
+    if (!postprocess_test::Require(
+            basePlatePanelScroll.has_value() &&
+                basePlatePanelScroll->maxScrollX <= 0.5F &&
+                basePlatePanelScroll->maxScrollY > 0.F,
+            "长参数面板没有保持仅纵向滚动"))
+    {
+        return false;
+    }
+    struct ShapeButtonHit
+    {
+        float x;
+        const char* id;
+    };
+    constexpr std::array<ShapeButtonHit, 2> shapeButtonHits = {{
+        {1066.F, "export-act-set-shape__c-base__plane"},
+        {1273.F, "export-act-set-shape__c-base__sphere"},
+    }};
+    for (const ShapeButtonHit& button : shapeButtonHits)
+    {
+        lastClickId.clear();
+        sendMouse(runtime, skui::EventType::MouseMove, button.x, 653.F);
+        sendMouse(runtime, skui::EventType::MouseDown, button.x, 653.F);
+        sendMouse(runtime, skui::EventType::MouseUp, button.x, 653.F);
+        if (!postprocess_test::Require(
+                lastClickId == button.id,
+                std::string("底板形态按钮无法点击，预期：") + button.id +
+                    "，实际：" + lastClickId))
+        {
+            return false;
+        }
+    }
+    const float basePlateScrollTarget = basePlatePanelScroll->maxScrollY;
+    if (!postprocess_test::Require(
+            runtime.setScrollOffsetById("export-panel-body", 0.F, basePlateScrollTarget),
+            "无法滚动到底板参数面板底部") ||
+        !writeRuntimeScreenshot(
+            runtime,
+            sourceRoot / "tmp" / "preview-export-base-plate-panel-scrolled.png",
+            kWidth, kHeight))
+    {
+        return false;
+    }
+    rerenderBasePlateOnShapeClick = true;
+    basePlateRerenderSucceeded = false;
+    lastClickId.clear();
+    sendMouse(runtime, skui::EventType::MouseMove, 1273.F, 514.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 1273.F, 514.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 1273.F, 514.F);
+    rerenderBasePlateOnShapeClick = false;
+    if (!postprocess_test::Require(
+            lastClickId == "export-act-set-shape__c-base__sphere" &&
+                basePlateRerenderSucceeded,
+            "形态按钮点击回调没有完成参数内容更新"))
+    {
+        return false;
+    }
+    const std::optional<skui::ScrollState> restoredBasePlatePanelScroll =
+        runtime.scrollStateById("export-panel-body");
+    if (!postprocess_test::Require(
+            restoredBasePlatePanelScroll.has_value() &&
+                restoredBasePlatePanelScroll->scrollY > 0.F,
+            "底板参数面板重建后滚动位置仍被重置到顶部") ||
+        !postprocess_test::Require(
+            runtime.setScrollOffsetById("export-panel-body", 0.F, 0.F),
+            "无法复位底板参数面板滚动位置"))
+    {
+        return false;
+    }
+    runtime.resize(1100, kHeight, 1.F);
+    if (!writeRuntimeScreenshot(
+            runtime,
+            sourceRoot / "tmp" / "preview-export-base-plate-panel-narrow.png",
+            1100, kHeight))
+    {
+        return false;
+    }
+    const std::optional<skui::ScrollState> narrowBasePlatePanelScroll =
+        runtime.scrollStateById("export-panel-body");
+    if (!postprocess_test::Require(
+            narrowBasePlatePanelScroll.has_value() &&
+                narrowBasePlatePanelScroll->maxScrollX <= 0.5F &&
+                narrowBasePlatePanelScroll->maxScrollY > 0.F,
+            "窄窗口长参数面板没有保持仅纵向滚动"))
+    {
+        return false;
+    }
+    runtime.resize(kWidth, kHeight, 1.F);
+    if (
+        !postprocess_test::Require(setExportComposerFixture(runtime),
+                                   "无法恢复导出配置夹具"))
+    {
+        return false;
+    }
+
+    if (!postprocess_test::Require(setExportBuildingPanelFixture(runtime),
+                                   "无法填充建筑模型参数面板") ||
+        !writeRuntimeScreenshot(
+            runtime, sourceRoot / "tmp" / "preview-export-building-panel.png",
+            kWidth, kHeight))
+    {
+        return false;
+    }
+    const std::optional<skui::ScrollState> buildingPanelScroll =
+        runtime.scrollStateById("export-panel-body");
+    if (!postprocess_test::Require(
+            buildingPanelScroll.has_value() &&
+                buildingPanelScroll->maxScrollX <= 0.5F &&
+                buildingPanelScroll->maxScrollY > 0.F,
+            "建筑模型参数面板没有保持仅纵向滚动"))
+    {
+        return false;
+    }
+    constexpr std::array<ShapeButtonHit, 2> buildingShapeButtonHits = {{
+        {1154.F, "export-act-set-shape__c-building__plane"},
+        {1302.F, "export-act-set-shape__c-building__sphere"},
+    }};
+    for (const ShapeButtonHit& button : buildingShapeButtonHits)
+    {
+        lastClickId.clear();
+        sendMouse(runtime, skui::EventType::MouseMove, button.x, 457.F);
+        sendMouse(runtime, skui::EventType::MouseDown, button.x, 457.F);
+        sendMouse(runtime, skui::EventType::MouseUp, button.x, 457.F);
+        if (!postprocess_test::Require(
+                lastClickId == button.id,
+                std::string("建筑形态按钮无法点击，预期：") + button.id +
+                    "，实际：" + lastClickId))
+        {
+            return false;
+        }
+    }
+    if (!postprocess_test::Require(
+            runtime.setScrollOffsetById("export-panel-body", 0.F,
+                                        buildingPanelScroll->maxScrollY),
+            "无法滚动到建筑贴图目录") ||
+        !writeRuntimeScreenshot(
+            runtime,
+            sourceRoot / "tmp" / "preview-export-building-panel-scrolled.png",
+            kWidth, kHeight))
+    {
+        return false;
+    }
+    struct DirectoryButtonHit
+    {
+        float y;
+        const char* id;
+    };
+    constexpr std::array<DirectoryButtonHit, 2> directoryButtonHits = {{
+        {663.F, "export-act-browse-wall-path__c-building"},
+        {727.F, "export-act-browse-roof-path__c-building"},
+    }};
+    for (const DirectoryButtonHit& button : directoryButtonHits)
+    {
+        lastClickId.clear();
+        sendMouse(runtime, skui::EventType::MouseMove, 1348.F, button.y);
+        sendMouse(runtime, skui::EventType::MouseDown, 1348.F, button.y);
+        sendMouse(runtime, skui::EventType::MouseUp, 1348.F, button.y);
+        if (!postprocess_test::Require(
+                lastClickId == button.id,
+                std::string("建筑贴图目录按钮无法点击，预期：") + button.id +
+                    "，实际：" + lastClickId))
+        {
+            return false;
+        }
+    }
+    if (!postprocess_test::Require(
+            runtime.setScrollOffsetById("export-panel-body", 0.F, 0.F),
+            "无法复位建筑模型参数面板"))
+    {
+        return false;
+    }
+    runtime.resize(1100, kHeight, 1.F);
+    if (!writeRuntimeScreenshot(
+            runtime,
+            sourceRoot / "tmp" / "preview-export-building-panel-narrow.png",
+            1100, kHeight))
+    {
+        return false;
+    }
+    const std::optional<skui::ScrollState> narrowBuildingPanelScroll =
+        runtime.scrollStateById("export-panel-body");
+    if (!postprocess_test::Require(
+            narrowBuildingPanelScroll.has_value() &&
+                narrowBuildingPanelScroll->maxScrollX <= 0.5F,
+            "窄窗口建筑模型参数面板产生了横向裁切"))
+    {
+        return false;
+    }
+    if (!postprocess_test::Require(
+            runtime.setScrollOffsetById("export-panel-body", 0.F,
+                                        narrowBuildingPanelScroll->maxScrollY),
+            "窄窗口无法滚动到建筑贴图目录") ||
+        !writeRuntimeScreenshot(
+            runtime,
+            sourceRoot / "tmp" /
+                "preview-export-building-panel-narrow-scrolled.png",
+            1100, kHeight))
+    {
+        return false;
+    }
+    runtime.resize(kWidth, kHeight, 1.F);
+    if (!postprocess_test::Require(setExportComposerFixture(runtime),
+                                   "无法再次恢复导出配置夹具"))
+    {
+        return false;
+    }
+
+    runtime.resize(1100, kHeight, 1.F);
+    if (
+        !writeRuntimeScreenshot(
+            runtime, sourceRoot / "tmp" / "preview-export-config-ui-component-narrow.png",
             1100, kHeight))
     {
         return false;
     }
     runtime.resize(1100, 1400, 1.F);
     if (!writeRuntimeScreenshot(
-            runtime, sourceRoot / "tmp" / "preview-export-config-ui-60-years-narrow-tall.png",
+            runtime,
+            sourceRoot / "tmp" / "preview-export-config-ui-component-narrow-tall.png",
             1100, 1400))
     {
         return false;

@@ -12,6 +12,7 @@
 ## 设计与实现
 
 - [瓦片后处理流水线](design/tile-postprocess-pipeline.md)
+- [下载组件模型](design/download-component-model.md)：导出配置改为内容组、输出组件和参数。
 - [高德 Web 矢量瓦片](knowledge/amap-vector-tile.md)
 
 ## 问题排查

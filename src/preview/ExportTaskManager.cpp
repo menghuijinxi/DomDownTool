@@ -35,6 +35,12 @@
 
 #include "preview/ExportImageComposer.h"
 
+namespace DomDownToolPreview
+{
+nlohmann::json ExportGroupsToJson(const std::vector<ExportContentGroup>& groups);
+bool ReadExportGroups(const nlohmann::json& value, std::vector<ExportContentGroup>& groups);
+} // namespace DomDownToolPreview
+
 namespace
 {
 using Json = nlohmann::json;
@@ -43,6 +49,11 @@ using DomDownToolPreview::ExportTaskRecord;
 using DomDownToolPreview::ExportTaskState;
 using DomDownToolPreview::GisExportMode;
 using DomDownToolPreview::SatelliteExportSource;
+using DomDownToolPreview::ExportComponent;
+using DomDownToolPreview::ExportComponentKind;
+using DomDownToolPreview::ExportContentGroup;
+using DomDownToolPreview::ExportSourceEntry;
+using DomDownToolPreview::ExportSourceKind;
 
 constexpr auto kProgressNotificationInterval = std::chrono::milliseconds(100);
 
@@ -276,9 +287,9 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
             {"alpha", color.alpha}};
     }
 
-    return {
+    Json json = {
         {"centerWgs84", {{"lon", configuration.centerWgs84.lon},
-                           {"lat", configuration.centerWgs84.lat}}},
+                          {"lat", configuration.centerWgs84.lat}}},
         {"radiusMeters", configuration.radiusMeters},
         {"zoom", configuration.zoom},
         {"satelliteSources", std::move(satelliteSources)},
@@ -309,6 +320,11 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
         {"fbxTextureSize", configuration.fbxTextureSize},
         {"fbxTextureFormat", NormalizeImageFormat(configuration.fbxTextureFormat)},
         {"fbxTerrainSampleRateMeters", configuration.fbxTerrainSampleRateMeters}};
+    if (!configuration.groups.empty())
+    {
+        json["groups"] = DomDownToolPreview::ExportGroupsToJson(configuration.groups);
+    }
+    return json;
 }
 
 std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value)
@@ -356,12 +372,27 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
         value, "buildingFbxWallTextureMode");
     const std::string roofTextureMode = GetJsonString(
         value, "buildingFbxRoofTextureMode");
-    configuration.buildingFbxWallTextureMode = BuildingFbxTextureModeFromValue(
-        wallTextureMode.empty() ? legacyBuildingTextureMode : wallTextureMode);
-    configuration.buildingFbxRoofTextureMode = BuildingFbxRoofTextureModeFromValue(
-        roofTextureMode.empty() ? legacyBuildingTextureMode : roofTextureMode);
-    configuration.buildingFbxAtlasImageFormat = BuildingFbxAtlasImageFormatFromValue(
-        GetJsonString(value, "buildingFbxAtlasImageFormat"));
+    const std::string resolvedWallTextureMode =
+        wallTextureMode.empty() ? legacyBuildingTextureMode : wallTextureMode;
+    if (!resolvedWallTextureMode.empty())
+    {
+        configuration.buildingFbxWallTextureMode = BuildingFbxTextureModeFromValue(
+            resolvedWallTextureMode);
+    }
+    const std::string resolvedRoofTextureMode =
+        roofTextureMode.empty() ? legacyBuildingTextureMode : roofTextureMode;
+    if (!resolvedRoofTextureMode.empty())
+    {
+        configuration.buildingFbxRoofTextureMode = BuildingFbxRoofTextureModeFromValue(
+            resolvedRoofTextureMode);
+    }
+    const std::string atlasImageFormat =
+        GetJsonString(value, "buildingFbxAtlasImageFormat");
+    if (!atlasImageFormat.empty())
+    {
+        configuration.buildingFbxAtlasImageFormat =
+            BuildingFbxAtlasImageFormatFromValue(atlasImageFormat);
+    }
     configuration.buildingLayerHeightCentimeters = GetJsonDouble(
         value, "buildingLayerHeightCentimeters", 45.);
     configuration.buildingMaxWallMaterialsPerBucket = static_cast<uint32_t>(
@@ -484,6 +515,10 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
                 static_cast<DownTool::AmapVectorRenderCategory>(category)] =
                 {*red, *green, *blue, *alpha};
         }
+    }
+    if (!DomDownToolPreview::ReadExportGroups(value, configuration.groups))
+    {
+        return std::nullopt;
     }
     return configuration;
 }
@@ -752,6 +787,10 @@ std::filesystem::path SatelliteOutputRoot(const ExportConfiguration& configurati
                                            const SatelliteExportSource& source)
 {
     const std::filesystem::path root = TaskOutputRoot(configuration, taskId);
+    if (configuration.flatSourceOutput)
+    {
+        return root / std::filesystem::u8path(SanitizeFileName(source.name));
+    }
     return root / std::filesystem::u8path("卫星图") /
         std::filesystem::u8path(SanitizeFileName(source.name));
 }
@@ -1005,6 +1044,59 @@ std::string FormatGisModes(const ExportConfiguration& configuration)
 
 std::string BuildTaskDetailsText(const ExportConfiguration& configuration)
 {
+    if (!configuration.groups.empty())
+    {
+        std::vector<std::string> outputs;
+        const auto addOutput = [&outputs](const std::string& name)
+        {
+            if (std::ranges::find(outputs, name) == outputs.end())
+            {
+                outputs.push_back(name);
+            }
+        };
+        for (const ExportContentGroup& group : configuration.groups)
+        {
+            if (!group.enabled)
+            {
+                continue;
+            }
+            for (const ExportComponent& component : group.components)
+            {
+                switch (component.kind)
+                {
+                case ExportComponentKind::MergedImage:
+                    addOutput("大图");
+                    break;
+                case ExportComponentKind::StandardXyz:
+                    addOutput("标准 XYZ");
+                    break;
+                case ExportComponentKind::RawTiles:
+                    addOutput("原始瓦片");
+                    break;
+                case ExportComponentKind::BasePlate:
+                    addOutput("底板 FBX");
+                    break;
+                case ExportComponentKind::BuildingModel:
+                    addOutput("建筑 FBX");
+                    break;
+                case ExportComponentKind::GeoJson:
+                    addOutput("GeoJSON");
+                    break;
+                }
+            }
+        }
+        std::string result;
+        for (const std::string& output : outputs)
+        {
+            if (!result.empty())
+            {
+                result += "、";
+            }
+            result += output;
+        }
+        return result.empty() ? "未选择组件" : result;
+    }
+
     std::vector<std::string> outputs;
     if (configuration.exportTiles)
     {
@@ -1275,6 +1367,8 @@ bool ExportBuildingFbxDataToRoot(
     DownTool::AmapBuildingFbxExportOptions exportOptions;
     exportOptions.outputPath = fbxRoot / "buildings.fbx";
     exportOptions.centerWgs84 = configuration.centerWgs84;
+    exportOptions.shape = configuration.executionFbxShape.value_or(
+        DownTool::FbxPlanetShape::Plane);
     exportOptions.wallTexturePath = configuration.buildingWallTexturePath;
     exportOptions.roofTexturePath = configuration.buildingRoofTexturePath;
     exportOptions.wallTextureMode = configuration.buildingFbxWallTextureMode;
@@ -1331,6 +1425,25 @@ bool ExportSatelliteRoofBuildingFbxToRoot(
 
 std::string BuildTaskTitle(const ExportConfiguration& configuration)
 {
+    if (!configuration.groups.empty())
+    {
+        std::string contents;
+        for (const ExportContentGroup& group : configuration.groups)
+        {
+            if (!group.enabled)
+            {
+                continue;
+            }
+            if (!contents.empty())
+            {
+                contents += "、";
+            }
+            contents += group.name.empty() ? "未命名" : group.name;
+        }
+        return fmt::format(
+            "z{} {:.0f} 米 {}", configuration.zoom, configuration.radiusMeters,
+            contents.empty() ? "未选择内容组" : contents);
+    }
     std::string contents = FormatSourceNames(configuration);
     if (!configuration.gisCategories.empty())
     {
@@ -1469,6 +1582,10 @@ std::string DomDownToolPreview::ExportTaskStateName(ExportTaskState state)
 std::filesystem::path DomDownToolPreview::ExportTaskOutputRoot(
     const ExportConfiguration& configuration, std::string_view taskId)
 {
+    if (!configuration.executionRootOverride.empty())
+    {
+        return configuration.executionRootOverride;
+    }
     const std::filesystem::path outputRoot = configuration.outputRoot.empty() ?
         std::filesystem::u8path("cache") : configuration.outputRoot;
     return outputRoot / std::filesystem::u8path("导出任务") /
@@ -1755,12 +1872,22 @@ void DomDownToolPreview::ExportTaskManager::WorkerLoop()
     }
 }
 
+bool DomDownToolPreview::ExportTaskManager::RunGroupedExport(
+    const QueuedExport& queuedExport, std::string& error)
+{
+    return ExportGroupedRunner::Run(*this, queuedExport, error);
+}
+
 bool DomDownToolPreview::ExportTaskManager::RunExport(
     const QueuedExport& queuedExport, std::string& error)
 {
     if (IsCancellationRequested())
     {
         return false;
+    }
+    if (!queuedExport.configuration.groups.empty())
+    {
+        return RunGroupedExport(queuedExport, error);
     }
 
     const ExportConfiguration& configuration = queuedExport.configuration;
@@ -1994,6 +2121,25 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteDownloaderToRoot(
     downloader->SetCenterLonLat(configuration.centerWgs84);
     downloader->SetRadius(configuration.radiusMeters);
     downloader->SetZoom(configuration.zoom);
+    const uint32_t tileSize = options.tileSizeOverride.value_or(
+        configuration.executionTileSize);
+    if (tileSize != 0)
+    {
+        downloader->SetTileSize(tileSize);
+    }
+    const std::optional<DownTool::FbxPlanetShape> fbxShape =
+        options.fbxShapeOverride.has_value() ? options.fbxShapeOverride :
+        configuration.executionFbxShape;
+    if (fbxShape.has_value())
+    {
+        downloader->SetFbxShape(*fbxShape);
+    }
+    const uint32_t meshSubdivision = options.fbxSubdivisionOverride.value_or(
+        configuration.executionFbxSubdivision);
+    if (meshSubdivision != 0)
+    {
+        downloader->SetFbxMeshSubdivision(meshSubdivision);
+    }
     downloader->SetCachePath(PathToUtf8(source.cachePath));
     ConfigureTianDiTuMultidateDownloader(
         *downloader,
@@ -2012,20 +2158,32 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteDownloaderToRoot(
         error = "无法创建卫星图输出目录：" + outputError.message();
         return false;
     }
-    const std::filesystem::path xyzOutputRoot = outputRoot / "XYZ";
-    const std::filesystem::path fbxOutputRoot = outputRoot / "FBX";
+    const bool exportTiles = options.exportTilesOverride.value_or(
+        configuration.exportTiles);
+    const bool exportMergedImage = options.exportMergedImageOverride.value_or(
+        configuration.exportMergedImage);
+    const bool exportFbx = options.exportFbxOverride.value_or(configuration.exportFbx);
+    const uint32_t mergedResolution = options.mergedImageResolutionOverride.value_or(
+        configuration.mergedImageResolution);
+    const uint32_t textureSize = options.fbxTextureSizeOverride.value_or(
+        configuration.fbxTextureSize);
+    const std::filesystem::path xyzOutputRoot = options.xyzOutputPathOverride.empty() ?
+        outputRoot / "XYZ" : options.xyzOutputPathOverride;
+    const std::filesystem::path fbxOutputRoot = options.fbxOutputPathOverride.empty() ?
+        outputRoot / "FBX" : options.fbxOutputPathOverride;
     downloader->SetPostProcessOutputPath(PathToUtf8(xyzOutputRoot));
-    downloader->SetPostProcessEnabled(configuration.exportTiles);
-    downloader->SetPostProcessMergedImageEnabled(configuration.exportMergedImage);
+    downloader->SetPostProcessEnabled(exportTiles);
+    downloader->SetPostProcessMergedImageEnabled(exportMergedImage);
     const std::string mergedImageFormat = NormalizeImageFormat(options.mergedImageFormat);
-    const std::filesystem::path mergedImagePath = MergedImagePath(
-        outputRoot, mergedImageFormat);
+    const std::filesystem::path mergedImagePath =
+        options.mergedImageOutputPathOverride.empty() ?
+        MergedImagePath(outputRoot, mergedImageFormat) :
+        options.mergedImageOutputPathOverride;
     downloader->SetPostProcessMergedImageOutputPath(PathToUtf8(mergedImagePath));
-    downloader->SetPostProcessMergedImageResolution(configuration.mergedImageResolution);
-    const bool exportFbx = configuration.exportFbx;
+    downloader->SetPostProcessMergedImageResolution(mergedResolution);
     downloader->SetPostProcessFbxEnabled(exportFbx);
     downloader->SetFbxOutputPath(PathToUtf8(fbxOutputRoot));
-    downloader->SetFbxTextureSize(configuration.fbxTextureSize);
+    downloader->SetFbxTextureSize(textureSize);
     downloader->SetFbxTextureFormat(NormalizeImageFormat(options.fbxTextureFormat));
     downloader->SetFbxTerrainSampleRateMeters(
         configuration.fbxTerrainSampleRateMeters);
@@ -2065,13 +2223,13 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteDownloaderToRoot(
         return false;
     }
 
-    if (configuration.exportTiles &&
+    if (exportTiles &&
         !std::filesystem::exists(xyzOutputRoot / "meta.json"))
     {
         error = "卫星 XYZ 瓦片未生成完整元数据。";
         return false;
     }
-    if (configuration.exportMergedImage && !std::filesystem::exists(mergedImagePath))
+    if (exportMergedImage && !std::filesystem::exists(mergedImagePath))
     {
         error = "卫星合并大图未生成。";
         return false;
@@ -2612,8 +2770,11 @@ bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
     }
     else
     {
-        const std::filesystem::path outputRoot = GisOutputRoot(
-            configuration, queuedExport.taskId, outputModeName, "建筑") / "FBX";
+        const std::filesystem::path outputRoot =
+            configuration.buildingFbxOutputOverride.empty() ?
+            GisOutputRoot(configuration, queuedExport.taskId, outputModeName, "建筑") /
+                "FBX" :
+            configuration.buildingFbxOutputOverride;
         if (!ExportBuildingFbxDataToRoot(
                 configuration,
                 buildingData,
@@ -2645,9 +2806,9 @@ bool DomDownToolPreview::ExportTaskManager::RunGeoJsonExport(
     options.centerWgs84 = configuration.centerWgs84;
     options.radiusMeters = configuration.radiusMeters;
     options.zoom = configuration.zoom;
-    options.includeBaseLayers = true;
-    options.includeLabels = configuration.gisCategories.contains(
-        DownTool::AmapVectorRenderCategory::Point);
+    options.includeBaseLayers = configuration.includeBaseLayersOverride.value_or(true);
+    options.includeLabels = configuration.includeLabelsOverride.value_or(
+        configuration.gisCategories.contains(DownTool::AmapVectorRenderCategory::Point));
     options.maxConcurrency = 0;
     options.cancellationRequested = [this] { return IsCancellationRequested(); };
     options.progressCallback =
@@ -2675,6 +2836,9 @@ bool DomDownToolPreview::ExportTaskManager::RunGeoJsonExport(
     }
     const std::filesystem::path outputRoot = GisOutputRoot(
         configuration, queuedExport.taskId, "GeoJSON", "所选图层");
+    const std::filesystem::path outputFile =
+        configuration.geoJsonOutputFileOverride.empty() ?
+        outputRoot / "数据.geojson" : configuration.geoJsonOutputFileOverride;
     const std::function<bool()> cancellationRequested =
         [this] { return IsCancellationRequested(); };
     const DownTool::AmapVectorDecodedData filteredData = FilterGisData(
@@ -2684,7 +2848,7 @@ bool DomDownToolPreview::ExportTaskManager::RunGeoJsonExport(
         return false;
     }
     if (!DownTool::AmapVectorGeoJsonWriter::WriteFile(
-            filteredData, outputRoot / "数据.geojson", error, cancellationRequested))
+            filteredData, outputFile, error, cancellationRequested))
     {
         return false;
     }

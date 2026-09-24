@@ -44,6 +44,7 @@ namespace DownTool
     {
         std::filesystem::path outputPath;
         LonLat centerWgs84;
+        FbxPlanetShape shape = FbxPlanetShape::Plane;
         std::filesystem::path wallTexturePath = std::filesystem::u8path("贴图/墙体");
         std::filesystem::path roofTexturePath = std::filesystem::u8path("贴图/房顶");
         AmapBuildingFbxTextureMode wallTextureMode = AmapBuildingFbxTextureMode::Scattered;

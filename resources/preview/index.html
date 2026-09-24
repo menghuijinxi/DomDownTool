@@ -1275,13 +1275,561 @@
         }
 
         #export-page-header {
-            height: 72px;
-            padding: 0 50px;
+            display: flex;
+            gap: 0;
+            flex: 0 0 68px;
+            height: 68px;
+            padding: 0 28px;
         }
 
         #export-page-header h1 {
-            font-size: 19px;
+            flex: 0 0 230px;
+            font-size: 22px;
         }
+
+        #export-page-header .page-header-summary {
+            flex: 1 1 auto;
+            width: auto;
+            font-size: 16px;
+            text-align: center;
+        }
+
+        .export-header-actions {
+            display: flex;
+            flex: 0 0 240px;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 20px;
+        }
+
+        #export-page-header .primary-command,
+        #export-page-header .secondary-command {
+            height: 46px;
+            padding: 0 22px;
+            font-size: 16px;
+        }
+
+        #export-page-header #export-open-tasks {
+            width: 124px;
+            min-width: 124px;
+        }
+
+        #export-page-header #export-back-preview {
+            width: 96px;
+            min-width: 96px;
+        }
+
+        .page-content.export-composer {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            padding: 0 20px 20px;
+            overflow: hidden;
+        }
+
+        .export-range-bar {
+            display: grid;
+            grid-template-columns:
+                minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.95fr)
+                minmax(0, 0.85fr) minmax(0, 1.2fr);
+            gap: 26px;
+            padding: 20px 8px;
+            border-bottom: 1px solid #343836;
+            background: #1e2121;
+        }
+
+        .export-range-field {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-width: 0;
+            color: #aeb7b2;
+            font-size: 16px;
+        }
+
+        .export-range-field input,
+        .export-group-check input[type="text"],
+        .export-field-row input,
+        .export-select {
+            width: 100%;
+            height: 52px;
+            padding: 0 14px;
+            border: 1px solid #41484b;
+            border-radius: 6px;
+            outline: none;
+            background: #1f2224;
+            color: #edf1ef;
+            font: 18px "Microsoft YaHei", "Segoe UI", sans-serif;
+        }
+
+        .export-range-field input:focus,
+        .export-group-check input[type="text"]:focus,
+        .export-field-row input:focus,
+        .export-select:focus {
+            border-color: #2ea694;
+        }
+
+        .export-composer #export-browse-output {
+            flex: 0 0 52px;
+            width: 52px;
+            min-width: 52px;
+            height: 52px;
+        }
+
+        .export-composer .output-dir-row {
+            gap: 10px;
+        }
+
+        .export-workspace {
+            display: flex;
+            flex: 1;
+            gap: 16px;
+            min-height: 0;
+        }
+
+        .export-group-list {
+            display: flex;
+            flex: 1;
+            flex-direction: column;
+            gap: 16px;
+            min-width: 0;
+            overflow: auto;
+        }
+
+        .export-group-card,
+        .export-param-panel {
+            border: 1px solid #3a4144;
+            border-radius: 8px;
+            background: #202426;
+        }
+
+        .export-group-card {
+            padding: 24px;
+        }
+
+        .export-group-card.is-only-group {
+            flex: 0 0 auto;
+            min-height: 100%;
+        }
+
+        .export-group-head,
+        .export-panel-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            min-height: 48px;
+            margin-bottom: 20px;
+        }
+
+        .export-group-check {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            min-width: 0;
+            flex: 1;
+        }
+
+        .export-check-control {
+            position: relative;
+            flex: 0 0 30px;
+            width: 30px;
+            height: 30px;
+        }
+
+        .export-check-control input[type="checkbox"] {
+            position: absolute;
+            left: 0;
+            top: 0;
+            z-index: 1;
+            width: 30px;
+            height: 30px;
+            margin: 0;
+            opacity: 0;
+        }
+
+        .export-check-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            border: 1px solid #596260;
+            border-radius: 5px;
+            background: #252b2d;
+            color: transparent;
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .export-check-indicator.is-checked {
+            border-color: #16aaa2;
+            background: #14958f;
+            color: #ffffff;
+        }
+
+        .export-group-check input[type="text"] {
+            width: min(360px, 100%);
+            max-width: 360px;
+            height: 42px;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            font-size: 22px;
+            font-weight: 700;
+        }
+
+        .export-component-row {
+            display: grid;
+            grid-template-columns: 30px 120px minmax(0, 1fr) 96px 96px;
+            gap: 12px;
+            align-items: center;
+            min-height: 72px;
+            margin-bottom: 12px;
+            padding: 8px 10px;
+            border: 1px solid #30373a;
+            border-radius: 7px;
+            background: #1f2224;
+            cursor: pointer;
+        }
+
+        .export-component-row:hover {
+            border-color: #4a5657;
+            background: #222729;
+        }
+
+        .export-component-row.is-selected {
+            border-color: #16aaa2;
+            background: #1f2224;
+            box-shadow: inset 0 0 0 1px rgba(22, 170, 162, 0.2);
+        }
+
+        .export-drag-handle {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 36px;
+            color: #77817d;
+            font: 22px "Segoe UI Symbol", "Segoe UI", sans-serif;
+            cursor: move;
+        }
+
+        .export-component-row strong {
+            color: #f3f6f5;
+            font-size: 17px;
+            font-weight: 700;
+        }
+
+        .export-component-row span {
+            overflow: hidden;
+            color: #aeb7b2;
+            font-size: 15px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .export-quiet-button,
+        .export-menu button,
+        .export-segment-button {
+            flex: 0 0 auto;
+            min-width: 96px;
+            height: 46px;
+            padding: 0 18px;
+            overflow: hidden;
+            border: 1px solid #444c4f;
+            border-radius: 7px;
+            background: #2d3439;
+            color: #edf1ef;
+            font: 16px "Microsoft YaHei", "Segoe UI", sans-serif;
+            text-overflow: clip;
+            white-space: nowrap;
+        }
+
+        .export-quiet-button.is-active,
+        .export-segment-button.is-active {
+            border-color: #16aaa2;
+            background: #0f918c;
+            color: #ffffff;
+        }
+
+        .export-add-row,
+        .export-menu,
+        .export-segment {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .export-add-row {
+            margin-top: 22px;
+        }
+
+        .export-add-component-button {
+            min-width: 142px;
+        }
+
+        .export-component-action {
+            width: 96px;
+            min-width: 96px;
+        }
+
+        .export-group-remove-button {
+            min-width: 112px;
+        }
+
+        .export-menu {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            align-items: stretch;
+            padding: 12px;
+            border: 1px solid #3a4144;
+            border-radius: 7px;
+            background: #1b1d1d;
+        }
+
+        .export-menu button {
+            width: 100%;
+            min-width: 0;
+            height: 52px;
+            padding: 0 12px;
+        }
+
+        .export-param-panel {
+            display: flex;
+            flex: 0 0 34%;
+            flex-direction: column;
+            width: 34%;
+            min-width: 380px;
+            max-width: 520px;
+            padding: 24px;
+        }
+
+        .export-param-panel h2 {
+            margin: 0;
+            color: #f3f6f5;
+            font-size: 22px;
+            font-weight: 700;
+        }
+
+        .export-panel-body {
+            flex: 1;
+            min-height: 0;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        .export-panel-scroll-content {
+            min-width: 0;
+            margin-right: 24px;
+        }
+
+        .export-panel-label {
+            display: block;
+            margin: 18px 0 12px;
+            color: #b7bfbc;
+            font-size: 17px;
+        }
+
+        .export-source-row,
+        .export-field-row,
+        .export-switch-row,
+        .export-check-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-height: 52px;
+            margin-bottom: 12px;
+            color: #dce3df;
+            font-size: 15px;
+        }
+
+        .export-source-row {
+            min-height: 68px;
+            padding: 0 16px;
+            border: 1px solid #41484b;
+            border-radius: 7px;
+            background: #1f2224;
+            font-size: 17px;
+        }
+
+        .export-source-name,
+        .export-field-row span,
+        .export-switch-row span {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .export-field-row input,
+        .export-field-row select,
+        .export-source-row select {
+            flex: 0 1 180px;
+            width: 180px;
+            min-width: 120px;
+            height: 46px;
+            font-size: 15px;
+        }
+
+        .export-field-row.is-disabled span {
+            color: #68716e;
+        }
+
+        .export-field-row input:disabled,
+        .export-field-row select:disabled {
+            border-color: #303638;
+            background: #171a1b;
+            color: #626a67;
+        }
+
+        .export-segment {
+            flex-wrap: nowrap;
+            min-width: 0;
+        }
+
+        .export-segment-button {
+            flex: 1 1 0;
+            min-width: 0;
+            padding: 0 12px;
+        }
+
+        .export-building-mode-row {
+            flex-wrap: wrap;
+        }
+
+        .export-building-mode-row > span {
+            flex: 0 0 104px;
+        }
+
+        .export-building-mode-row > .export-segment {
+            flex: 1 1 240px;
+            min-width: 240px;
+        }
+
+        .export-building-mode-row .export-segment-button {
+            padding: 0 8px;
+            font-size: 15px;
+        }
+
+        .export-directory-row {
+            flex-wrap: wrap;
+        }
+
+        .export-directory-row > span {
+            flex: 0 0 104px;
+        }
+
+        .export-directory-control {
+            display: flex;
+            flex: 1 1 240px;
+            gap: 8px;
+            min-width: 240px;
+        }
+
+        .export-directory-control input {
+            flex: 1 1 auto;
+            width: auto;
+            min-width: 0;
+        }
+
+        .export-directory-button {
+            display: flex;
+            flex: 0 0 46px;
+            align-items: center;
+            justify-content: center;
+            width: 46px;
+            min-width: 46px;
+            height: 46px;
+            padding: 0;
+            border: 1px solid #444c4f;
+            border-radius: 7px;
+            background: #2d3439;
+            color: #c9cfcc;
+        }
+
+        .export-directory-button:hover {
+            border-color: #5a6467;
+            background: #343c41;
+        }
+
+        .export-directory-button svg {
+            width: 20px;
+            height: 20px;
+            pointer-events: none;
+        }
+
+        .export-directory-button svg path {
+            fill: none;
+            stroke: #c9cfcc;
+            stroke-width: 1.6;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .export-link-button {
+            min-width: 104px;
+            height: 40px;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: #16b7ae;
+            font: 16px "Microsoft YaHei", "Segoe UI", sans-serif;
+            text-align: left;
+        }
+
+        .export-icon-button {
+            flex: 0 0 40px;
+            width: 40px;
+            min-width: 40px;
+            height: 40px;
+            border: 0;
+            background: transparent;
+            color: #c9cfcc;
+            font-size: 26px;
+        }
+
+        .export-color,
+        .export-color-swatch {
+            width: 16px;
+            height: 16px;
+            padding: 0;
+            border: 1px solid #6b716e;
+            border-radius: 2px;
+            background: transparent;
+        }
+
+        .export-hint,
+        .export-empty,
+        .export-menu-empty {
+            margin: 8px 0 12px;
+            color: #8d9793;
+            font-size: 14px;
+        }
+
+        .export-menu-empty {
+            grid-column: 1 / -1;
+        }
+
+        .export-panel-done {
+            width: 100%;
+            min-width: 100%;
+            height: 66px;
+            margin-top: 20px;
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        .export-composer .export-footer {
+            padding: 0;
+        }
+
+        .export-switch {
+            flex: 0 0 36px;
+            width: 36px;
+            height: 20px;
+            accent-color: #237f77;
+        }
+
 
         .export-form {
             padding: 6px 50px 48px;
@@ -2238,306 +2786,51 @@
         <header id="export-page-header" class="page-header">
             <h1>导出配置</h1>
             <span id="export-config-summary" class="page-header-summary">中心 116.92721, 36.70522 · z14 · 半径 0 米</span>
-            <div class="page-header-spacer"></div>
-            <button id="export-open-tasks" class="secondary-command" type="button"
-                    data-action="open-export-tasks">导出任务</button>
-            <button id="export-back-preview" class="secondary-command" type="button"
-                    data-action="back-to-preview">返回</button>
+            <div id="export-header-actions" class="export-header-actions">
+                <button id="export-open-tasks" class="primary-command" type="button"
+                        data-action="open-export-tasks">导出任务</button>
+                <button id="export-back-preview" class="secondary-command" type="button"
+                        data-action="back-to-preview">返回</button>
+            </div>
         </header>
-        <div class="page-content export-form">
-            <section class="form-section">
-                <h2>导出范围</h2>
-                <div class="range-grid">
-                    <label class="range-field">
-                        <span>中心经度</span>
-                        <input id="export-lon" type="number" step="0.000001" value="116.927207">
-                    </label>
-                    <label class="range-field">
-                        <span>中心纬度</span>
-                        <input id="export-lat" type="number" step="0.000001" value="36.705224">
-                    </label>
-                    <label class="range-field">
-                        <span>半径（米）</span>
-                        <input id="export-config-radius" type="number" min="0" step="100" value="0">
-                    </label>
-                    <label class="range-field">
-                        <span>层级</span>
-                        <input id="export-zoom" type="number" min="1" max="21" step="1" value="14">
-                    </label>
-                </div>
-            </section>
-
-            <section class="form-section">
-                <h2>导出内容</h2>
-                <div class="export-content-body">
-                    <div class="content-groups">
-                        <div class="content-group">
-                            <h3>卫星图</h3>
-                            <div class="check-grid">
-                                <label class="check-item">
-                                    <input id="export-provider-gaode" type="checkbox">
-                                    <span>高德卫星</span>
-                                </label>
-                                <label class="check-item">
-                                    <input id="export-provider-tencent" type="checkbox">
-                                    <span>腾讯卫星</span>
-                                </label>
-                                <label class="check-item">
-                                    <input id="export-provider-tianditu" type="checkbox">
-                                    <span>天地图影像</span>
-                                </label>
-                                <label class="check-item">
-                                    <input id="export-provider-tianditu-multidate" type="checkbox">
-                                    <span>天地图多时相</span>
-                                </label>
-                                <label class="check-item">
-                                    <input id="export-provider-baidu" type="checkbox">
-                                    <span>百度卫星</span>
-                                </label>
-                                <label class="check-item">
-                                    <input id="export-provider-google" type="checkbox">
-                                    <span>Google 卫星</span>
-                                </label>
-                                <label class="check-item">
-                                    <input id="export-provider-bing" type="checkbox">
-                                    <span>Bing 卫星</span>
-                                </label>
-                                <label class="check-item">
-                                    <input id="export-provider-arcgis" type="checkbox">
-                                    <span>ArcGIS 影像</span>
-                                </label>
-                            </div>
-                        </div>
-                        <div class="content-group">
-                            <h3>GIS 数据</h3>
-                            <div id="export-gis-groups" class="check-grid">
-                                <label id="export-gis-static-road" class="check-item">
-                                    <input id="export-gis-group-1" type="checkbox" value="1">
-                                    <span>道路</span>
-                                </label>
-                                <label id="export-gis-static-building" class="check-item">
-                                    <input id="export-gis-group-2" type="checkbox" value="2">
-                                    <span>建筑</span>
-                                </label>
-                                <label id="export-gis-static-water" class="check-item">
-                                    <input id="export-gis-group-3" type="checkbox" value="3">
-                                    <span>水</span>
-                                </label>
-                                <label id="export-gis-static-point" class="check-item">
-                                    <input id="export-gis-group-4" type="checkbox" value="4">
-                                    <span>点</span>
-                                </label>
-                                <label id="export-gis-static-green" class="check-item">
-                                    <input id="export-gis-group-5" type="checkbox" value="5">
-                                    <span>绿地</span>
-                                </label>
-                                <label id="export-gis-static-boundary" class="check-item">
-                                    <input id="export-gis-group-6" type="checkbox" value="6">
-                                    <span>边界</span>
-                                </label>
-                                <label id="export-gis-static-highway" class="check-item">
-                                    <input id="export-gis-group-7" type="checkbox" value="7">
-                                    <span>高速</span>
-                                </label>
-                                <label id="export-gis-static-other" class="check-item">
-                                    <input id="export-gis-group-8" type="checkbox" value="8">
-                                    <span>其他</span>
-                                </label>
-                                <label id="export-gis-static-subway" class="check-item">
-                                    <input id="export-gis-group-9" type="checkbox" value="9">
-                                    <span>地铁</span>
-                                </label>
-                            </div>
-                            <div class="gis-combine-row">
-                                <span class="gis-combine-title">GIS 组合方式</span>
-                                <div id="export-gis-combine-options" class="gis-combine-options">
-                                    <label id="export-gis-combine-overlay-item" class="check-item">
-                                        <input id="export-gis-combine-overlay" type="checkbox" disabled>
-                                        <span>叠加到所选卫星图</span>
-                                    </label>
-                                    <label id="export-gis-combine-merged-item" class="check-item">
-                                        <input id="export-gis-combine-merged" type="checkbox" disabled>
-                                        <span>所选 GIS 图层合并输出</span>
-                                    </label>
-                                    <label id="export-gis-combine-separate-item" class="check-item">
-                                        <input id="export-gis-combine-separate" type="checkbox" disabled>
-                                        <span>每个 GIS 图层单独输出</span>
-                                    </label>
-                                </div>
-                                <span class="gis-combine-hint">可多选，勾选几种即生成几套输出</span>
-                            </div>
-                        </div>
+        <div class="page-content export-composer">
+            <div class="export-range-bar">
+                <label class="export-range-field">
+                    <span>中心经度</span>
+                    <input id="export-lon" type="number" step="0.000001" value="116.927207">
+                </label>
+                <label class="export-range-field">
+                    <span>中心纬度</span>
+                    <input id="export-lat" type="number" step="0.000001" value="36.705224">
+                </label>
+                <label class="export-range-field">
+                    <span>半径（米）</span>
+                    <input id="export-config-radius" type="number" min="0" step="100" value="0">
+                </label>
+                <label class="export-range-field">
+                    <span>层级</span>
+                    <input id="export-zoom" type="number" min="1" max="30" step="1" value="14">
+                </label>
+                <label class="export-range-field">
+                    <span>输出目录</span>
+                    <div class="output-dir-row">
+                        <input id="export-output" type="text" placeholder="未选择时导出到 cache/导出任务">
+                        <button id="export-browse-output" type="button" data-action="browse-export-output"
+                                title="选择输出目录" aria-label="选择输出目录">
+                            <svg viewBox="0 0 24 24" width="18" height="18" pointer-events="none" aria-hidden="true">
+                                <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
+                                      fill="none" stroke="#c9cfcc" stroke-width="1.6"
+                                      stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
                     </div>
-                    <div id="export-tianditu-multidate-years"></div>
-                </div>
-            </section>
-
-            <section class="form-section">
-                <h2>导出类型</h2>
-                <div class="type-row">
-                    <label class="check-item">
-                        <input id="export-satellite-tiles" type="checkbox">
-                        <span>XYZ 切片</span>
-                    </label>
-                    <label class="check-item">
-                        <input id="export-satellite-merged" type="checkbox">
-                        <span>合并大图</span>
-                    </label>
-                    <label class="check-item">
-                        <input id="export-fbx" type="checkbox">
-                        <span>FBX 切片与网格</span>
-                    </label>
-                    <label id="export-terrain-height-item" class="check-item">
-                        <input id="export-terrain-height" type="checkbox" disabled>
-                        <span>导出高度</span>
-                    </label>
-                    <label class="check-item">
-                        <input id="export-geojson" type="checkbox" disabled>
-                        <span>GeoJson</span>
-                    </label>
-                </div>
-            </section>
-
-            <section class="form-section">
-                <h2>输出参数</h2>
-                <div class="param-row">
-                    <label class="param-field">
-                        <span>大图格式</span>
-                        <select id="export-merged-format">
-                            <option value="png" selected>PNG</option>
-                            <option value="jpg">JPG</option>
-                        </select>
-                    </label>
-                    <label class="param-field">
-                        <span>大图最大边</span>
-                        <select id="export-merged-resolution">
-                            <option value="4096">4096</option>
-                            <option value="8192">8192</option>
-                            <option value="16384" selected>16384</option>
-                            <option value="32768">32768</option>
-                        </select>
-                    </label>
-                    <label class="param-field">
-                        <span>FBX 贴图尺寸</span>
-                        <select id="export-fbx-size" disabled>
-                            <option value="1024">1024</option>
-                            <option value="2048">2048</option>
-                            <option value="4096" selected>4096</option>
-                            <option value="8192">8192</option>
-                            <option value="16384">16384</option>
-                        </select>
-                    </label>
-                    <label class="param-field">
-                        <span>FBX 贴图格式</span>
-                        <select id="export-fbx-texture-format" disabled>
-                            <option value="png" selected>PNG</option>
-                            <option value="jpg">JPG</option>
-                        </select>
-                    </label>
-                    <label class="param-field">
-                        <span>高度采样率（米）</span>
-                        <select id="export-terrain-sample-rate" disabled>
-                            <option value="10">10</option>
-                            <option value="30" selected>30</option>
-                            <option value="60">60</option>
-                            <option value="100">100</option>
-                            <option value="250">250</option>
-                        </select>
-                    </label>
-                    <label class="check-item param-check">
-                        <span>建筑按高度着色</span>
-                        <input id="export-building-height-colors" type="checkbox">
-                    </label>
-                </div>
-            </section>
-
-            <section id="export-building-fbx-section" class="form-section">
-                <h2>建筑 FBX</h2>
-                <div id="export-building-fbx-panel" class="building-fbx-panel">
-                    <label class="check-item">
-                        <input id="export-building-fbx" type="checkbox">
-                        <span>导出建筑 FBX（生成 buildings.fbx）</span>
-                    </label>
-                    <div id="export-building-fbx-fields" class="range-grid building-fbx-grid">
-                        <label class="range-field">
-                            <span>墙体贴图目录</span>
-                            <input id="export-building-wall-textures" type="text"
-                                   value="贴图/墙体">
-                        </label>
-                        <label class="range-field">
-                            <span>屋顶贴图目录</span>
-                            <input id="export-building-roof-textures" type="text"
-                                   value="贴图/房顶">
-                        </label>
-                        <label class="range-field">
-                            <span>墙体贴图模式</span>
-                            <select id="export-building-wall-texture-mode">
-                                <option value="scattered" selected>散图</option>
-                                <option value="merged-atlas">合并贴图</option>
-                            </select>
-                        </label>
-                        <label class="range-field">
-                            <span>屋顶贴图模式</span>
-                            <select id="export-building-roof-texture-mode">
-                                <option value="scattered" selected>散图</option>
-                                <option value="merged-atlas">合并贴图</option>
-                                <option value="satellite">卫星图</option>
-                            </select>
-                        </label>
-                        <label class="range-field">
-                            <span>合并格式</span>
-                            <select id="export-building-atlas-format" disabled>
-                                <option value="png" selected>PNG</option>
-                                <option value="jpg">JPG</option>
-                            </select>
-                        </label>
-                        <label class="range-field">
-                            <span>楼层高度 cm</span>
-                            <input id="export-building-layer-height" type="number"
-                                   min="1" step="1" value="45">
-                        </label>
-                        <label class="range-field">
-                            <span>墙体材质上限</span>
-                            <input id="export-building-max-wall-materials" type="number"
-                                   min="1" step="1" value="1">
-                        </label>
-                        <label class="range-field">
-                            <span>随机种子</span>
-                            <input id="export-building-texture-seed" type="number"
-                                   min="0" step="1" value="0">
-                        </label>
-                    </div>
-                    <span id="export-building-fbx-hint" class="building-fbx-hint">
-                        默认关闭；需要同时勾选 FBX 和 GIS 建筑图层。
-                    </span>
-                </div>
-            </section>
-
-            <section class="form-section">
-                <h2>输出位置</h2>
-                <div class="output-location">
-                    <label class="range-field">
-                        <span>输出目录</span>
-                        <div class="output-dir-row">
-                            <input id="export-output" type="text"
-                                   placeholder="未选择时导出到 cache/导出任务">
-                            <button id="export-browse-output" type="button"
-                                    data-action="browse-export-output"
-                                    title="选择输出目录" aria-label="选择输出目录">
-                                <svg viewBox="0 0 24 24" width="18" height="18"
-                                     pointer-events="none" aria-hidden="true">
-                                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
-                                          fill="none" stroke="#c9cfcc" stroke-width="1.6"
-                                          stroke-linecap="round" stroke-linejoin="round"/>
-                                </svg>
-                            </button>
-                        </div>
-                    </label>
-                    <p class="output-hint">仅改变导出文件位置，不改变缓存目录</p>
-                </div>
-            </section>
-
-            <div class="export-footer">
+                </label>
+            </div>
+            <div class="export-workspace">
+                <div id="export-group-list" class="export-group-list"></div>
+                <aside id="export-param-panel" class="export-param-panel" style="display: none"></aside>
+            </div>
+            <div id="export-footer" class="export-footer">
                 <span id="export-validation-message" class="validation-message"></span>
                 <button id="export-cancel" class="secondary-command" type="button"
                         data-action="cancel-export-config">取消</button>

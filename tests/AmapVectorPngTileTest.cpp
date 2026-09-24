@@ -174,6 +174,33 @@ namespace
         return faceCount;
     }
 
+    std::optional<float> MinimumFbxVertexZ(const std::filesystem::path& fbxPath)
+    {
+        Assimp::Importer importer;
+        const aiScene* scene = postprocess_test::ReadFbxScene(importer, fbxPath);
+        if (scene == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        std::optional<float> minimumZ;
+        for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; meshIndex++)
+        {
+            const aiMesh* mesh = scene->mMeshes[meshIndex];
+            if (mesh == nullptr)
+            {
+                continue;
+            }
+            for (unsigned int vertexIndex = 0; vertexIndex < mesh->mNumVertices;
+                 vertexIndex++)
+            {
+                const float z = mesh->mVertices[vertexIndex].z;
+                minimumZ = minimumZ.has_value() ? std::min(*minimumZ, z) : z;
+            }
+        }
+        return minimumZ;
+    }
+
     bool TryGetPixelAtGcj02(
         const cv::Mat& image,
         const DownTool::LonLat& coordinate,
@@ -1274,6 +1301,51 @@ namespace
                     satelliteRoofFbxRoot / "building_roof_satellite_1.jpg"),
                 "卫星屋顶 FBX 不应额外复制右侧卫星贴图") ||
             !RequireSatelliteRoofFbx(satelliteRoofOptions.outputPath, 2))
+        {
+            return false;
+        }
+
+        const std::filesystem::path buildingShapeRoot =
+            outputRoot / "building-shape";
+        DownTool::AmapVectorDecodedData buildingShapeData;
+        buildingShapeData.features.push_back(MakeHeightBuilding(
+            { centerGcj02.lon + 0.03, centerGcj02.lat }, 12, true, 31));
+        DownTool::AmapBuildingFbxExportOptions planeBuildingOptions;
+        planeBuildingOptions.outputPath =
+            buildingShapeRoot / "plane" / "buildings.fbx";
+        planeBuildingOptions.centerWgs84 = centerWgs84;
+        planeBuildingOptions.wallTexturePath =
+            textureRoot / std::filesystem::u8path("墙体");
+        planeBuildingOptions.roofTexturePath =
+            textureRoot / std::filesystem::u8path("房顶");
+        planeBuildingOptions.shape = DownTool::FbxPlanetShape::Plane;
+        DownTool::AmapBuildingFbxExportOptions sphereBuildingOptions =
+            planeBuildingOptions;
+        sphereBuildingOptions.outputPath =
+            buildingShapeRoot / "sphere" / "buildings.fbx";
+        sphereBuildingOptions.shape = DownTool::FbxPlanetShape::Sphere;
+        const DownTool::AmapBuildingFbxExportResult planeBuildingResult =
+            DownTool::ExportAmapBuildingsToFbx(
+                buildingShapeData, planeBuildingOptions);
+        const DownTool::AmapBuildingFbxExportResult sphereBuildingResult =
+            DownTool::ExportAmapBuildingsToFbx(
+                buildingShapeData, sphereBuildingOptions);
+        const std::optional<float> planeMinimumZ =
+            MinimumFbxVertexZ(planeBuildingOptions.outputPath);
+        const std::optional<float> sphereMinimumZ =
+            MinimumFbxVertexZ(sphereBuildingOptions.outputPath);
+        if (!Require(
+                planeBuildingResult.success,
+                "平面建筑 FBX 导出失败：" + planeBuildingResult.error) ||
+            !Require(
+                sphereBuildingResult.success,
+                "球面建筑 FBX 导出失败：" + sphereBuildingResult.error) ||
+            !Require(
+                planeMinimumZ.has_value() && sphereMinimumZ.has_value(),
+                "无法读取建筑形态测试 FBX 顶点") ||
+            !Require(
+                *sphereMinimumZ < *planeMinimumZ - 10.F,
+                "球面建筑没有按椭球曲面生成不同于平面的高度坐标"))
         {
             return false;
         }

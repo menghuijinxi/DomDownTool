@@ -993,6 +993,7 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
             AmapBuildingFbxExportOptions buildingFbxOptions;
             buildingFbxOptions.outputPath = GetFbxRootPath() / "buildings.fbx";
             buildingFbxOptions.centerWgs84 = vectorOptions.centerWgs84;
+            buildingFbxOptions.shape = GetFbxShape();
             buildingFbxOptions.wallTexturePath = renderOptions.buildingWallTexturePath;
             buildingFbxOptions.roofTexturePath = renderOptions.buildingRoofTexturePath;
             buildingFbxOptions.wallTextureMode = renderOptions.buildingFbxWallTextureMode;

@@ -10,6 +10,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <windows.h>
@@ -158,6 +159,19 @@ class PreviewController
 
     void UpdateExportUi(skui::Runtime& runtime);
 
+    void ResetExportComposer(const ExportConfiguration* configuration);
+
+    void RenderExportComposer(skui::Runtime& runtime);
+
+    bool HandleExportComposerEvent(skui::Runtime& runtime, std::string_view id,
+                                   std::string_view value, bool checked, bool fromClick,
+                                   bool fromChange);
+
+    [[nodiscard]] std::optional<std::filesystem::path> SelectExportDirectory() const;
+
+    [[nodiscard]] std::vector<ExportContentGroup> ResolveExportGroups(
+        std::string& error) const;
+
     void UpdateTaskUi(skui::Runtime& runtime);
 
     void setExportGisGroupSelected(uint64_t groupId, bool selected);
@@ -257,9 +271,9 @@ class PreviewController
     std::string exportTerrainSampleRateValue_ = "30";
     std::string exportBuildingWallTexturePathValue_ = "贴图/墙体";
     std::string exportBuildingRoofTexturePathValue_ = "贴图/房顶";
-    std::string exportBuildingWallTextureModeValue_ = "scattered";
-    std::string exportBuildingRoofTextureModeValue_ = "scattered";
-    std::string exportBuildingAtlasFormatValue_ = "png";
+    std::string exportBuildingWallTextureModeValue_ = "merged-atlas";
+    std::string exportBuildingRoofTextureModeValue_ = "merged-atlas";
+    std::string exportBuildingAtlasFormatValue_ = "jpg";
     std::string exportBuildingLayerHeightValue_ = "45";
     std::string exportBuildingMaxWallMaterialsValue_ = "1";
     std::string exportBuildingTextureSeedValue_ = "0";
@@ -275,6 +289,14 @@ class PreviewController
     bool exportBuildingFbx_ = false;
     std::set<std::string> exportTianDiTuMultidateSelectedValues_ = {"latest"};
     std::string exportValidationMessage_;
+    std::vector<ExportContentGroup> exportContentGroups_;
+    std::string exportSelectedComponentId_;
+    std::string exportComponentMenuGroupId_;
+    std::string exportSourceMenuComponentId_;
+    uint64_t exportComposerSerial_ = 1;
+    std::string lastExportGroupListHtml_;
+    std::string lastExportParamPanelHtml_;
+    std::string lastExportParamPanelComponentId_;
     std::string lastTaskListHtml_;
     std::optional<MapRenderStats> scheduledStats_;
     std::string searchQuery_;

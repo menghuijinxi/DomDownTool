@@ -60,6 +60,78 @@ struct SatelliteExportSource
 using ExportDownloaderFactory =
     std::function<std::unique_ptr<DownTool::DownToolBase>(std::string_view)>;
 
+enum class ExportComponentKind
+{
+    MergedImage,
+    StandardXyz,
+    RawTiles,
+    BasePlate,
+    BuildingModel,
+    GeoJson
+};
+
+enum class ExportSourceKind
+{
+    Imagery,
+    Gis
+};
+
+struct ExportSourceEntry
+{
+    std::string id;
+    std::string name;
+    ExportSourceKind kind = ExportSourceKind::Imagery;
+    std::filesystem::path cachePath;
+    DownTool::AmapVectorRenderCategory gisCategory =
+        DownTool::AmapVectorRenderCategory::Road;
+    DownTool::AmapVectorColor color{};
+    std::string multidateYear;
+    std::string multidateKey;
+    std::string multidateGbCode;
+    std::string multidateRegionName;
+    // 登录态只活在当前进程，任务记录不保存 cookie。
+    std::string multidateCookie;
+};
+
+struct ExportComponent
+{
+    std::string id;
+    ExportComponentKind kind = ExportComponentKind::MergedImage;
+    std::vector<ExportSourceEntry> sources;
+    std::string imageFormat = "png";
+    uint32_t maxEdge = 16384;
+    uint32_t xyzTileSize = 256;
+    uint32_t textureSize = 4096;
+    std::string textureFormat = "png";
+    DownTool::FbxPlanetShape shape = DownTool::FbxPlanetShape::Sphere;
+    bool exportElevation = false;
+    double elevationSampleMeters = 30.;
+    uint32_t meshSubdivision = 64;
+    std::filesystem::path wallTexturePath = std::filesystem::u8path("贴图/墙体");
+    std::filesystem::path roofTexturePath = std::filesystem::u8path("贴图/房顶");
+    DownTool::AmapBuildingFbxTextureMode wallTextureMode =
+        DownTool::AmapBuildingFbxTextureMode::MergedAtlas;
+    DownTool::AmapBuildingFbxRoofTextureMode roofTextureMode =
+        DownTool::AmapBuildingFbxRoofTextureMode::MergedAtlas;
+    DownTool::AmapBuildingFbxAtlasImageFormat atlasImageFormat =
+        DownTool::AmapBuildingFbxAtlasImageFormat::Jpg;
+    double layerHeightCentimeters = 45.;
+    uint32_t maxWallMaterialsPerBucket = 1;
+    uint32_t textureRandomSeed = 0;
+    bool followBaseElevation = false;
+    std::string basePlateComponentId;
+    bool includeBaseLayers = true;
+    bool includeLabels = false;
+};
+
+struct ExportContentGroup
+{
+    std::string id;
+    std::string name;
+    bool enabled = true;
+    std::vector<ExportComponent> components;
+};
+
 struct ExportConfiguration
 {
     DownTool::LonLat centerWgs84;
@@ -80,11 +152,11 @@ struct ExportConfiguration
     std::filesystem::path buildingWallTexturePath = std::filesystem::u8path("贴图/墙体");
     std::filesystem::path buildingRoofTexturePath = std::filesystem::u8path("贴图/房顶");
     DownTool::AmapBuildingFbxTextureMode buildingFbxWallTextureMode =
-        DownTool::AmapBuildingFbxTextureMode::Scattered;
+        DownTool::AmapBuildingFbxTextureMode::MergedAtlas;
     DownTool::AmapBuildingFbxRoofTextureMode buildingFbxRoofTextureMode =
-        DownTool::AmapBuildingFbxRoofTextureMode::Scattered;
+        DownTool::AmapBuildingFbxRoofTextureMode::MergedAtlas;
     DownTool::AmapBuildingFbxAtlasImageFormat buildingFbxAtlasImageFormat =
-        DownTool::AmapBuildingFbxAtlasImageFormat::Png;
+        DownTool::AmapBuildingFbxAtlasImageFormat::Jpg;
     double buildingLayerHeightCentimeters = 45.;
     uint32_t buildingMaxWallMaterialsPerBucket = 1;
     uint32_t buildingTextureRandomSeed = 0;
@@ -93,6 +165,17 @@ struct ExportConfiguration
     uint32_t fbxTextureSize = 4096;
     std::string fbxTextureFormat = "png";
     double fbxTerrainSampleRateMeters = 30.;
+    std::vector<ExportContentGroup> groups;
+    // 下面几项只在一次导出执行期间改写输出位置，不写入任务记录。
+    std::filesystem::path executionRootOverride;
+    bool flatSourceOutput = false;
+    std::optional<bool> includeBaseLayersOverride;
+    std::optional<bool> includeLabelsOverride;
+    std::filesystem::path geoJsonOutputFileOverride;
+    std::filesystem::path buildingFbxOutputOverride;
+    uint32_t executionTileSize = 0;
+    uint32_t executionFbxSubdivision = 0;
+    std::optional<DownTool::FbxPlanetShape> executionFbxShape;
 };
 
 struct ExportTaskRecord
@@ -121,8 +204,15 @@ struct ExportTaskRecord
     bool exportTiles, const std::filesystem::path& tileOutputPath,
     const std::filesystem::path& temporaryRoot);
 
+// 分组配置不合法时返回错误；没有分组时返回空字符串，交给旧导出校验。
+[[nodiscard]] std::string GroupedExportError(const ExportConfiguration& configuration);
+
+class ExportGroupedRunner;
+
 class ExportTaskManager
 {
+    friend class ExportGroupedRunner;
+
   public:
     explicit ExportTaskManager(
         std::function<void()> changeCallback,
@@ -166,11 +256,24 @@ class ExportTaskManager
         bool transparentMultidateEmptyTiles = false;
         bool forceMultidateLatestWmts = false;
         bool reportStepComplete = true;
+        std::optional<bool> exportTilesOverride;
+        std::optional<bool> exportMergedImageOverride;
+        std::optional<bool> exportFbxOverride;
+        std::optional<uint32_t> mergedImageResolutionOverride;
+        std::optional<uint32_t> fbxTextureSizeOverride;
+        std::optional<uint32_t> tileSizeOverride;
+        std::optional<uint32_t> fbxSubdivisionOverride;
+        std::optional<DownTool::FbxPlanetShape> fbxShapeOverride;
+        std::filesystem::path xyzOutputPathOverride;
+        std::filesystem::path mergedImageOutputPathOverride;
+        std::filesystem::path fbxOutputPathOverride;
     };
 
     void WorkerLoop();
 
     bool RunExport(const QueuedExport& queuedExport, std::string& error);
+
+    bool RunGroupedExport(const QueuedExport& queuedExport, std::string& error);
 
     bool RunSatelliteExport(const QueuedExport& queuedExport,
                             const SatelliteExportSource& source,
@@ -242,5 +345,13 @@ class ExportTaskManager
     bool stopping_ = false;
     std::chrono::steady_clock::time_point lastSaveTime_{};
     std::chrono::steady_clock::time_point lastProgressNotificationTime_{};
+};
+
+class ExportGroupedRunner
+{
+  public:
+    static bool Run(ExportTaskManager& manager,
+                    const ExportTaskManager::QueuedExport& queuedExport,
+                    std::string& error);
 };
 } // namespace DomDownToolPreview

@@ -3,6 +3,11 @@
 #
 cmake_minimum_required (VERSION 3.24)
 
+# 静态链接 MSVC 运行库，避免部署时依赖 VC++ Redistributable。
+set(CMAKE_MSVC_RUNTIME_LIBRARY
+    "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+    CACHE STRING "MSVC runtime library" FORCE)
+
 option(IS_AUTODOWNLOAD_VCPKG "是否自动下载vcpkg，并配置vcpkg为工具链" ON)
 option(DOMDOWNTOOL_BUILD_PREVIEW "是否构建 SkiaUI 瓦块预览工具" ON)
 
@@ -185,8 +190,10 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
 
   set(WEBVIEW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
   set(WEBVIEW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(WEBVIEW_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
   set(WEBVIEW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
   set(WEBVIEW_ENABLE_CHECKS OFF CACHE BOOL "" FORCE)
+  set(WEBVIEW_USE_STATIC_MSVC_RUNTIME ON CACHE BOOL "" FORCE)
 
   FetchContent_Declare(
     webview
@@ -213,6 +220,8 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapWebViewSearch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/Dx12GisRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/Dx12FbxRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportComposer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportGroupedExport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportImageComposer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportTaskManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/FbxPreviewRenderer.cpp
@@ -251,6 +260,29 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
 endif()
 
 enable_testing()
+
+if(MSVC)
+  get_filename_component(
+    DOMDOWNTOOL_MSVC_TOOL_DIRECTORY "${CMAKE_LINKER}" DIRECTORY)
+  set(DOMDOWNTOOL_DUMPBIN
+      "${DOMDOWNTOOL_MSVC_TOOL_DIRECTORY}/dumpbin.exe")
+  if(EXISTS "${DOMDOWNTOOL_DUMPBIN}")
+    function(add_static_msvc_runtime_test target_name)
+      add_test(
+        NAME ${target_name}StaticMsvcRuntimeTest
+        COMMAND "${CMAKE_COMMAND}"
+          "-DDOMDOWNTOOL_DUMPBIN=${DOMDOWNTOOL_DUMPBIN}"
+          "-DDOMDOWNTOOL_BINARY=$<TARGET_FILE:${target_name}>"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckStaticMsvcRuntime.cmake")
+    endfunction()
+
+    add_static_msvc_runtime_test(DomDownTool)
+    add_static_msvc_runtime_test(AmapGisDownload)
+    if(DOMDOWNTOOL_BUILD_PREVIEW)
+      add_static_msvc_runtime_test(DomDownToolPreview)
+    endif()
+  endif()
+endif()
 
 add_test(NAME SatelliteDownloadHelpTest COMMAND DomDownTool --help)
 add_test(NAME SatelliteDownloadDryRunTest
@@ -414,6 +446,7 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
 
   add_executable(ExportTaskManagerTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/ExportTaskManagerTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportGroupedExport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportImageComposer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportTaskManager.cpp)
   target_link_libraries(ExportTaskManagerTest PRIVATE DomDownToolCore)

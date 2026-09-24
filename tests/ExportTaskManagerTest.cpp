@@ -252,14 +252,223 @@ bool runTest()
     }
 
     DomDownToolPreview::ExportConfiguration defaultOutputConfiguration;
+    DomDownToolPreview::ExportComponent defaultBuildingComponent;
+    defaultBuildingComponent.kind =
+        DomDownToolPreview::ExportComponentKind::BuildingModel;
     DownTool::AmapVectorRenderOptions defaultRenderOptions;
     if (!postprocess_test::Require(
             !defaultOutputConfiguration.exportBuildingFbx &&
                 !defaultRenderOptions.exportBuildingsToFbx,
-            "建筑散图 FBX 不应在配置或渲染选项中默认启用"))
+            "建筑 FBX 不应在配置或渲染选项中默认启用") ||
+        !postprocess_test::Require(
+            defaultOutputConfiguration.buildingFbxWallTextureMode ==
+                    DownTool::AmapBuildingFbxTextureMode::MergedAtlas &&
+                defaultOutputConfiguration.buildingFbxRoofTextureMode ==
+                    DownTool::AmapBuildingFbxRoofTextureMode::MergedAtlas &&
+                defaultOutputConfiguration.buildingFbxAtlasImageFormat ==
+                    DownTool::AmapBuildingFbxAtlasImageFormat::Jpg,
+            "旧版建筑导出配置没有使用合并贴图和 JPG 默认值") ||
+        !postprocess_test::Require(
+            defaultBuildingComponent.wallTextureMode ==
+                    DownTool::AmapBuildingFbxTextureMode::MergedAtlas &&
+                defaultBuildingComponent.roofTextureMode ==
+                    DownTool::AmapBuildingFbxRoofTextureMode::MergedAtlas &&
+                defaultBuildingComponent.atlasImageFormat ==
+                    DownTool::AmapBuildingFbxAtlasImageFormat::Jpg &&
+                defaultBuildingComponent.shape ==
+                    DownTool::FbxPlanetShape::Sphere,
+            "新建建筑模型组件没有使用球面、合并贴图和 JPG 默认值"))
     {
         return false;
     }
+
+    const std::filesystem::path buildingDefaultsRecordsPath =
+        testRoot / "building-defaults-records.json";
+    std::ofstream buildingDefaultsOutput(
+        buildingDefaultsRecordsPath, std::ios::binary | std::ios::trunc);
+    buildingDefaultsOutput << R"json({
+  "version": 1,
+  "tasks": [
+    {
+      "id": "building-missing-defaults",
+      "title": "缺省建筑参数",
+      "detail": "",
+      "outputPath": "",
+      "createdAt": "2026-09-24 09:00:00",
+      "finishedAt": "2026-09-24 09:00:01",
+      "state": "succeeded",
+      "stage": "已完成",
+      "progress": 1,
+      "completed": 1,
+      "total": 1,
+      "error": "",
+      "configuration": {
+        "centerWgs84": {"lon": 116.397389, "lat": 39.908722},
+        "groups": [{
+          "id": "g1",
+          "name": "默认值",
+          "enabled": true,
+          "components": [{"id": "c1", "kind": "building-model"}]
+        }]
+      }
+    },
+    {
+      "id": "building-explicit-legacy",
+      "title": "显式旧建筑参数",
+      "detail": "",
+      "outputPath": "",
+      "createdAt": "2026-09-24 09:01:00",
+      "finishedAt": "2026-09-24 09:01:01",
+      "state": "succeeded",
+      "stage": "已完成",
+      "progress": 1,
+      "completed": 1,
+      "total": 1,
+      "error": "",
+      "configuration": {
+        "centerWgs84": {"lon": 116.397389, "lat": 39.908722},
+        "buildingFbxWallTextureMode": "scattered",
+        "buildingFbxRoofTextureMode": "scattered",
+        "buildingFbxAtlasImageFormat": "png",
+        "groups": [{
+          "id": "g2",
+          "name": "旧值",
+          "enabled": true,
+          "components": [{
+            "id": "c2",
+            "kind": "building-model",
+            "wallTextureMode": "scattered",
+            "roofTextureMode": "scattered",
+            "atlasImageFormat": "png"
+          }]
+        }]
+      }
+    }
+  ]
+})json";
+    buildingDefaultsOutput.close();
+    {
+        DomDownToolPreview::ExportTaskManager manager(
+            {}, buildingDefaultsRecordsPath);
+        const std::vector<DomDownToolPreview::ExportTaskRecord> records =
+            manager.GetRecords();
+        const DomDownToolPreview::ExportTaskRecord* missingDefaults =
+            findRecord(records, "building-missing-defaults");
+        const DomDownToolPreview::ExportTaskRecord* explicitLegacy =
+            findRecord(records, "building-explicit-legacy");
+        const auto componentFrom = [](const DomDownToolPreview::ExportTaskRecord* record)
+            -> const DomDownToolPreview::ExportComponent*
+        {
+            if (record == nullptr || !record->configuration.has_value() ||
+                record->configuration->groups.empty() ||
+                record->configuration->groups.front().components.empty())
+            {
+                return nullptr;
+            }
+            return &record->configuration->groups.front().components.front();
+        };
+        const DomDownToolPreview::ExportComponent* missingComponent =
+            componentFrom(missingDefaults);
+        const DomDownToolPreview::ExportComponent* explicitComponent =
+            componentFrom(explicitLegacy);
+        if (!postprocess_test::Require(
+                missingDefaults && missingDefaults->configuration.has_value() &&
+                    missingDefaults->configuration->buildingFbxWallTextureMode ==
+                        DownTool::AmapBuildingFbxTextureMode::MergedAtlas &&
+                    missingDefaults->configuration->buildingFbxRoofTextureMode ==
+                        DownTool::AmapBuildingFbxRoofTextureMode::MergedAtlas &&
+                    missingDefaults->configuration->buildingFbxAtlasImageFormat ==
+                        DownTool::AmapBuildingFbxAtlasImageFormat::Jpg &&
+                    missingComponent &&
+                    missingComponent->wallTextureMode ==
+                        DownTool::AmapBuildingFbxTextureMode::MergedAtlas &&
+                    missingComponent->roofTextureMode ==
+                        DownTool::AmapBuildingFbxRoofTextureMode::MergedAtlas &&
+                    missingComponent->atlasImageFormat ==
+                        DownTool::AmapBuildingFbxAtlasImageFormat::Jpg,
+                "缺少建筑参数字段的记录没有采用新默认值") ||
+            !postprocess_test::Require(
+                explicitLegacy && explicitLegacy->configuration.has_value() &&
+                    explicitLegacy->configuration->buildingFbxWallTextureMode ==
+                        DownTool::AmapBuildingFbxTextureMode::Scattered &&
+                    explicitLegacy->configuration->buildingFbxRoofTextureMode ==
+                        DownTool::AmapBuildingFbxRoofTextureMode::Scattered &&
+                    explicitLegacy->configuration->buildingFbxAtlasImageFormat ==
+                        DownTool::AmapBuildingFbxAtlasImageFormat::Png &&
+                    explicitComponent &&
+                    explicitComponent->wallTextureMode ==
+                        DownTool::AmapBuildingFbxTextureMode::Scattered &&
+                    explicitComponent->roofTextureMode ==
+                        DownTool::AmapBuildingFbxRoofTextureMode::Scattered &&
+                    explicitComponent->atlasImageFormat ==
+                        DownTool::AmapBuildingFbxAtlasImageFormat::Png,
+                "显式保存的旧建筑参数没有保持原值"))
+        {
+            return false;
+        }
+    }
+
+    DomDownToolPreview::ExportConfiguration xyzConfiguration;
+    xyzConfiguration.centerWgs84 = {116.397389, 39.908722};
+    xyzConfiguration.radiusMeters = 1000.;
+    xyzConfiguration.zoom = 15;
+    DomDownToolPreview::ExportContentGroup xyzGroup;
+    xyzGroup.id = "g1";
+    xyzGroup.name = "XYZ";
+    DomDownToolPreview::ExportComponent xyzComponent;
+    xyzComponent.id = "c1";
+    xyzComponent.kind = DomDownToolPreview::ExportComponentKind::StandardXyz;
+    xyzComponent.sources.push_back({
+        "test.satellite", "测试卫星",
+        DomDownToolPreview::ExportSourceKind::Imagery,
+        testRoot / "xyz-validation-cache"});
+    xyzGroup.components.push_back(std::move(xyzComponent));
+    xyzConfiguration.groups.push_back(std::move(xyzGroup));
+    for (const uint32_t tileSize : {256u, 512u, 1024u})
+    {
+        xyzConfiguration.groups.front().components.front().xyzTileSize = tileSize;
+        if (!postprocess_test::Require(
+                DomDownToolPreview::GroupedExportError(xyzConfiguration).empty(),
+                "标准 XYZ 合法分辨率被拒绝：" + std::to_string(tileSize)))
+        {
+            return false;
+        }
+    }
+    xyzConfiguration.groups.front().components.front().xyzTileSize = 300;
+    if (!postprocess_test::Require(
+            DomDownToolPreview::GroupedExportError(xyzConfiguration) ==
+                "标准 XYZ 分辨率只支持 256、512 或 1024。",
+            "标准 XYZ 没有拒绝未支持的分辨率"))
+    {
+        return false;
+    }
+    for (const uint32_t tileSize : {512u, 1024u})
+    {
+        const std::filesystem::path xyzRoot =
+            testRoot / ("xyz-" + std::to_string(tileSize));
+        postprocess_test::TestPostProcessDown tool;
+        const DownTool::Tile tile(1, 1, 2);
+        tool.Configure(
+            xyzRoot / "cache", xyzRoot / "output", tile.Zoom, tileSize,
+            tile, tile, {0., 0.});
+        tool.SetPostProcessEnabled(true);
+        tool.SetPostProcessMergedImageEnabled(false);
+        tool.SetPostProcessFbxEnabled(false);
+        if (!postprocess_test::WriteSourceTile(
+                tool.TilePath(tile), 256, cv::Scalar(10, 20, 30, 255)))
+        {
+            return false;
+        }
+        tool.RunPostProcessForTest();
+        if (!postprocess_test::RequireImageSize(
+                tool.PostProcessTilePath(tile),
+                static_cast<int>(tileSize),
+                static_cast<int>(tileSize)))
+        {
+            return false;
+        }
+    }
+
     DomDownToolPreview::ExportConfiguration selectedOutputConfiguration;
     selectedOutputConfiguration.outputRoot = testRoot / "selected-output";
     if (!postprocess_test::Require(
@@ -647,6 +856,85 @@ bool runTest()
                     !std::filesystem::exists(deleteTaskOutput) &&
                     findRecord(manager.GetRecords(), deleteTaskId) == nullptr,
                 "永久删除没有同时删除任务目录和任务记录：" + deleteError))
+        {
+            return false;
+        }
+    }
+
+    const std::filesystem::path groupedRecordsPath =
+        testRoot / "grouped-records.json";
+    {
+        DomDownToolPreview::ExportTaskManager manager(
+            {}, groupedRecordsPath,
+            [](std::string_view)
+            {
+                return std::make_unique<ImageOutputDownloader>(
+                    cv::Scalar(10, 20, 30, 255));
+            });
+        DomDownToolPreview::ExportConfiguration configuration;
+        configuration.centerWgs84 = {116.397389, 39.908722};
+        configuration.radiusMeters = 1000.;
+        configuration.zoom = 15;
+        configuration.outputRoot = testRoot / "grouped-output";
+
+        DomDownToolPreview::ExportContentGroup group;
+        group.id = "g1";
+        group.name = "卫星底图";
+        DomDownToolPreview::ExportComponent component;
+        component.id = "c1";
+        component.kind = DomDownToolPreview::ExportComponentKind::MergedImage;
+        component.imageFormat = "png";
+        component.maxEdge = 8192;
+        component.sources.push_back({
+            "test.satellite.first", "测试卫星",
+            DomDownToolPreview::ExportSourceKind::Imagery,
+            testRoot / "grouped-cache-first"});
+        component.sources.push_back({
+            "test.satellite.second", "测试卫星",
+            DomDownToolPreview::ExportSourceKind::Imagery,
+            testRoot / "grouped-cache-second"});
+        group.components.push_back(std::move(component));
+        configuration.groups.push_back(std::move(group));
+
+        const std::string taskId = manager.Enqueue(configuration);
+        const bool finished = waitForFinished(manager, taskId);
+        const std::vector<DomDownToolPreview::ExportTaskRecord> records =
+            manager.GetRecords();
+        const DomDownToolPreview::ExportTaskRecord* record =
+            findRecord(records, taskId);
+        const std::filesystem::path componentRoot =
+            DomDownToolPreview::ExportTaskOutputRoot(configuration, taskId) /
+            std::filesystem::u8path("卫星底图") /
+            std::filesystem::u8path("大图");
+        if (!postprocess_test::Require(
+                finished && record &&
+                    record->state == DomDownToolPreview::ExportTaskState::Succeeded &&
+                    record->configuration.has_value() &&
+                    record->configuration->groups.size() == 1 &&
+                    record->configuration->groups.front().components.size() == 1 &&
+                    record->configuration->groups.front().components.front().maxEdge == 8192 &&
+                    std::filesystem::exists(
+                        componentRoot / std::filesystem::u8path("测试卫星.png")) &&
+                    std::filesystem::exists(
+                        componentRoot / std::filesystem::u8path("测试卫星 (2).png")),
+                "分组大图没有使用稳定的同名图源输出路径，或组件参数没有写入任务记录"))
+        {
+            return false;
+        }
+    }
+    {
+        DomDownToolPreview::ExportTaskManager manager({}, groupedRecordsPath);
+        const std::vector<DomDownToolPreview::ExportTaskRecord> records =
+            manager.GetRecords();
+        const std::optional<DomDownToolPreview::ExportConfiguration> configuration =
+            records.size() == 1 ? records.front().configuration : std::nullopt;
+        if (!postprocess_test::Require(
+                configuration.has_value() && configuration->groups.size() == 1 &&
+                    configuration->groups.front().name == "卫星底图" &&
+                    configuration->groups.front().components.size() == 1 &&
+                    configuration->groups.front().components.front().sources.size() == 2 &&
+                    configuration->groups.front().components.front().maxEdge == 8192,
+                "重启后没有恢复内容组、组件和图源参数"))
         {
             return false;
         }
