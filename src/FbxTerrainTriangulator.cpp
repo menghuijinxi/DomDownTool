@@ -39,6 +39,9 @@ struct CandidateError
     double error = 0.;
 };
 
+// 候选点会在下一轮重新校验；扩大批次可避免每 16 个点全量重建一次 CDT。
+constexpr std::size_t kMaximumRefinementBatchSize = 256;
+
 uint64_t GridPointKey(const FbxTerrainGridPoint& point)
 {
     return (static_cast<uint64_t>(point.x) << 32) | point.y;
@@ -400,9 +403,11 @@ FbxTerrainTinResult BuildFbxTerrainTin(
             gridWidth, gridHeight, maximumError);
         const std::size_t availableTriangleCount = maximumTriangleCount -
             cdt.triangles.size();
-        std::vector<CandidateError> pending;
-        pending.reserve(std::min<std::size_t>(16, availableTriangleCount / 2));
         const std::size_t maximumPendingCount = availableTriangleCount / 2;
+        const std::size_t pendingLimit = std::min(
+            maximumPendingCount, kMaximumRefinementBatchSize);
+        std::vector<CandidateError> pending;
+        pending.reserve(pendingLimit);
         for (const CandidateError& error : errors)
         {
             if (error.error <= geometricErrorMeters ||
@@ -411,12 +416,12 @@ FbxTerrainTinResult BuildFbxTerrainTin(
                 continue;
             }
             pending.push_back(error);
-            if (pending.size() >= maximumPendingCount || pending.size() == 16)
+            if (pending.size() >= pendingLimit)
             {
                 break;
             }
         }
-        if (pending.empty() || maximumPendingCount == 0)
+        if (pending.empty() || pendingLimit == 0)
         {
             result.triangles.reserve(cdt.triangles.size());
             for (const CDT::Triangle& triangle : cdt.triangles)

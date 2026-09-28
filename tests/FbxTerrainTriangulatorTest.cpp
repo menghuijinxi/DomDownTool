@@ -111,6 +111,34 @@ void verifyTriangleBudgetIsHard()
             "TIN exceeded the configured triangle budget");
     requireValidTriangles(result);
 }
+
+void verifyRefinementBatchKeepsRequestedAccuracy()
+{
+    constexpr uint32_t width = 64;
+    constexpr uint32_t height = 64;
+    constexpr double maximumErrorMeters = 0.5;
+    constexpr std::size_t maximumTriangleCount = 8192;
+    std::vector<double> heights = flatHeights(width, height, 0.);
+    for (uint32_t y = 1; y < height; ++y)
+    {
+        for (uint32_t x = 1; x < width; ++x)
+        {
+            heights[static_cast<std::size_t>(y) * (width + 1) + x] =
+                10. * std::sin(static_cast<double>(x) * 0.3) *
+                std::cos(static_cast<double>(y) * 0.2);
+        }
+    }
+
+    const FbxTerrainTinResult result = DownTool::BuildFbxTerrainTin(
+        width, height, heights, squareBoundary(width, height),
+        maximumErrorMeters, maximumTriangleCount);
+    require(!result.triangles.empty(), "batched refinement should produce a mesh");
+    require(result.maximumErrorMeters <= maximumErrorMeters,
+            "batched refinement should keep the requested geometric error");
+    require(result.triangles.size() <= maximumTriangleCount,
+            "batched refinement exceeded the configured triangle budget");
+    requireValidTriangles(result);
+}
 } // namespace
 
 int main()
@@ -121,6 +149,7 @@ int main()
         verifyPeakAddsDetail();
         verifyInvalidInputIsRejected();
         verifyTriangleBudgetIsHard();
+        verifyRefinementBatchKeepsRequestedAccuracy();
         std::cout << "FbxTerrainTriangulatorTest passed\n";
         return 0;
     }
