@@ -486,10 +486,14 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::Download(
     try
     {
         const uint32_t dataZoom = AmapVectorTileGrid::ResolveDataZoom(options.zoom);
-        selectedTiles = AmapVectorTileGrid::SelectTilesForWgs84Radius(
-            options.centerWgs84,
-            options.radiusMeters,
-            dataZoom);
+        selectedTiles = options.polygonsWgs84.empty() ?
+            AmapVectorTileGrid::SelectTilesForWgs84Radius(
+                options.centerWgs84,
+                options.radiusMeters,
+                dataZoom) :
+            AmapVectorTileGrid::SelectTilesForWgs84Polygons(
+                options.polygonsWgs84,
+                dataZoom);
     }
     catch (const std::exception& exception)
     {

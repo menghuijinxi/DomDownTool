@@ -133,6 +133,8 @@ class MapRenderer
 
     void SetExportRadiusMeters(double radiusMeters);
 
+    void SetExportPolygonsWgs84(const DownTool::Wgs84Polygons& polygons);
+
     [[nodiscard]] double GetExportRadiusMeters() const
     {
         return exportRadiusMeters_;
@@ -223,6 +225,7 @@ class MapRenderer
     std::vector<TileDebugEntry> tileDebugEntries_;
     std::optional<DownTool::LonLat> locationMarkerWgs84_;
     double exportRadiusMeters_ = 0.;
+    DownTool::Wgs84Polygons exportPolygonsWgs84_;
     double toolbarHeight_ = 52.;
     double statusBarHeight_ = 28.;
     bool tileDebugEnabled_ = false;

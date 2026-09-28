@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "DataType.h"
+#include "GeographicPolygon.h"
 
 namespace DownTool
 {
@@ -32,6 +33,7 @@ struct CopernicusDemOptions
 {
     LonLat centerWgs84;
     double radiusMeters = 0.;
+    Wgs84Polygons polygonsWgs84;
     std::filesystem::path cachePath =
         std::filesystem::u8path("cache/Copernicus高程");
     CopernicusDemCancellationCallback cancellationRequested;

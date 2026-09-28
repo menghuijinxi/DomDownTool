@@ -7,11 +7,14 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cwctype>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <numbers>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -35,6 +38,7 @@
 namespace
 {
 using DomDownToolPreview::ExportConfiguration;
+using DomDownToolPreview::ExportRangeMode;
 using DomDownToolPreview::ExportTaskRecord;
 using DomDownToolPreview::FbxPreviewInteractionSettings;
 using DomDownToolPreview::GisExportMode;
@@ -429,6 +433,82 @@ std::optional<std::filesystem::path> selectOutputDirectory(HWND owner)
     }
     const std::unique_ptr<wchar_t, CoTaskMemDeleter> selectedPath(rawPath);
     return std::filesystem::path(selectedPath.get());
+}
+
+std::optional<std::filesystem::path> selectKmlFile(HWND owner)
+{
+    const ScopedComInitialization comInitialization;
+    if (!comInitialization.available())
+    {
+        return std::nullopt;
+    }
+
+    Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
+    if (FAILED(CoCreateInstance(
+            CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(dialog.GetAddressOf()))))
+    {
+        return std::nullopt;
+    }
+
+    const COMDLG_FILTERSPEC filters[] = {
+        {L"KML 地理范围", L"*.kml"},
+        {L"所有文件", L"*.*"}
+    };
+    FILEOPENDIALOGOPTIONS options = 0;
+    if (FAILED(dialog->GetOptions(&options)) ||
+        FAILED(dialog->SetOptions(
+            options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST |
+            FOS_PATHMUSTEXIST)) ||
+        FAILED(dialog->SetFileTypes(
+            static_cast<UINT>(std::size(filters)), filters)) ||
+        FAILED(dialog->SetDefaultExtension(L"kml")) ||
+        FAILED(dialog->Show(owner)))
+    {
+        return std::nullopt;
+    }
+
+    Microsoft::WRL::ComPtr<IShellItem> selectedItem;
+    if (FAILED(dialog->GetResult(selectedItem.GetAddressOf())))
+    {
+        return std::nullopt;
+    }
+
+    wchar_t* rawPath = nullptr;
+    if (FAILED(selectedItem->GetDisplayName(SIGDN_FILESYSPATH, &rawPath)))
+    {
+        return std::nullopt;
+    }
+    const std::unique_ptr<wchar_t, CoTaskMemDeleter> selectedPath(rawPath);
+    return std::filesystem::path(selectedPath.get());
+}
+
+double KmlPreviewZoom(const DownTool::GeographicBounds& bounds)
+{
+    const DownTool::LonLat center = DownTool::GeographicBoundsCenter(bounds);
+    const double longitudeSpan = std::max(0., bounds.east - bounds.west);
+    const double latitudeScale = std::max(
+        0.2, std::cos(center.lat * std::numbers::pi / 180.));
+    const double latitudeSpan =
+        std::max(0., bounds.north - bounds.south) / latitudeScale;
+    const double span = std::max(longitudeSpan, latitudeSpan);
+    if (!(span > 0.))
+    {
+        return 18.;
+    }
+    return std::clamp(std::log2(360. / span) - 0.35, 1., 20.);
+}
+
+bool IsKmlPath(const std::filesystem::path& path)
+{
+    std::wstring extension = path.extension().wstring();
+    std::ranges::transform(
+        extension, extension.begin(),
+        [](wchar_t character)
+        {
+            return static_cast<wchar_t>(std::towlower(character));
+        });
+    return extension == L".kml";
 }
 
 bool equalStats(const DomDownToolPreview::MapRenderStats& left,
@@ -1670,6 +1750,83 @@ DomDownToolPreview::PreviewController::SelectExportDirectory() const
     return selectOutputDirectory(window_.load(std::memory_order_relaxed));
 }
 
+std::optional<std::filesystem::path>
+DomDownToolPreview::PreviewController::SelectKmlFile() const
+{
+    return selectKmlFile(window_.load(std::memory_order_relaxed));
+}
+
+bool DomDownToolPreview::PreviewController::LoadKmlRange(
+    const std::filesystem::path& path, skui::Runtime& runtime)
+{
+    if (!IsKmlPath(path))
+    {
+        MessageBoxW(
+            window_.load(std::memory_order_relaxed),
+            L"只能导入 .kml 文件。",
+            L"DomDownTool",
+            MB_OK | MB_ICONWARNING);
+        return false;
+    }
+
+    std::string error;
+    const std::optional<DownTool::KmlDownloadRange> range =
+        DownTool::LoadKmlDownloadRange(path, error);
+    if (!range.has_value())
+    {
+        MessageBoxW(
+            window_.load(std::memory_order_relaxed),
+            utf8ToWide(error).c_str(),
+            L"无法导入 KML",
+            MB_OK | MB_ICONERROR);
+        return false;
+    }
+    ApplyKmlRange(*range, runtime);
+    return true;
+}
+
+void DomDownToolPreview::PreviewController::ApplyKmlRange(
+    const DownTool::KmlDownloadRange& range, skui::Runtime& runtime)
+{
+    previewRangeMode_ = ExportRangeMode::KmlPolygon;
+    previewPolygonsWgs84_ = range.polygonsWgs84;
+    previewKmlFileName_ = range.fileName;
+    renderer_.SetExportPolygonsWgs84(previewPolygonsWgs84_);
+    renderer_.setView(range.centerWgs84, KmlPreviewZoom(range.bounds));
+
+    if (page_ == Page::Export)
+    {
+        exportRangeMode_ = ExportRangeMode::KmlPolygon;
+        exportPolygonsWgs84_ = range.polygonsWgs84;
+        exportKmlFileName_ = range.fileName;
+        exportLongitudeValue_ = fmt::format("{:.6f}", range.centerWgs84.lon);
+        exportLatitudeValue_ = fmt::format("{:.6f}", range.centerWgs84.lat);
+        exportRadiusValue_ = fmt::format("{:.0f}", range.boundingRadiusMeters);
+        runtime.setValueById("export-lon", exportLongitudeValue_);
+        runtime.setValueById("export-lat", exportLatitudeValue_);
+        runtime.setValueById("export-config-radius", exportRadiusValue_);
+    }
+    updateUi(runtime);
+    requestRedraw();
+}
+
+void DomDownToolPreview::PreviewController::ClearKmlRange(
+    skui::Runtime& runtime)
+{
+    previewRangeMode_ = ExportRangeMode::CenterRadius;
+    previewPolygonsWgs84_.clear();
+    previewKmlFileName_.clear();
+    renderer_.SetExportPolygonsWgs84({});
+    if (page_ == Page::Export)
+    {
+        exportRangeMode_ = ExportRangeMode::CenterRadius;
+        exportPolygonsWgs84_.clear();
+        exportKmlFileName_.clear();
+    }
+    updateUi(runtime);
+    requestRedraw();
+}
+
 DomDownToolPreview::PreviewController::PreviewController()
     : tianDiTuMultidateSession_(),
       renderer_([this] { requestRedraw(); }),
@@ -1700,6 +1857,10 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 event.type == skui::ElementEventType::Input)
             {
                 previewRadiusValue_ = event.value;
+                previewRangeMode_ = ExportRangeMode::CenterRadius;
+                previewPolygonsWgs84_.clear();
+                previewKmlFileName_.clear();
+                renderer_.SetExportPolygonsWgs84({});
                 const std::optional<double> radius = parseFiniteDouble(event.value);
                 if (radius.has_value() && *radius >= 0.)
                 {
@@ -2220,6 +2381,42 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 schedulePageChange(Page::Export, runtime);
                 return;
             }
+            if (event.id == "preview-load-kml" ||
+                event.id == "export-browse-kml")
+            {
+                const std::optional<std::filesystem::path> selectedPath =
+                    SelectKmlFile();
+                if (selectedPath.has_value())
+                {
+                    LoadKmlRange(*selectedPath, runtime);
+                }
+                return;
+            }
+            if (event.id == "preview-clear-kml")
+            {
+                ClearKmlRange(runtime);
+                return;
+            }
+            if (event.id == "export-range-mode-center")
+            {
+                exportRangeMode_ = ExportRangeMode::CenterRadius;
+                UpdateExportUi(runtime);
+                requestRedraw();
+                return;
+            }
+            if (event.id == "export-range-mode-kml")
+            {
+                exportRangeMode_ = ExportRangeMode::KmlPolygon;
+                if (exportPolygonsWgs84_.empty() &&
+                    !previewPolygonsWgs84_.empty())
+                {
+                    exportPolygonsWgs84_ = previewPolygonsWgs84_;
+                    exportKmlFileName_ = previewKmlFileName_;
+                }
+                UpdateExportUi(runtime);
+                requestRedraw();
+                return;
+            }
             if (event.id == "open-task-page" || event.id == "export-open-tasks")
             {
                 schedulePageChange(Page::Tasks, runtime);
@@ -2675,6 +2872,11 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
                                                                 skui::Runtime& runtime)
 {
     const bool destroyingWindow = message == WM_DESTROY || message == WM_NCDESTROY;
+    if (!destroyingWindow && !fileDropEnabled_)
+    {
+        DragAcceptFiles(window, TRUE);
+        fileDropEnabled_ = true;
+    }
     if (message == WM_DESTROY && gisColorEyedropperActive_)
     {
         KillTimer(window, kPreviewEyedropperTimerId);
@@ -2686,6 +2888,11 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
     }
     if (message == WM_DESTROY)
     {
+        if (fileDropEnabled_)
+        {
+            DragAcceptFiles(window, FALSE);
+            fileDropEnabled_ = false;
+        }
         stopFbxKeyboardPanFrame(window);
         stopFbxPreviewFrameLoop(window);
         fbxKeyboardRightDirection_ = 0;
@@ -2708,6 +2915,40 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         RedrawWindow(window, nullptr, nullptr,
                      RDW_INVALIDATE | RDW_NOCHILDREN | RDW_UPDATENOW);
         return false;
+    }
+    if (message == WM_DROPFILES)
+    {
+        const HDROP drop = reinterpret_cast<HDROP>(wParam);
+        std::filesystem::path kmlPath;
+        const UINT fileCount = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+        for (UINT index = 0; index < fileCount; ++index)
+        {
+            const UINT length = DragQueryFileW(drop, index, nullptr, 0);
+            std::wstring path(length + 1, L'\0');
+            if (DragQueryFileW(drop, index, path.data(), length + 1) == 0)
+            {
+                continue;
+            }
+            path.resize(length);
+            const std::filesystem::path candidate(path);
+            if (IsKmlPath(candidate))
+            {
+                kmlPath = candidate;
+                break;
+            }
+        }
+        DragFinish(drop);
+        if (kmlPath.empty())
+        {
+            MessageBoxW(
+                window,
+                L"拖入的文件中没有 .kml 文件。",
+                L"DomDownTool",
+                MB_OK | MB_ICONWARNING);
+            return true;
+        }
+        LoadKmlRange(kmlPath, runtime);
+        return true;
     }
     if (message == kPreviewImmediateFbxRedrawMessage)
     {
@@ -4084,6 +4325,13 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
 
     runtime.setValueById("provider-select", source.id);
     runtime.setValueById("export-radius", previewRadiusValue_);
+    const bool previewKmlMode =
+        previewRangeMode_ == ExportRangeMode::KmlPolygon;
+    runtime.setVisibleById("preview-radius-control", !previewKmlMode);
+    runtime.setVisibleById("preview-kml-control", previewKmlMode);
+    runtime.setTextById(
+        "preview-kml-name",
+        previewKmlFileName_.empty() ? "KML 范围" : previewKmlFileName_);
     runtime.setTextsById(
         {{"active-provider", source.name},
          {"coordinate-system", source.coordinateSystem},
@@ -4324,6 +4572,12 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
 {
     const MapSourceSummary source = renderer_.activeSource();
     const DownTool::LonLat center = renderer_.center();
+    exportRangeMode_ = configuration ?
+        configuration->rangeMode : previewRangeMode_;
+    exportPolygonsWgs84_ = configuration ?
+        configuration->polygonsWgs84 : previewPolygonsWgs84_;
+    exportKmlFileName_ = configuration ?
+        configuration->kmlFileName : previewKmlFileName_;
     exportLongitudeValue_ = fmt::format("{:.6f}", configuration ?
                                         configuration->centerWgs84.lon : center.lon);
     exportLatitudeValue_ = fmt::format("{:.6f}", configuration ?
@@ -4486,12 +4740,42 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
 void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtime)
 {
     const std::optional<double> radius = parseFiniteDouble(exportRadiusValue_);
+    const bool kmlMode = exportRangeMode_ == ExportRangeMode::KmlPolygon;
+    runtime.setAttributeById(
+        "export-range-mode-center",
+        "aria-pressed",
+        kmlMode ? "false" : "true");
+    runtime.setAttributeById(
+        "export-range-mode-kml",
+        "aria-pressed",
+        kmlMode ? "true" : "false");
+    runtime.setVisibleById("export-lon-field", !kmlMode);
+    runtime.setVisibleById("export-lat-field", !kmlMode);
+    runtime.setVisibleById("export-radius-field", !kmlMode);
+    runtime.setVisibleById("export-kml-field", kmlMode);
     runtime.setTextById(
-        "export-config-summary",
-        fmt::format("中心 {:.5f}, {:.5f} · z{} · 半径 {} 米",
-                    parseFiniteDouble(exportLongitudeValue_).value_or(0.),
-                    parseFiniteDouble(exportLatitudeValue_).value_or(0.),
-                    exportZoomValue_, radius.value_or(0.)));
+        "export-kml-name",
+        exportKmlFileName_.empty() ? "未加载 KML" : exportKmlFileName_);
+    if (kmlMode)
+    {
+        runtime.setTextById(
+            "export-config-summary",
+            fmt::format(
+                "{} · {} 个多边形 · z{}",
+                exportKmlFileName_.empty() ? "KML 范围" :
+                    exportKmlFileName_,
+                exportPolygonsWgs84_.size(),
+                exportZoomValue_));
+    }
+    else
+    {
+        runtime.setTextById(
+            "export-config-summary",
+            fmt::format("中心 {:.5f}, {:.5f} · z{} · 半径 {} 米",
+                        parseFiniteDouble(exportLongitudeValue_).value_or(0.),
+                        parseFiniteDouble(exportLatitudeValue_).value_or(0.),
+                        exportZoomValue_, radius.value_or(0.)));
+    }
     RenderExportComposer(runtime);
     const bool canSubmit = std::ranges::any_of(
         exportContentGroups_,
@@ -4734,10 +5018,18 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
         error = "中心经纬度无效。";
         return std::nullopt;
     }
-    if (!radius || *radius <= 0.)
+    if (exportRangeMode_ == ExportRangeMode::CenterRadius &&
+        (!radius || *radius <= 0.))
     {
         error = "导出半径必须大于 0 米。";
         return std::nullopt;
+    }
+    if (exportRangeMode_ == ExportRangeMode::KmlPolygon)
+    {
+        if (!DownTool::ValidateWgs84Polygons(exportPolygonsWgs84_, error))
+        {
+            return std::nullopt;
+        }
     }
     if (!zoom || *zoom < 1 || *zoom > 30)
     {
@@ -4746,8 +5038,15 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
     }
 
     ExportConfiguration configuration;
+    configuration.rangeMode = exportRangeMode_;
     configuration.centerWgs84 = {*lon, *lat};
-    configuration.radiusMeters = *radius;
+    configuration.radiusMeters = radius.value_or(0.);
+    configuration.polygonsWgs84 =
+        exportRangeMode_ == ExportRangeMode::KmlPolygon ?
+            exportPolygonsWgs84_ : DownTool::Wgs84Polygons{};
+    configuration.kmlFileName =
+        exportRangeMode_ == ExportRangeMode::KmlPolygon ?
+            exportKmlFileName_ : std::string{};
     configuration.zoom = *zoom;
     configuration.outputRoot = std::filesystem::u8path(exportOutputValue_);
     std::string resolveError;

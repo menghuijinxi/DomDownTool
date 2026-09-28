@@ -11,6 +11,7 @@
 #include "AmapVectorDecoder.h"
 #include "AmapVectorTileGrid.h"
 #include "DataType.h"
+#include "GeographicPolygon.h"
 
 namespace DownTool
 {
@@ -32,6 +33,7 @@ namespace DownTool
     {
         LonLat centerWgs84;
         double radiusMeters = 0.;
+        Wgs84Polygons polygonsWgs84;
         uint32_t zoom = 14;
         std::string webApiKey = "d1f15ad3fdf0c704434eaf23c7c18698";
         // 高德 Web JSAPI 版本；可按服务端变更覆盖，默认值来自已验证的 Web 请求。

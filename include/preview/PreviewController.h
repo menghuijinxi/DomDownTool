@@ -17,6 +17,7 @@
 #include <imm.h>
 
 #include "TianDiTuMultidateDown.h"
+#include "KmlDownloadRange.h"
 #include "preview/AmapPlaceSearch.h"
 #include "preview/AmapWebViewSearch.h"
 #include "preview/Dx12FbxRenderer.h"
@@ -169,6 +170,15 @@ class PreviewController
 
     [[nodiscard]] std::optional<std::filesystem::path> SelectExportDirectory() const;
 
+    [[nodiscard]] std::optional<std::filesystem::path> SelectKmlFile() const;
+
+    bool LoadKmlRange(const std::filesystem::path& path, skui::Runtime& runtime);
+
+    void ApplyKmlRange(const DownTool::KmlDownloadRange& range,
+                       skui::Runtime& runtime);
+
+    void ClearKmlRange(skui::Runtime& runtime);
+
     [[nodiscard]] std::vector<ExportContentGroup> ResolveExportGroups(
         std::string& error) const;
 
@@ -256,6 +266,12 @@ class PreviewController
     Page page_ = Page::Preview;
     std::vector<ExportGisUiGroup> exportGisGroups_;
     std::string previewRadiusValue_ = "0";
+    ExportRangeMode previewRangeMode_ = ExportRangeMode::CenterRadius;
+    DownTool::Wgs84Polygons previewPolygonsWgs84_;
+    std::string previewKmlFileName_;
+    ExportRangeMode exportRangeMode_ = ExportRangeMode::CenterRadius;
+    DownTool::Wgs84Polygons exportPolygonsWgs84_;
+    std::string exportKmlFileName_;
     std::string exportLongitudeValue_;
     std::string exportLatitudeValue_;
     std::string exportRadiusValue_ = "0";
@@ -362,6 +378,7 @@ class PreviewController
     bool fbxKeyboardPanTimerActive_ = false;
     bool fbxFrameTimerActive_ = false;
     bool fbxInputMethodDisabled_ = false;
+    bool fileDropEnabled_ = false;
     HWND fbxInputMethodWindow_ = nullptr;
     HIMC fbxInputMethodContext_ = nullptr;
     bool mapUiRefreshPosted_ = false;

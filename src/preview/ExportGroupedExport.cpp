@@ -662,7 +662,16 @@ std::string GroupedExportError(const ExportConfiguration& configuration)
     {
         return "导出中心经纬度无效。";
     }
-    if (!(configuration.radiusMeters > 0.))
+    if (configuration.rangeMode == ExportRangeMode::KmlPolygon)
+    {
+        std::string polygonError;
+        if (!DownTool::ValidateWgs84Polygons(
+                configuration.polygonsWgs84, polygonError))
+        {
+            return polygonError;
+        }
+    }
+    else if (!(configuration.radiusMeters > 0.))
     {
         return "导出半径必须大于 0 米。";
     }
@@ -883,6 +892,8 @@ bool ExportGroupedRunner::Run(
         DownTool::CopernicusDemOptions elevationOptions;
         elevationOptions.centerWgs84 = queuedExport.configuration.centerWgs84;
         elevationOptions.radiusMeters = queuedExport.configuration.radiusMeters;
+        elevationOptions.polygonsWgs84 =
+            queuedExport.configuration.polygonsWgs84;
         elevationOptions.cancellationRequested = [&manager]
         {
             return manager.IsCancellationRequested();
@@ -1178,6 +1189,8 @@ bool ExportGroupedRunner::Run(
                 DownTool::AmapVectorPngDownloadOptions options;
                 options.vectorDownload.centerWgs84 = queuedExport.configuration.centerWgs84;
                 options.vectorDownload.radiusMeters = queuedExport.configuration.radiusMeters;
+                options.vectorDownload.polygonsWgs84 =
+                    queuedExport.configuration.polygonsWgs84;
                 options.vectorDownload.zoom = queuedExport.configuration.zoom;
                 options.vectorDownload.includeBaseLayers = true;
                 options.vectorDownload.includeLabels = GisCategories(component).contains(

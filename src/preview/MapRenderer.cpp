@@ -816,6 +816,12 @@ void DomDownToolPreview::MapRenderer::SetExportRadiusMeters(double radiusMeters)
     exportRadiusMeters_ = std::isfinite(radiusMeters) ? std::max(0., radiusMeters) : 0.;
 }
 
+void DomDownToolPreview::MapRenderer::SetExportPolygonsWgs84(
+    const DownTool::Wgs84Polygons& polygons)
+{
+    exportPolygonsWgs84_ = polygons;
+}
+
 std::vector<DomDownToolPreview::MapSourceSummary> DomDownToolPreview::MapRenderer::sources() const
 {
     std::vector<MapSourceSummary> result;
@@ -1068,6 +1074,68 @@ void DomDownToolPreview::MapRenderer::drawLocationMarker(SkCanvas& canvas, int w
 
 void DomDownToolPreview::MapRenderer::drawExportBounds(SkCanvas& canvas) const
 {
+    SkPaint fillPaint;
+    fillPaint.setAntiAlias(true);
+    fillPaint.setColor(SkColorSetARGB(28, 255, 204, 74));
+    fillPaint.setStyle(SkPaint::kFill_Style);
+
+    SkPaint strokePaint;
+    strokePaint.setAntiAlias(true);
+    strokePaint.setColor(SkColorSetARGB(235, 255, 204, 74));
+    strokePaint.setStyle(SkPaint::kStroke_Style);
+    strokePaint.setStrokeWidth(2.F);
+
+    const MapSource& source = currentSource();
+    if (!exportPolygonsWgs84_.empty())
+    {
+        for (const DownTool::Wgs84Ring& ring : exportPolygonsWgs84_)
+        {
+            if (ring.size() < 3)
+            {
+                continue;
+            }
+            SkPathBuilder builder;
+            bool hasPoint = false;
+            bool valid = true;
+            for (const DownTool::LonLat& coordinate : ring)
+            {
+                const std::optional<ViewportPoint> point =
+                    viewport_.screenPointForLonLat(
+                        coordinate,
+                        *source.projection,
+                        source.yDirection,
+                        kTileSize);
+                if (!point.has_value())
+                {
+                    valid = false;
+                    break;
+                }
+                if (!hasPoint)
+                {
+                    builder.moveTo(
+                        static_cast<float>(point->x),
+                        static_cast<float>(point->y));
+                    hasPoint = true;
+                }
+                else
+                {
+                    builder.lineTo(
+                        static_cast<float>(point->x),
+                        static_cast<float>(point->y));
+                }
+            }
+            if (!valid || !hasPoint)
+            {
+                continue;
+            }
+            builder.close();
+            const SkPath path = builder.detach();
+            canvas.drawPath(path, fillPaint);
+            canvas.drawPath(path, strokePaint);
+        }
+        return;
+    }
+
     const std::optional<ExportGeoBounds> bounds =
         calculateExportGeoBounds(viewport_.center(), exportRadiusMeters_);
     if (!bounds.has_value())
@@ -1075,7 +1143,6 @@ void DomDownToolPreview::MapRenderer::drawExportBounds(SkCanvas& canvas) const
         return;
     }
 
-    const MapSource& source = currentSource();
     const DownTool::LonLat corners[] = {
         {bounds->minimumLongitude, bounds->maximumLatitude},
         {bounds->maximumLongitude, bounds->maximumLatitude},
@@ -1102,16 +1169,7 @@ void DomDownToolPreview::MapRenderer::drawExportBounds(SkCanvas& canvas) const
     builder.close();
     const SkPath path = builder.detach();
 
-    SkPaint fillPaint;
-    fillPaint.setAntiAlias(true);
-    fillPaint.setColor(SkColorSetARGB(28, 255, 204, 74));
-    fillPaint.setStyle(SkPaint::kFill_Style);
     canvas.drawPath(path, fillPaint);
 
-    SkPaint strokePaint;
-    strokePaint.setAntiAlias(true);
-    strokePaint.setColor(SkColorSetARGB(235, 255, 204, 74));
-    strokePaint.setStyle(SkPaint::kStroke_Style);
-    strokePaint.setStrokeWidth(2.F);
     canvas.drawPath(path, strokePaint);
 }

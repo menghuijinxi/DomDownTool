@@ -354,6 +354,8 @@ add_domdown_test(AmapPlaceSearchTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapPlaceSearchTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/AmapPlaceSearch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SearchTrace.cpp)
+add_domdown_test(KmlDownloadRangeTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/KmlDownloadRangeTest.cpp)
 
 if(DOMDOWNTOOL_BUILD_PREVIEW)
   add_executable(TileDownloadQueueTest

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "DataType.h"
+#include "GeographicPolygon.h"
 
 namespace DownTool
 {
@@ -30,6 +31,11 @@ namespace DownTool
         static std::vector<AmapVectorTile> SelectTilesForWgs84Bounds(
             const LonLat& northWestWgs84,
             const LonLat& southEastWgs84,
+            uint32_t zoom);
+
+        // 返回所有与多边形相交的完整高德 GCJ-02 矢量瓦片。
+        static std::vector<AmapVectorTile> SelectTilesForWgs84Polygons(
+            const Wgs84Polygons& polygonsWgs84,
             uint32_t zoom);
 
         static AmapVectorTile LonLatToTile(const LonLat& gcj02LonLat, uint32_t zoom);

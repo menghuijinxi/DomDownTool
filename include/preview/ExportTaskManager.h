@@ -19,6 +19,7 @@
 
 #include "AmapVectorPngDownloader.h"
 #include "DataType.h"
+#include "GeographicPolygon.h"
 
 namespace DownTool
 {
@@ -42,6 +43,12 @@ enum class GisExportMode
     OverlayOnSatellite,
     MergeSelectedLayers,
     SeparateLayers
+};
+
+enum class ExportRangeMode
+{
+    CenterRadius,
+    KmlPolygon
 };
 
 struct SatelliteExportSource
@@ -134,8 +141,11 @@ struct ExportContentGroup
 
 struct ExportConfiguration
 {
+    ExportRangeMode rangeMode = ExportRangeMode::CenterRadius;
     DownTool::LonLat centerWgs84;
     double radiusMeters = 0.;
+    DownTool::Wgs84Polygons polygonsWgs84;
+    std::string kmlFileName;
     uint32_t zoom = 15;
     std::vector<SatelliteExportSource> satelliteSources;
     std::set<DownTool::AmapVectorRenderCategory> gisCategories;

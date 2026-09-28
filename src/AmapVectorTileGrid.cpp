@@ -260,6 +260,62 @@ std::vector<DownTool::AmapVectorTile> DownTool::AmapVectorTileGrid::SelectTilesF
     return tiles;
 }
 
+std::vector<DownTool::AmapVectorTile>
+DownTool::AmapVectorTileGrid::SelectTilesForWgs84Polygons(
+    const Wgs84Polygons& polygonsWgs84,
+    uint32_t zoom)
+{
+    std::string validationError;
+    if (!ValidateWgs84Polygons(polygonsWgs84, validationError))
+    {
+        throw std::invalid_argument(validationError);
+    }
+    const std::optional<GeographicBounds> polygonBounds =
+        CalculateGeographicBounds(polygonsWgs84);
+    if (!polygonBounds.has_value())
+    {
+        throw std::invalid_argument("无法计算高德矢量多边形范围。");
+    }
+
+    const std::vector<AmapVectorTile> candidates = SelectTilesForWgs84Bounds(
+        {polygonBounds->west, polygonBounds->north},
+        {polygonBounds->east, polygonBounds->south},
+        zoom);
+    std::vector<AmapVectorTile> selected;
+    selected.reserve(candidates.size());
+    for (const AmapVectorTile& tile : candidates)
+    {
+        const LonLat northWestGcj02 = TileNorthWestToLonLat(tile);
+        const LonLat southEastGcj02 = TileSouthEastToLonLat(tile);
+        const std::array<LonLat, 4> cornersWgs84 = {{
+            GCJ02GoogleDownBase::GCJ02ToWGS84(northWestGcj02),
+            GCJ02GoogleDownBase::GCJ02ToWGS84(
+                {southEastGcj02.lon, northWestGcj02.lat}),
+            GCJ02GoogleDownBase::GCJ02ToWGS84(southEastGcj02),
+            GCJ02GoogleDownBase::GCJ02ToWGS84(
+                {northWestGcj02.lon, southEastGcj02.lat})
+        }};
+        GeographicBounds tileBounds{
+            cornersWgs84.front().lon,
+            cornersWgs84.front().lon,
+            cornersWgs84.front().lat,
+            cornersWgs84.front().lat
+        };
+        for (const LonLat& corner : cornersWgs84)
+        {
+            tileBounds.west = std::min(tileBounds.west, corner.lon);
+            tileBounds.east = std::max(tileBounds.east, corner.lon);
+            tileBounds.south = std::min(tileBounds.south, corner.lat);
+            tileBounds.north = std::max(tileBounds.north, corner.lat);
+        }
+        if (GeographicPolygonsIntersectBounds(polygonsWgs84, tileBounds))
+        {
+            selected.push_back(tile);
+        }
+    }
+    return selected;
+}
+
 DownTool::AmapVectorTile DownTool::AmapVectorTileGrid::LonLatToTile(
     const LonLat& gcj02LonLat,
     uint32_t zoom)

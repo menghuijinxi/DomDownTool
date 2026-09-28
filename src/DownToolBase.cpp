@@ -2811,9 +2811,15 @@ void DownTool::DownToolBase::BuildTargetTiles(std::vector<Tile>& targetTiles)
 				break;
 			}
 
+			const Tile targetTile(xBase, yBase, Zoom);
+			if (!TargetTileIntersectsDownloadRange(targetTile))
+			{
+				continue;
+			}
+
 			if (IsTileOffset())
 			{
-				const TileRange offsetTiles = GetOffsetTiles(Tile(xBase, yBase, Zoom));
+				const TileRange offsetTiles = GetOffsetTiles(targetTile);
 				for (int32_t x = offsetTiles.MinTile.X; x <= offsetTiles.MaxTile.X; x++)
 				{
 					if (IsStopRequested())
@@ -2832,7 +2838,7 @@ void DownTool::DownToolBase::BuildTargetTiles(std::vector<Tile>& targetTiles)
 			}
 			else
 			{
-				addTile(Tile(xBase, yBase, Zoom));
+				addTile(targetTile);
 			}
 		}
 	}
@@ -2861,9 +2867,42 @@ void DownTool::DownToolBase::BuildRequestedTiles(std::vector<Tile>& targetTiles)
 			{
 				break;
 			}
-			targetTiles.emplace_back(x, y, Zoom);
+			const Tile tile(x, y, Zoom);
+			if (TargetTileIntersectsDownloadRange(tile))
+			{
+				targetTiles.push_back(tile);
+			}
 		}
 	}
+}
+
+bool DownTool::DownToolBase::TargetTileIntersectsDownloadRange(
+	const Tile& tile) const
+{
+	if (DownloadPolygonsWgs84.empty())
+	{
+		return true;
+	}
+
+	LonLat northWest;
+	LonLat southEast;
+	if (!TryGetLonLatForTilePixel(tile, 0., 0., northWest) ||
+		!TryGetLonLatForTilePixel(
+			tile,
+			static_cast<double>(TileSize),
+			static_cast<double>(TileSize),
+			southEast))
+	{
+		// 无法换算时保守保留，避免因为图商投影异常漏掉边缘瓦片。
+		return true;
+	}
+	const GeographicBounds bounds{
+		std::min(northWest.lon, southEast.lon),
+		std::max(northWest.lon, southEast.lon),
+		std::min(northWest.lat, southEast.lat),
+		std::max(northWest.lat, southEast.lat)
+	};
+	return GeographicPolygonsIntersectBounds(DownloadPolygonsWgs84, bounds);
 }
 
 void DownTool::DownToolBase::BuildRequestedTilesAtZoom(
@@ -2903,7 +2942,11 @@ void DownTool::DownToolBase::BuildRequestedTilesAtZoom(
 			{
 				break;
 			}
-			targetTiles.emplace_back(x, y, zoom);
+			const Tile tile(x, y, zoom);
+			if (TargetTileIntersectsDownloadRange(tile))
+			{
+				targetTiles.push_back(tile);
+			}
 		}
 	}
 }
@@ -4604,6 +4647,18 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 				continue;
 			}
 
+			const GeographicBounds textureGeographicBounds{
+				std::min(northWestLonLat.lon, southEastLonLat.lon),
+				std::max(northWestLonLat.lon, southEastLonLat.lon),
+				std::min(northWestLonLat.lat, southEastLonLat.lat),
+				std::max(northWestLonLat.lat, southEastLonLat.lat)
+			};
+			if (!GeographicPolygonsIntersectBounds(
+					DownloadPolygonsWgs84, textureGeographicBounds))
+			{
+				continue;
+			}
+
 			const double centerMercatorX =
 				(LongitudeToWebMercatorX(northWestLonLat.lon) +
 					LongitudeToWebMercatorX(southEastLonLat.lon)) /
@@ -4700,8 +4755,19 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 
 	auto readTileImage = [&](const Tile& tile)
 	{
-		return IsStopRequested() ? cv::Mat{} :
-			ReadBgraTile(GetPostProcessTileFilePath(tile), TileSize);
+		if (IsStopRequested())
+		{
+			return cv::Mat{};
+		}
+		if (!TargetTileIntersectsDownloadRange(tile))
+		{
+			return cv::Mat(
+				static_cast<int>(TileSize),
+				static_cast<int>(TileSize),
+				CV_8UC4,
+				cv::Scalar(0, 0, 0, 0));
+		}
+		return ReadBgraTile(GetPostProcessTileFilePath(tile), TileSize);
 	};
 
 	std::atomic_uint32_t processedCount = 0;
@@ -5008,6 +5074,18 @@ bool DownTool::DownToolBase::IsTileDownloadUnavailable(
 
 void DownTool::DownToolBase::CalculateDownRange()
 {
+	if (!DownloadPolygonsWgs84.empty())
+	{
+		const std::optional<GeographicBounds> bounds =
+			CalculateGeographicBounds(DownloadPolygonsWgs84);
+		if (bounds.has_value())
+		{
+			MinLonLat = {bounds->west, bounds->south};
+			MaxLonLat = {bounds->east, bounds->north};
+			return;
+		}
+	}
+
 	GeographicLib::Math::real dummy;
 	auto& geo = GeographicLib::Geodesic::WGS84();
 	geo.Direct(GetCenterLonLat().lat, GetCenterLonLat().lon, 0., GetRadius(), MaxLonLat.lat, dummy);

@@ -1387,6 +1387,42 @@ bool runTest()
     {
         return false;
     }
+
+    if (!postprocess_test::Require(
+            runtime.setAttributeById(
+                "export-range-mode-center", "aria-pressed", "false") &&
+                runtime.setAttributeById(
+                    "export-range-mode-kml", "aria-pressed", "true") &&
+                runtime.setVisibleById("export-lon-field", false) &&
+                runtime.setVisibleById("export-lat-field", false) &&
+                runtime.setVisibleById("export-radius-field", false) &&
+                runtime.setVisibleById("export-kml-field", true) &&
+                runtime.setTextById("export-kml-name", "15.kml") &&
+                runtime.setTextById(
+                    "export-config-summary", "15.kml · 1 个多边形 · z15"),
+            "无法切换到 KML 导出范围界面") ||
+        !writeRuntimeScreenshot(
+            runtime,
+            sourceRoot / "tmp" / "preview-export-config-kml-ui.png",
+            kWidth,
+            kHeight) ||
+        !postprocess_test::Require(
+            runtime.setAttributeById(
+                "export-range-mode-center", "aria-pressed", "true") &&
+                runtime.setAttributeById(
+                    "export-range-mode-kml", "aria-pressed", "false") &&
+                runtime.setVisibleById("export-lon-field", true) &&
+                runtime.setVisibleById("export-lat-field", true) &&
+                runtime.setVisibleById("export-radius-field", true) &&
+                runtime.setVisibleById("export-kml-field", false) &&
+                runtime.setTextById(
+                    "export-config-summary",
+                    "中心 116.39739, 39.90872 · z15 · 半径 2000 米"),
+            "无法恢复中心点加半径导出范围界面"))
+    {
+        return false;
+    }
+
     const std::optional<skui::ScrollState> standardPanelScroll =
         runtime.scrollStateById("export-panel-body");
     const std::optional<skui::ScrollState> standardGroupListScroll =

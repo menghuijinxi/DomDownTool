@@ -52,6 +52,7 @@ using DomDownToolPreview::SatelliteExportSource;
 using DomDownToolPreview::ExportComponent;
 using DomDownToolPreview::ExportComponentKind;
 using DomDownToolPreview::ExportContentGroup;
+using DomDownToolPreview::ExportRangeMode;
 using DomDownToolPreview::ExportSourceEntry;
 using DomDownToolPreview::ExportSourceKind;
 
@@ -287,10 +288,25 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
             {"alpha", color.alpha}};
     }
 
+    Json polygonsWgs84 = Json::array();
+    for (const DownTool::Wgs84Ring& ring : configuration.polygonsWgs84)
+    {
+        Json ringJson = Json::array();
+        for (const DownTool::LonLat& coordinate : ring)
+        {
+            ringJson.push_back({coordinate.lon, coordinate.lat});
+        }
+        polygonsWgs84.push_back(std::move(ringJson));
+    }
+
     Json json = {
+        {"rangeMode", configuration.rangeMode == ExportRangeMode::KmlPolygon ?
+            "kml-polygon" : "center-radius"},
         {"centerWgs84", {{"lon", configuration.centerWgs84.lon},
                           {"lat", configuration.centerWgs84.lat}}},
         {"radiusMeters", configuration.radiusMeters},
+        {"polygonsWgs84", std::move(polygonsWgs84)},
+        {"kmlFileName", configuration.kmlFileName},
         {"zoom", configuration.zoom},
         {"satelliteSources", std::move(satelliteSources)},
         {"gisCategories", std::move(gisCategories)},
@@ -342,9 +358,52 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
     }
 
     ExportConfiguration configuration;
+    configuration.rangeMode =
+        GetJsonString(value, "rangeMode") == "kml-polygon" ?
+            ExportRangeMode::KmlPolygon : ExportRangeMode::CenterRadius;
     configuration.centerWgs84.lon = center->at("lon").get<double>();
     configuration.centerWgs84.lat = center->at("lat").get<double>();
     configuration.radiusMeters = GetJsonDouble(value, "radiusMeters");
+    configuration.kmlFileName = GetJsonString(value, "kmlFileName");
+    const auto polygons = value.find("polygonsWgs84");
+    if (polygons != value.end())
+    {
+        if (!polygons->is_array())
+        {
+            return std::nullopt;
+        }
+        for (const Json& ringJson : *polygons)
+        {
+            if (!ringJson.is_array())
+            {
+                return std::nullopt;
+            }
+            DownTool::Wgs84Ring ring;
+            for (const Json& coordinateJson : ringJson)
+            {
+                if (!coordinateJson.is_array() || coordinateJson.size() < 2 ||
+                    !coordinateJson[0].is_number() ||
+                    !coordinateJson[1].is_number())
+                {
+                    return std::nullopt;
+                }
+                ring.push_back({
+                    coordinateJson[0].get<double>(),
+                    coordinateJson[1].get<double>()
+                });
+            }
+            configuration.polygonsWgs84.push_back(std::move(ring));
+        }
+    }
+    if (configuration.rangeMode == ExportRangeMode::KmlPolygon)
+    {
+        std::string polygonError;
+        if (!DownTool::ValidateWgs84Polygons(
+                configuration.polygonsWgs84, polygonError))
+        {
+            return std::nullopt;
+        }
+    }
     configuration.zoom = static_cast<uint32_t>(
         std::max(0., GetJsonDouble(value, "zoom")));
     configuration.outputRoot = std::filesystem::u8path(
@@ -1165,7 +1224,21 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
            << "中心坐标 (WGS84): " << configuration.centerWgs84.lon << ", "
            << configuration.centerWgs84.lat << "\n"
            << std::setprecision(0)
-           << "半径 (米): " << configuration.radiusMeters << "\n"
+           << "范围模式: "
+           << (configuration.rangeMode == ExportRangeMode::KmlPolygon ?
+               "KML 多边形" : "中心点 + 半径") << "\n";
+    if (configuration.rangeMode == ExportRangeMode::KmlPolygon)
+    {
+        output << "KML 文件: "
+               << (configuration.kmlFileName.empty() ?
+                   "未记录" : configuration.kmlFileName) << "\n"
+               << "多边形数量: " << configuration.polygonsWgs84.size() << "\n";
+    }
+    else
+    {
+        output << "半径 (米): " << configuration.radiusMeters << "\n";
+    }
+    output
            << "层级: " << configuration.zoom << "\n"
            << "卫星图来源: " << FormatSourceNames(configuration) << "\n"
            << "用户指定输出根目录: "
@@ -1425,6 +1498,11 @@ bool ExportSatelliteRoofBuildingFbxToRoot(
 
 std::string BuildTaskTitle(const ExportConfiguration& configuration)
 {
+    const std::string rangeText =
+        configuration.rangeMode == ExportRangeMode::KmlPolygon ?
+            (configuration.kmlFileName.empty() ?
+                "KML 范围" : "KML " + configuration.kmlFileName) :
+            fmt::format("{:.0f} 米", configuration.radiusMeters);
     if (!configuration.groups.empty())
     {
         std::string contents;
@@ -1441,7 +1519,7 @@ std::string BuildTaskTitle(const ExportConfiguration& configuration)
             contents += group.name.empty() ? "未命名" : group.name;
         }
         return fmt::format(
-            "z{} {:.0f} 米 {}", configuration.zoom, configuration.radiusMeters,
+            "z{} {} {}", configuration.zoom, rangeText,
             contents.empty() ? "未选择内容组" : contents);
     }
     std::string contents = FormatSourceNames(configuration);
@@ -1453,8 +1531,8 @@ std::string BuildTaskTitle(const ExportConfiguration& configuration)
         }
         contents += "高德 GIS";
     }
-    return fmt::format("z{} {:.0f} 米 {}", configuration.zoom,
-                       configuration.radiusMeters, contents);
+    return fmt::format(
+        "z{} {} {}", configuration.zoom, rangeText, contents);
 }
 
 std::string BuildTaskDetail(const ExportConfiguration& configuration)
@@ -1973,6 +2051,7 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
         DownTool::CopernicusDemOptions elevationOptions;
         elevationOptions.centerWgs84 = configuration.centerWgs84;
         elevationOptions.radiusMeters = configuration.radiusMeters;
+        elevationOptions.polygonsWgs84 = configuration.polygonsWgs84;
         elevationOptions.cancellationRequested =
             [this] { return IsCancellationRequested(); };
         elevationOptions.progressCallback =
@@ -2120,6 +2199,7 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteDownloaderToRoot(
 
     downloader->SetCenterLonLat(configuration.centerWgs84);
     downloader->SetRadius(configuration.radiusMeters);
+    downloader->SetDownloadPolygonsWgs84(configuration.polygonsWgs84);
     downloader->SetZoom(configuration.zoom);
     const uint32_t tileSize = options.tileSizeOverride.value_or(
         configuration.executionTileSize);
@@ -2424,6 +2504,7 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
     DownTool::AmapVectorPngDownloadOptions options;
     options.vectorDownload.centerWgs84 = configuration.centerWgs84;
     options.vectorDownload.radiusMeters = configuration.radiusMeters;
+    options.vectorDownload.polygonsWgs84 = configuration.polygonsWgs84;
     options.vectorDownload.zoom = configuration.zoom;
     options.vectorDownload.includeBaseLayers = true;
     options.vectorDownload.includeLabels =
@@ -2694,6 +2775,7 @@ bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
     DownTool::AmapVectorDownloadOptions options;
     options.centerWgs84 = configuration.centerWgs84;
     options.radiusMeters = configuration.radiusMeters;
+    options.polygonsWgs84 = configuration.polygonsWgs84;
     options.zoom = configuration.zoom;
     options.includeBaseLayers = true;
     options.includeLabels = false;
@@ -2805,6 +2887,7 @@ bool DomDownToolPreview::ExportTaskManager::RunGeoJsonExport(
     DownTool::AmapVectorDownloadOptions options;
     options.centerWgs84 = configuration.centerWgs84;
     options.radiusMeters = configuration.radiusMeters;
+    options.polygonsWgs84 = configuration.polygonsWgs84;
     options.zoom = configuration.zoom;
     options.includeBaseLayers = configuration.includeBaseLayersOverride.value_or(true);
     options.includeLabels = configuration.includeLabelsOverride.value_or(

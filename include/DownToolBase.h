@@ -12,6 +12,7 @@
 #include <fmt/base.h>
 #include <GeographicLib/Geodesic.hpp>
 #include "DataType.h"
+#include "GeographicPolygon.h"
 #include "curl/curl.h"
 
 namespace cv
@@ -97,6 +98,10 @@ namespace DownTool
 
 		//计算得到的左上角和右下角经纬度
 		LonLat MinLonLat, MaxLonLat;
+
+		//非空时按与多边形相交的完整 WGS84 目标瓦片下载。
+		Wgs84Polygons DownloadPolygonsWgs84;
+
 		//计算得到的左上角和右下角瓦片坐标
 		Tile MinTile, MaxTile;
 
@@ -191,6 +196,8 @@ namespace DownTool
 		void BuildTargetTiles(std::vector<Tile>& targetTiles);
 
 		void BuildRequestedTiles(std::vector<Tile>& targetTiles) const;
+
+		[[nodiscard]] bool TargetTileIntersectsDownloadRange(const Tile& tile) const;
 
 		virtual std::filesystem::path GetTileFilePath(const Tile& tile) const;
 
@@ -398,6 +405,16 @@ namespace DownTool
 			uint32_t& rowCount) const;
 
         GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Proxy, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxTextureFormat, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTerrainHeightEnabled, FbxElevationReferenceMeters, FbxTerrainSampleRateMeters, FbxElevationSampler, FbxTextureDistanceOffsets, TileSize, ProgressCallback)
+
+		const Wgs84Polygons& GetDownloadPolygonsWgs84() const
+		{
+			return DownloadPolygonsWgs84;
+		}
+
+		void SetDownloadPolygonsWgs84(const Wgs84Polygons& polygons)
+		{
+			DownloadPolygonsWgs84 = polygons;
+		}
 
 		const DownToolCancellationCallback& GetCancellationRequestedCallback()
 		{

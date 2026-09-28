@@ -274,8 +274,10 @@ DownTool::CopernicusDemBounds CalculateBounds(const DownTool::LonLat& center,
         std::max(southLatitude, northLatitude)};
 }
 
-std::vector<DemTile> BuildTiles(const DownTool::CopernicusDemBounds& bounds,
-                                const std::filesystem::path& cachePath)
+std::vector<DemTile> BuildTiles(
+    const DownTool::CopernicusDemBounds& bounds,
+    const DownTool::Wgs84Polygons& polygons,
+    const std::filesystem::path& cachePath)
 {
     const int32_t minimumLongitude = static_cast<int32_t>(std::floor(bounds.west));
     const int32_t maximumLongitude = static_cast<int32_t>(std::floor(
@@ -290,6 +292,17 @@ std::vector<DemTile> BuildTiles(const DownTool::CopernicusDemBounds& bounds,
         for (int32_t longitude = minimumLongitude; longitude <= maximumLongitude;
              ++longitude)
         {
+            const DownTool::GeographicBounds tileBounds{
+                static_cast<double>(longitude),
+                static_cast<double>(longitude + 1),
+                static_cast<double>(latitude),
+                static_cast<double>(latitude + 1)
+            };
+            if (!DownTool::GeographicPolygonsIntersectBounds(
+                    polygons, tileBounds))
+            {
+                continue;
+            }
             DemTile tile;
             tile.westDegrees = longitude;
             tile.southDegrees = latitude;
@@ -451,16 +464,47 @@ std::shared_ptr<DownTool::CopernicusDemData> DownTool::CopernicusDemData::Prepar
     if (!std::isfinite(options.centerWgs84.lon) ||
         !std::isfinite(options.centerWgs84.lat) ||
         options.centerWgs84.lon < -180. || options.centerWgs84.lon > 180. ||
-        options.centerWgs84.lat < -90. || options.centerWgs84.lat > 90. ||
-        !std::isfinite(options.radiusMeters) || options.radiusMeters <= 0.)
+        options.centerWgs84.lat < -90. || options.centerWgs84.lat > 90.)
     {
         error = "Copernicus DEM 下载范围无效。";
         return nullptr;
     }
+    if (options.polygonsWgs84.empty())
+    {
+        if (!std::isfinite(options.radiusMeters) || options.radiusMeters <= 0.)
+        {
+            error = "Copernicus DEM 下载范围无效。";
+            return nullptr;
+        }
+    }
+    else if (!ValidateWgs84Polygons(options.polygonsWgs84, error))
+    {
+        return nullptr;
+    }
 
     auto impl = std::make_unique<Impl>();
-    impl->bounds = CalculateBounds(options.centerWgs84, options.radiusMeters);
-    impl->tiles = BuildTiles(impl->bounds, options.cachePath);
+    if (options.polygonsWgs84.empty())
+    {
+        impl->bounds = CalculateBounds(options.centerWgs84, options.radiusMeters);
+    }
+    else
+    {
+        const std::optional<GeographicBounds> polygonBounds =
+            CalculateGeographicBounds(options.polygonsWgs84);
+        if (!polygonBounds.has_value())
+        {
+            error = "无法计算 Copernicus DEM 多边形范围。";
+            return nullptr;
+        }
+        impl->bounds = {
+            polygonBounds->west,
+            polygonBounds->east,
+            polygonBounds->south,
+            polygonBounds->north
+        };
+    }
+    impl->tiles = BuildTiles(
+        impl->bounds, options.polygonsWgs84, options.cachePath);
     if (impl->tiles.empty())
     {
         error = "Copernicus DEM 下载范围没有对应分幅。";

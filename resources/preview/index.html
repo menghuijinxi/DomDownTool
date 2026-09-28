@@ -1006,6 +1006,65 @@
             border-color: #2EA694;
         }
 
+        .preview-range-control {
+            display: flex;
+            flex: 0 0 auto;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .preview-kml-control {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            max-width: 150px;
+            height: 34px;
+            padding: 0 4px 0 9px;
+            border: 1px solid #39766d;
+            border-radius: 4px;
+            background: #202b29;
+            color: #b8ded7;
+        }
+
+        #preview-kml-name {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        #preview-load-kml,
+        #preview-clear-kml {
+            display: flex;
+            flex: 0 0 34px;
+            align-items: center;
+            justify-content: center;
+            width: 34px;
+            min-width: 34px;
+            height: 34px;
+            padding: 0;
+            border: 1px solid #454b48;
+            border-radius: 4px;
+            background: #252c29;
+            color: #cbd4d0;
+        }
+
+        #preview-clear-kml {
+            flex-basis: 26px;
+            width: 26px;
+            min-width: 26px;
+            height: 26px;
+            border-color: transparent;
+            background: transparent;
+        }
+
+        #preview-load-kml:hover,
+        #preview-clear-kml:hover {
+            border-color: #5d756f;
+            background: #303835;
+        }
+
         .primary-command,
         .secondary-command,
         .danger-command {
@@ -1330,12 +1389,55 @@
         .export-range-bar {
             display: grid;
             grid-template-columns:
-                minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.95fr)
-                minmax(0, 0.85fr) minmax(0, 1.2fr);
-            gap: 26px;
+                minmax(190px, 1.05fr) minmax(0, 0.9fr) minmax(0, 0.9fr)
+                minmax(0, 0.8fr) minmax(90px, 0.55fr) minmax(230px, 1.25fr);
+            gap: 18px;
             padding: 20px 8px;
             border-bottom: 1px solid #343836;
             background: #1e2121;
+        }
+
+        .export-range-mode-field {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-width: 0;
+            color: #aeb7b2;
+            font-size: 16px;
+        }
+
+        .export-range-segmented {
+            display: flex;
+            align-items: stretch;
+            height: 52px;
+            padding: 3px;
+            border: 1px solid #41484b;
+            border-radius: 6px;
+            background: #191d1d;
+        }
+
+        .export-range-segmented button {
+            flex: 1 1 0;
+            min-width: 0;
+            height: 44px;
+            padding: 0 10px;
+            overflow: hidden;
+            border: 0;
+            border-radius: 4px;
+            background: transparent;
+            color: #98a49f;
+            font: 15px "Microsoft YaHei", "Segoe UI", sans-serif;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .export-range-segmented button + button {
+            margin-left: 3px;
+        }
+
+        .export-range-segmented button[aria-pressed="true"] {
+            background: #246f66;
+            color: #ffffff;
         }
 
         .export-range-field {
@@ -1378,6 +1480,50 @@
 
         .export-composer .output-dir-row {
             gap: 10px;
+        }
+
+        #export-kml-field {
+            grid-column: span 3;
+        }
+
+        .export-kml-row {
+            display: flex;
+            min-width: 0;
+            height: 52px;
+            border: 1px solid #41484b;
+            border-radius: 6px;
+            background: #1f2224;
+        }
+
+        #export-kml-name {
+            flex: 1;
+            min-width: 0;
+            padding: 0 14px;
+            overflow: hidden;
+            color: #edf1ef;
+            font-size: 16px;
+            line-height: 50px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        #export-browse-kml {
+            display: flex;
+            flex: 0 0 52px;
+            align-items: center;
+            justify-content: center;
+            width: 52px;
+            min-width: 52px;
+            height: 50px;
+            padding: 0;
+            border: 0;
+            border-left: 1px solid #41484b;
+            background: transparent;
+            color: #c9cfcc;
+        }
+
+        #export-browse-kml:hover {
+            background: #303835;
         }
 
         .export-workspace {
@@ -2437,6 +2583,15 @@
                 max-width: calc(100% - 24px);
             }
 
+            .export-range-bar {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .export-range-mode-field,
+            #export-kml-field {
+                grid-column: span 2;
+            }
+
             .page-header-spacer {
                 display: none;
             }
@@ -2543,12 +2698,39 @@
                 <span id="zoom-value">Z 15.00</span>
                 <button id="zoom-in" type="button" data-action="zoom-in" title="放大">+</button>
             </div>
-            <label class="radius-control">
-                <span>半径</span>
-                <input id="export-radius" type="number" min="0" step="100" value="0"
-                       aria-label="导出半径（米）">
-                <span>米</span>
-            </label>
+            <div class="preview-range-control">
+                <label id="preview-radius-control" class="radius-control">
+                    <span>半径</span>
+                    <input id="export-radius" type="number" min="0" step="100" value="0"
+                           aria-label="导出半径（米）">
+                    <span>米</span>
+                </label>
+                <div id="preview-kml-control" class="preview-kml-control" style="display: none">
+                    <span id="preview-kml-name">KML 范围</span>
+                    <button id="preview-clear-kml" type="button"
+                            data-action="clear-preview-kml"
+                            title="清除 KML 范围" aria-label="清除 KML 范围">
+                        <svg viewBox="0 0 24 24" width="16" height="16"
+                             pointer-events="none" aria-hidden="true">
+                            <path d="M7 7l10 10M17 7L7 17"
+                                  fill="none" stroke="currentColor" stroke-width="1.8"
+                                  stroke-linecap="round"/>
+                        </svg>
+                    </button>
+                </div>
+                <button id="preview-load-kml" type="button" data-action="load-preview-kml"
+                        title="导入 KML 范围" aria-label="导入 KML 范围">
+                    <svg viewBox="0 0 24 24" width="18" height="18"
+                         pointer-events="none" aria-hidden="true">
+                        <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
+                              fill="none" stroke="currentColor" stroke-width="1.6"
+                              stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M12 11v5M9.5 13.5L12 11l2.5 2.5"
+                              fill="none" stroke="currentColor" stroke-width="1.6"
+                              stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+            </div>
             <button id="open-export-page" class="primary-command" type="button"
                     data-action="open-export-config">导出</button>
             <button id="open-task-page" class="secondary-command" type="button"
@@ -2795,18 +2977,45 @@
         </header>
         <div class="page-content export-composer">
             <div class="export-range-bar">
-                <label class="export-range-field">
+                <div class="export-range-mode-field">
+                    <span>下载范围</span>
+                    <div class="export-range-segmented">
+                        <button id="export-range-mode-center" type="button"
+                                data-action="use-center-radius-range"
+                                aria-pressed="true">中心 + 半径</button>
+                        <button id="export-range-mode-kml" type="button"
+                                data-action="use-kml-range"
+                                aria-pressed="false">KML 范围</button>
+                    </div>
+                </div>
+                <label id="export-lon-field" class="export-range-field">
                     <span>中心经度</span>
                     <input id="export-lon" type="number" step="0.000001" value="116.927207">
                 </label>
-                <label class="export-range-field">
+                <label id="export-lat-field" class="export-range-field">
                     <span>中心纬度</span>
                     <input id="export-lat" type="number" step="0.000001" value="36.705224">
                 </label>
-                <label class="export-range-field">
+                <label id="export-radius-field" class="export-range-field">
                     <span>半径（米）</span>
                     <input id="export-config-radius" type="number" min="0" step="100" value="0">
                 </label>
+                <div id="export-kml-field" class="export-range-field" style="display: none">
+                    <span>KML 文件</span>
+                    <div class="export-kml-row">
+                        <span id="export-kml-name">未加载 KML</span>
+                        <button id="export-browse-kml" type="button"
+                                data-action="browse-export-kml"
+                                title="选择 KML 文件" aria-label="选择 KML 文件">
+                            <svg viewBox="0 0 24 24" width="18" height="18"
+                                 pointer-events="none" aria-hidden="true">
+                                <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
+                                      fill="none" stroke="currentColor" stroke-width="1.6"
+                                      stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
                 <label class="export-range-field">
                     <span>层级</span>
                     <input id="export-zoom" type="number" min="1" max="30" step="1" value="14">

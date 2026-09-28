@@ -39,6 +39,38 @@ const DomDownToolPreview::ExportTaskRecord* findRecord(
     return record == records.end() ? nullptr : &*record;
 }
 
+bool equalPolygons(
+    const DownTool::Wgs84Polygons& left,
+    const DownTool::Wgs84Polygons& right)
+{
+    if (left.size() != right.size())
+    {
+        return false;
+    }
+    for (size_t ringIndex = 0; ringIndex < left.size(); ++ringIndex)
+    {
+        if (left[ringIndex].size() != right[ringIndex].size())
+        {
+            return false;
+        }
+        for (size_t coordinateIndex = 0;
+             coordinateIndex < left[ringIndex].size();
+             ++coordinateIndex)
+        {
+            const DownTool::LonLat& leftCoordinate =
+                left[ringIndex][coordinateIndex];
+            const DownTool::LonLat& rightCoordinate =
+                right[ringIndex][coordinateIndex];
+            if (leftCoordinate.lon != rightCoordinate.lon ||
+                leftCoordinate.lat != rightCoordinate.lat)
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool waitForFinished(DomDownToolPreview::ExportTaskManager& manager,
                      const std::string& taskId)
 {
@@ -1113,8 +1145,18 @@ bool runTest()
             {
                 return std::make_unique<ProgressBurstDownloader>();
             });
-        const DomDownToolPreview::ExportConfiguration configuration =
+        DomDownToolPreview::ExportConfiguration configuration =
             makeCancelableConfiguration(testRoot / "progress-burst-output");
+        configuration.rangeMode =
+            DomDownToolPreview::ExportRangeMode::KmlPolygon;
+        configuration.centerWgs84 = {116.15, 39.95};
+        configuration.polygonsWgs84 = {{
+            {116.1, 39.9},
+            {116.2, 39.9},
+            {116.2, 40.0},
+            {116.1, 40.0}
+        }};
+        configuration.kmlFileName = "persisted-range.kml";
         const std::string taskId = manager.Enqueue(configuration);
         const bool finished = waitForFinished(manager, taskId);
         const std::vector<DomDownToolPreview::ExportTaskRecord> records =
@@ -1140,6 +1182,13 @@ bool runTest()
                     record->configuration.has_value() &&
                     record->configuration->zoom == configuration.zoom &&
                     record->configuration->exportTiles == configuration.exportTiles &&
+                    record->configuration->rangeMode ==
+                        DomDownToolPreview::ExportRangeMode::KmlPolygon &&
+                    equalPolygons(
+                        record->configuration->polygonsWgs84,
+                        configuration.polygonsWgs84) &&
+                    record->configuration->kmlFileName ==
+                        configuration.kmlFileName &&
                     !record->configuration->exportBuildingFbx &&
                     record->configuration->fbxTextureFormat == "jpg" &&
                     record->configuration->fbxTerrainSampleRateMeters == 60. &&
@@ -1159,6 +1208,11 @@ bool runTest()
             records.size() == 1 ? records.front().configuration : std::nullopt;
         if (!postprocess_test::Require(
                 configuration.has_value() && configuration->radiusMeters == 1000. &&
+                    configuration->rangeMode ==
+                        DomDownToolPreview::ExportRangeMode::KmlPolygon &&
+                    configuration->polygonsWgs84.size() == 1 &&
+                    configuration->polygonsWgs84.front().size() == 4 &&
+                    configuration->kmlFileName == "persisted-range.kml" &&
                     configuration->zoom == 15 && configuration->exportTiles &&
                     !configuration->exportBuildingFbx &&
                     configuration->fbxTextureFormat == "jpg" &&

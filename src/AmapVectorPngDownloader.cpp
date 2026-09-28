@@ -47,13 +47,19 @@ namespace
         {
             throw std::invalid_argument("高德矢量瓦片坐标必须是有效的经纬度。");
         }
-        if (!std::isfinite(options.radiusMeters) || options.radiusMeters < 0.)
+        if (options.polygonsWgs84.empty() &&
+            (!std::isfinite(options.radiusMeters) || options.radiusMeters < 0.))
         {
             throw std::invalid_argument("高德矢量下载半径必须是非负有限米数。");
         }
 
         const uint32_t dataZoom =
             DownTool::AmapVectorTileGrid::ResolveDataZoom(options.zoom);
+        if (!options.polygonsWgs84.empty())
+        {
+            return DownTool::AmapVectorTileGrid::SelectTilesForWgs84Polygons(
+                options.polygonsWgs84, dataZoom);
+        }
         DownTool::GoogleDownBase outputGrid;
         outputGrid.SetCenterLonLat(options.centerWgs84);
         outputGrid.SetRadius(options.radiusMeters);
@@ -677,10 +683,19 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
     }
     try
     {
-        (void)AmapVectorTileGrid::SelectTilesForWgs84Radius(
-            vectorOptions.centerWgs84,
-            vectorOptions.radiusMeters,
-            vectorOptions.zoom);
+        if (vectorOptions.polygonsWgs84.empty())
+        {
+            (void)AmapVectorTileGrid::SelectTilesForWgs84Radius(
+                vectorOptions.centerWgs84,
+                vectorOptions.radiusMeters,
+                vectorOptions.zoom);
+        }
+        else
+        {
+            (void)AmapVectorTileGrid::SelectTilesForWgs84Polygons(
+                vectorOptions.polygonsWgs84,
+                vectorOptions.zoom);
+        }
     }
     catch (const std::exception& exception)
     {
@@ -693,6 +708,7 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
 
     SetCenterLonLat(vectorOptions.centerWgs84);
     SetRadius(vectorOptions.radiusMeters);
+    SetDownloadPolygonsWgs84(vectorOptions.polygonsWgs84);
     SetZoom(vectorOptions.zoom);
     SetTileSize(renderOptions.tileSize);
     SetCachePath(PathToUtf8String(temporaryTilePath));
