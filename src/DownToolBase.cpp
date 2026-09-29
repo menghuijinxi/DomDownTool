@@ -19,6 +19,8 @@
 #include <memory>
 #include <mutex>
 #include <numbers>
+#include <set>
+#include <stdexcept>
 #include <system_error>
 #include <thread>
 #include <unordered_map>
@@ -1097,7 +1099,7 @@ namespace
             {"latLonBounds", BuildBoundsJson(metadata.bounds)},
             {"maxzoom", static_cast<int>(metadata.maxZoom)},
             {"minzoom", 0},
-            {"proj", 4326},
+            {"proj", 3857},
             {"tilesize", static_cast<int>(metadata.tileSize)},
             {"tiletrans", "google"},
             {"type", "image"},
@@ -1171,7 +1173,8 @@ namespace
         const std::string& textureFormat,
         bool terrainHeightEnabled,
         double elevationReferenceMeters,
-        double terrainSampleRateMeters)
+        double terrainSampleRateMeters,
+        uint32_t terrainMaximumTriangles)
     {
         Json textures = Json::array();
         for (const FbxTextureOutputInfo& textureInfo : textureInfos)
@@ -1190,6 +1193,8 @@ namespace
 			{"terrainheight", terrainHeightEnabled},
 			{"elevationreference", elevationReferenceMeters},
 			{"terrainsamplerate", terrainSampleRateMeters},
+            {"terrainmaximumtriangles", terrainMaximumTriangles},
+            {"terrainalgorithm", "hmm-progressive-fixed-boundary"},
             {"version", 1},
             {"zoom", static_cast<int>(zoom)}};
         return root.dump();
@@ -1673,8 +1678,60 @@ namespace
 		second = first;
 	}
 
+    void LimitFbxTerrainEdge(
+        std::vector<uint32_t>& points, uint32_t maximumTriangles,
+        const std::function<double(uint32_t)>& heightAt)
+    {
+        if (maximumTriangles == 0)
+        {
+            return;
+        }
+        // 最多约一半预算分给边界，剩余预算用于峰谷；四角始终保留。
+        const size_t maximumPoints = 2 + (maximumTriangles - 2) / 8;
+        if (points.size() <= maximumPoints)
+        {
+            return;
+        }
+        std::set<size_t> selected{0, points.size() - 1};
+        while (selected.size() < maximumPoints)
+        {
+            double maximumError = -1.;
+            size_t candidate = 0;
+            for (auto first = selected.begin(), second = std::next(first);
+                 second != selected.end(); ++first, ++second)
+            {
+                const uint32_t a = points[*first];
+                const uint32_t b = points[*second];
+                const double za = heightAt(a);
+                const double zb = heightAt(b);
+                for (size_t i = *first + 1; i < *second; ++i)
+                {
+                    const double t = double(points[i] - a) / (b - a);
+                    const double error = std::abs(heightAt(points[i]) -
+                        (za * (1. - t) + zb * t));
+                    if (error > maximumError)
+                    {
+                        maximumError = error;
+                        candidate = i;
+                    }
+                }
+            }
+            if (maximumError <= 1e-9)
+            {
+                break;
+            }
+            selected.insert(candidate);
+        }
+        std::vector<uint32_t> simplified;
+        for (size_t index : selected)
+        {
+            simplified.push_back(points[index]);
+        }
+        points = std::move(simplified);
+    }
+
 	bool SynchronizeFbxTerrainMeshPlanEdges(
-		std::vector<FbxTerrainMeshPlan>& plans)
+		std::vector<FbxTerrainMeshPlan>& plans, uint32_t maximumTriangles)
 	{
 		std::map<std::pair<int32_t, int32_t>, size_t> planByGrid;
 		for (size_t index = 0; index < plans.size(); index++)
@@ -1686,6 +1743,24 @@ namespace
 		for (FbxTerrainMeshPlan& plan : plans)
 		{
 			const FbxTextureOutputInfo& textureInfo = *plan.textureInfo;
+            const auto limitHorizontal = [&](uint32_t y)
+            {
+                LimitFbxTerrainEdge(plan.horizontalPoints[y], maximumTriangles,
+                    [&](uint32_t x) { return GetFbxTerrainHeight(plan, x, y); });
+            };
+            const auto limitVertical = [&](uint32_t x)
+            {
+                LimitFbxTerrainEdge(plan.verticalPoints[x], maximumTriangles,
+                    [&](uint32_t y) { return GetFbxTerrainHeight(plan, x, y); });
+            };
+            if (!planByGrid.contains({textureInfo.gridX - 1, textureInfo.gridY}))
+            {
+                limitVertical(0);
+            }
+            if (!planByGrid.contains({textureInfo.gridX, textureInfo.gridY - 1}))
+            {
+                limitHorizontal(0);
+            }
 			const auto east = planByGrid.find(
 				{textureInfo.gridX + 1, textureInfo.gridY});
 			const auto south = planByGrid.find(
@@ -1700,7 +1775,13 @@ namespace
 				MergeFbxTerrainEdgePoints(
 					plan.verticalPoints[plan.gridWidth],
 					neighbor.verticalPoints[0]);
+                limitVertical(plan.gridWidth);
+                neighbor.verticalPoints[0] = plan.verticalPoints[plan.gridWidth];
 			}
+            else
+            {
+                limitVertical(plan.gridWidth);
+            }
 
 			if (south != planByGrid.end())
 			{
@@ -1712,31 +1793,16 @@ namespace
 				MergeFbxTerrainEdgePoints(
 					plan.horizontalPoints[plan.gridHeight],
 					neighbor.horizontalPoints[0]);
+                limitHorizontal(plan.gridHeight);
+                neighbor.horizontalPoints[0] = plan.horizontalPoints[plan.gridHeight];
 			}
+            else
+            {
+                limitHorizontal(plan.gridHeight);
+            }
 		}
 		return true;
 	}
-
-	double SampleFbxTerrainHeight(
-		const FbxTerrainMeshPlan& plan, double x, double y)
-	{
-		const uint32_t minX = static_cast<uint32_t>(std::floor(x));
-		const uint32_t minY = static_cast<uint32_t>(std::floor(y));
-		const uint32_t maxX = std::min(plan.gridWidth, minX + 1);
-		const uint32_t maxY = std::min(plan.gridHeight, minY + 1);
-		const double u = x - minX;
-		const double v = y - minY;
-		return GetFbxTerrainHeight(plan, minX, minY) * (1. - u) * (1. - v) +
-			GetFbxTerrainHeight(plan, maxX, minY) * u * (1. - v) +
-			GetFbxTerrainHeight(plan, minX, maxY) * (1. - u) * v +
-			GetFbxTerrainHeight(plan, maxX, maxY) * u * v;
-	}
-
-	std::vector<FbxMeshVertex> BuildAdaptiveFbxTerrainVerticesLegacy(
-		const FbxTerrainMeshPlan& plan,
-		const FbxCoordinateContext& coordinateContext,
-		DownTool::FbxPlanetShape shape,
-		std::vector<uint32_t>& indices);
 
 	// 先完整采样高度场并生成叶节点，再统一相邻块边界的分割点。
 	// 这样既不会漏掉窄山脊，也不会在块间留下 T 型接缝。
@@ -1744,7 +1810,8 @@ namespace
 		const FbxTerrainMeshPlan& plan,
 		const FbxCoordinateContext& coordinateContext,
 		DownTool::FbxPlanetShape shape,
-		std::vector<uint32_t>& indices)
+		std::vector<uint32_t>& indices,
+        uint32_t maximumTriangles)
 	{
 		const FbxTextureOutputInfo& textureInfo = *plan.textureInfo;
 		std::vector<DownTool::FbxTerrainGridPoint> boundary;
@@ -1814,21 +1881,20 @@ namespace
 			return {};
 		}
 
-		const std::size_t maximumTriangleCount = std::clamp<std::size_t>(
-			static_cast<std::size_t>(plan.gridWidth) * plan.gridHeight / 8,
-			256, 16384);
 		const DownTool::FbxTerrainTinResult tin = DownTool::BuildFbxTerrainTin(
 			plan.gridWidth,
 			plan.gridHeight,
 			plan.heights,
 			boundary,
 			plan.geometricErrorMeters,
-			maximumTriangleCount);
+            maximumTriangles);
 		if (tin.points.empty() || tin.triangles.empty())
 		{
-			return BuildAdaptiveFbxTerrainVerticesLegacy(
-				plan, coordinateContext, shape, indices);
+            throw std::runtime_error("FBX 地形三角化失败，未回退到其他算法。");
 		}
+        fmt::print("地形块 {}：{} 顶点，{} 三角面，上限 {}，最大采样高程误差 {:.3f}m\n",
+            MakeFbxMeshName(textureInfo.gridX, textureInfo.gridY),
+            tin.points.size(), tin.triangles.size(), maximumTriangles, tin.maximumErrorMeters);
 
 		std::vector<FbxMeshVertex> vertices;
 		vertices.reserve(tin.points.size());
@@ -1856,152 +1922,6 @@ namespace
 			// 网格坐标的 Y 轴向南，反转 CDT 的二维逆时针顺序以保持 FBX 法线朝上。
 			indices.insert(indices.end(), {
 				triangle.first, triangle.third, triangle.second});
-		}
-		return vertices;
-	}
-
-	std::vector<FbxMeshVertex> BuildAdaptiveFbxTerrainVerticesLegacy(
-		const FbxTerrainMeshPlan& plan,
-		const FbxCoordinateContext& coordinateContext,
-		DownTool::FbxPlanetShape shape,
-		std::vector<uint32_t>& indices)
-	{
-		const FbxTextureOutputInfo& textureInfo = *plan.textureInfo;
-		std::unordered_map<uint64_t, uint32_t> vertexCache;
-		std::vector<FbxMeshVertex> vertices;
-		vertices.reserve(plan.leaves.size() * 4);
-		const auto makeVertex = [&](double x, double y, double height)
-		{
-			const double normalizedU = x / plan.gridWidth;
-			const double normalizedV = y / plan.gridHeight;
-			const double imageU = (plan.clippedMinX +
-				(plan.clippedMaxX - plan.clippedMinX) * normalizedU -
-				textureInfo.pixelBounds.minX) / plan.pixelWidth;
-			const double imageV = (plan.clippedMinY +
-				(plan.clippedMaxY - plan.clippedMinY) * normalizedV -
-				textureInfo.pixelBounds.minY) / plan.pixelHeight;
-			const DownTool::LonLat lonLat = FbxTerrainGridToLonLat(plan, x, y);
-			return shape == DownTool::FbxPlanetShape::Sphere ?
-				MakeSphereVertex(
-					lonLat,
-					coordinateContext,
-					imageU,
-					ConvertImageVToFbxV(imageV),
-					height) :
-				MakePlaneVertex(
-					lonLat,
-					coordinateContext,
-					imageU,
-					ConvertImageVToFbxV(imageV),
-					height);
-		};
-		const auto addGridVertex = [&](uint32_t x, uint32_t y)
-		{
-			const uint64_t key = (static_cast<uint64_t>(x) << 32) | y;
-			const auto cached = vertexCache.find(key);
-			if (cached != vertexCache.end())
-			{
-				return cached->second;
-			}
-			const uint32_t index = static_cast<uint32_t>(vertices.size());
-			vertices.push_back(makeVertex(
-				x, y, GetFbxTerrainHeight(plan, x, y)));
-			vertexCache.emplace(key, index);
-			return index;
-		};
-
-		for (const FbxTerrainCell& cell : plan.leaves)
-		{
-			const uint32_t maxX = cell.minX + cell.width;
-			const uint32_t maxY = cell.minY + cell.height;
-			std::vector<std::pair<uint32_t, uint32_t>> boundary;
-			const auto appendPoint = [&boundary](uint32_t x, uint32_t y)
-			{
-				const std::pair<uint32_t, uint32_t> point{x, y};
-				if (boundary.empty() || boundary.back() != point)
-				{
-					boundary.push_back(point);
-				}
-			};
-			for (uint32_t x : plan.horizontalPoints.at(cell.minY))
-			{
-				if (x >= cell.minX && x <= maxX)
-				{
-					appendPoint(x, cell.minY);
-				}
-			}
-			for (uint32_t y : plan.verticalPoints.at(maxX))
-			{
-				if (y >= cell.minY && y <= maxY)
-				{
-					appendPoint(maxX, y);
-				}
-			}
-			const std::vector<uint32_t>& southPoints =
-				plan.horizontalPoints.at(maxY);
-			for (auto point = southPoints.rbegin();
-				point != southPoints.rend(); ++point)
-			{
-				if (*point >= cell.minX && *point <= maxX)
-				{
-					appendPoint(*point, maxY);
-				}
-			}
-			const std::vector<uint32_t>& westPoints =
-				plan.verticalPoints.at(cell.minX);
-			for (auto point = westPoints.rbegin();
-				point != westPoints.rend(); ++point)
-			{
-				if (*point >= cell.minY && *point <= maxY)
-				{
-					appendPoint(cell.minX, *point);
-				}
-			}
-			if (boundary.size() > 1 && boundary.front() == boundary.back())
-			{
-				boundary.pop_back();
-			}
-
-			if (boundary.size() == 4)
-			{
-				const uint32_t northWest = addGridVertex(cell.minX, cell.minY);
-				const uint32_t northEast = addGridVertex(maxX, cell.minY);
-				const uint32_t southWest = addGridVertex(cell.minX, maxY);
-				const uint32_t southEast = addGridVertex(maxX, maxY);
-				if (std::abs(
-					GetFbxTerrainHeight(plan, cell.minX, cell.minY) -
-					GetFbxTerrainHeight(plan, maxX, maxY)) <=
-					std::abs(GetFbxTerrainHeight(plan, maxX, cell.minY) -
-						GetFbxTerrainHeight(plan, cell.minX, maxY)))
-				{
-					indices.insert(indices.end(), {
-						northWest, southWest, northEast,
-						northEast, southWest, southEast});
-				}
-				else
-				{
-					indices.insert(indices.end(), {
-						northWest, southWest, southEast,
-						northWest, southEast, northEast});
-				}
-				continue;
-			}
-
-			const double centerX = cell.minX + cell.width / 2.;
-			const double centerY = cell.minY + cell.height / 2.;
-			const uint32_t centerIndex = static_cast<uint32_t>(vertices.size());
-			vertices.push_back(makeVertex(
-				centerX,
-				centerY,
-				SampleFbxTerrainHeight(plan, centerX, centerY)));
-			for (size_t pointIndex = 0; pointIndex < boundary.size(); pointIndex++)
-			{
-				const auto& current = boundary[pointIndex];
-				const auto& next = boundary[(pointIndex + 1) % boundary.size()];
-				indices.push_back(centerIndex);
-				indices.push_back(addGridVertex(next.first, next.second));
-				indices.push_back(addGridVertex(current.first, current.second));
-			}
 		}
 		return vertices;
 	}
@@ -2071,13 +1991,18 @@ namespace
 				return;
 			}
 
+			const std::array<double, 3> unitFaceNormal{
+				faceNormal[0] / length,
+				faceNormal[1] / length,
+				faceNormal[2] / length};
 			for (const FbxMeshVertex* vertex : { &first, &second, &third })
 			{
 				std::array<double, 3>& accumulated =
 					accumulatedNormals[MakeFbxNormalKey(*vertex)];
-				accumulated[0] += faceNormal[0];
-				accumulated[1] += faceNormal[1];
-				accumulated[2] += faceNormal[2];
+				// UE 默认按单位面法线等权混合，避免自适应 TIN 的大三角形主导顶点法线。
+				accumulated[0] += unitFaceNormal[0];
+				accumulated[1] += unitFaceNormal[1];
+				accumulated[2] += unitFaceNormal[2];
 			}
 		};
 
@@ -2746,7 +2671,8 @@ void DownTool::DownToolBase::StartDown()
 		fmt::print("下载结束后仍有 {} 个瓦片不可用，请查看上面的缓存检测明细。\n",
 			failedTiles.size());
 	}
-	else if (!IsStopRequested() && (PostProcessEnabled || PostProcessMergedImageEnabled ||
+	else if (!IsStopRequested() && (PostProcessEnabled ||
+		PostProcessMaxZoomOnlyEnabled || PostProcessMergedImageEnabled ||
 		PostProcessFbxEnabled))
 	{
 		RunPostProcess();
@@ -3714,7 +3640,8 @@ void DownTool::DownToolBase::RunPostProcess()
 
 	fmt::print("开始瓦片后处理，输出目录：{}\n", PathToUtf8String(GetPostProcessRootPath()));
 	bool maxZoomTilesReady = false;
-	if (!IsStopRequested() && (PostProcessEnabled || PostProcessFbxEnabled))
+	if (!IsStopRequested() && (PostProcessEnabled ||
+		PostProcessMaxZoomOnlyEnabled || PostProcessFbxEnabled))
 	{
 		auto phaseStartTime = std::chrono::steady_clock::now();
 		maxZoomTilesReady = GeneratePostProcessMaxZoomTiles(targetTiles);
@@ -4499,6 +4426,11 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 
 bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailable) const
 {
+    if (FbxTerrainHeightEnabled && FbxTerrainMaximumTriangles == 1)
+    {
+        fmt::print("FBX 导出失败：每块三角面上限必须为 0（不限）或至少 2。\n");
+        return false;
+    }
 	const auto totalStartTime = std::chrono::steady_clock::now();
 	if (IsStopRequested())
 	{
@@ -4839,7 +4771,8 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 			textureFormat,
 			FbxTerrainHeightEnabled,
 			FbxElevationReferenceMeters,
-			FbxTerrainSampleRateMeters)))
+			FbxTerrainSampleRateMeters,
+            FbxTerrainMaximumTriangles)))
 	{
 		fmt::print("FBX 警告：manifest.json 写入失败。\n");
 	}
@@ -4869,7 +4802,7 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 			}
 			terrainPlans.push_back(std::move(*plan));
 		}
-		if (!SynchronizeFbxTerrainMeshPlanEdges(terrainPlans))
+		if (!SynchronizeFbxTerrainMeshPlanEdges(terrainPlans, FbxTerrainMaximumTriangles))
 		{
 			fmt::print("FBX 导出失败：相邻地形块的采样网格无法对齐。\n");
 			return false;
@@ -4902,7 +4835,8 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 					terrainPlans[textureIndex],
 					coordinateContext,
 					shape,
-					meshData.indices);
+					meshData.indices,
+                    FbxTerrainMaximumTriangles);
 			}
 			else
 			{
@@ -5074,32 +5008,16 @@ bool DownTool::DownToolBase::IsTileDownloadUnavailable(
 
 void DownTool::DownToolBase::CalculateDownRange()
 {
-	if (!DownloadPolygonsWgs84.empty())
-	{
-		const std::optional<GeographicBounds> bounds =
+	const std::optional<GeographicBounds> bounds =
+		DownloadPolygonsWgs84.empty() ?
+			CalculateGeographicBounds(GetCenterLonLat(), GetRadius()) :
 			CalculateGeographicBounds(DownloadPolygonsWgs84);
-		if (bounds.has_value())
-		{
-			MinLonLat = {bounds->west, bounds->south};
-			MaxLonLat = {bounds->east, bounds->north};
-			return;
-		}
+	if (!bounds.has_value())
+	{
+		return;
 	}
-
-	GeographicLib::Math::real dummy;
-	auto& geo = GeographicLib::Geodesic::WGS84();
-	geo.Direct(GetCenterLonLat().lat, GetCenterLonLat().lon, 0., GetRadius(), MaxLonLat.lat, dummy);
-	geo.Direct(GetCenterLonLat().lat, GetCenterLonLat().lon, 180., GetRadius(), MinLonLat.lat, dummy);
-	geo.Direct(GetCenterLonLat().lat, GetCenterLonLat().lon, 90., GetRadius(), dummy, MaxLonLat.lon);
-	geo.Direct(GetCenterLonLat().lat, GetCenterLonLat().lon, 270., GetRadius(), dummy, MinLonLat.lon);
-
-	// 处理经度越界（GeographicLib 通常返回 [-180, 180]）
-	if (MinLonLat.lon > MaxLonLat.lon) {
-		// 跨越了 ±180° 经线，此时 bounding box 包围极点或环绕地球
-		// 简单处理：设为全球（根据需求调整）
-		MaxLonLat.lon = 180.0;
-		MinLonLat.lon = -180.0;
-	}
+	MinLonLat = {bounds->west, bounds->south};
+	MaxLonLat = {bounds->east, bounds->north};
 }
 
 bool DownTool::DownToolBase::TryProjectToSourceTile(

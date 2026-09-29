@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -32,5 +31,5 @@ struct FbxTerrainTinResult
     const std::vector<double>& heights,
     const std::vector<FbxTerrainGridPoint>& boundaryPoints,
     double geometricErrorMeters,
-    std::size_t maximumTriangleCount);
+    uint32_t maximumTriangles = 0);
 } // namespace DownTool

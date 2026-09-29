@@ -993,7 +993,10 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
         return result;
     }
 
-    if (GetPostProcessEnabled() || GetPostProcessMergedImageEnabled() || GetPostProcessFbxEnabled())
+    if (GetPostProcessEnabled() ||
+        GetPostProcessMaxZoomOnlyEnabled() ||
+        GetPostProcessMergedImageEnabled() ||
+        GetPostProcessFbxEnabled())
     {
         RunPostProcess();
     }

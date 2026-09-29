@@ -6,6 +6,7 @@
       "name": "opencv",
       "version>=": "4.12.0"
     },
+    "tiff",
     "nlohmann-json",
     {
       "name": "libxml2",

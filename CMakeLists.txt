@@ -129,6 +129,7 @@ find_package(OpenCV REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(assimp CONFIG REQUIRED)
 find_package(Protobuf CONFIG REQUIRED)
+find_package(TIFF REQUIRED)
 find_package(ZLIB REQUIRED)
 
 set(DOMDOWNTOOL_LIBRARIES
@@ -141,6 +142,7 @@ set(DOMDOWNTOOL_LIBRARIES
     OpenSSL::Crypto
     assimp::assimp
     protobuf::libprotobuf
+    TIFF::TIFF
     ZLIB::ZLIB)
 
 file(GLOB DOMDOWNTOOL_CORE_SOURCES CONFIGURE_DEPENDS
@@ -334,6 +336,8 @@ add_domdown_test(FbxTerrainTriangulatorTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/FbxTerrainTriangulatorTest.cpp)
 add_domdown_test(CopernicusDemTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/CopernicusDemTest.cpp)
+add_domdown_test(GeoTiffExporterTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/GeoTiffExporterTest.cpp)
 add_domdown_test(BaiduProjectionTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/BaiduProjectionTest.cpp)
 add_domdown_test(TileProviderUrlTest
@@ -462,6 +466,23 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     target_compile_options(ExportTaskManagerTest PRIVATE /EHsc /permissive-)
   endif()
   add_test(NAME ExportTaskManagerTest COMMAND ExportTaskManagerTest)
+
+  add_executable(GeoTiffTaskTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/GeoTiffTaskTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportGroupedExport.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportImageComposer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportTaskManager.cpp)
+  target_link_libraries(GeoTiffTaskTest PRIVATE DomDownToolCore)
+  target_compile_definitions(GeoTiffTaskTest PRIVATE
+    DOMDOWNTOOL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN)
+  set_property(TARGET GeoTiffTaskTest PROPERTY CXX_STANDARD 23)
+  set_property(TARGET GeoTiffTaskTest PROPERTY CXX_STANDARD_REQUIRED ON)
+  if(MSVC)
+    target_compile_options(GeoTiffTaskTest PRIVATE /EHsc /permissive-)
+  endif()
+  add_test(NAME GeoTiffTaskTest COMMAND GeoTiffTaskTest)
 
   add_executable(GuiStandardStreamsTest WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuiStandardStreamsTest.cpp

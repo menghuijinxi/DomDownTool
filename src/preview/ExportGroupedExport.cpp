@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <set>
 #include <system_error>
@@ -12,6 +13,7 @@
 
 #include "AmapVectorPngDownloader.h"
 #include "CopernicusDem.h"
+#include "GeoTiffExporter.h"
 
 #include "fmt/format.h"
 #include "nlohmann/json.hpp"
@@ -59,6 +61,10 @@ std::string ComponentKindValue(ExportComponentKind kind)
     {
     case ExportComponentKind::MergedImage:
         return "merged-image";
+    case ExportComponentKind::DomGeoTiff:
+        return "dom-geotiff";
+    case ExportComponentKind::DemGeoTiff:
+        return "dem-geotiff";
     case ExportComponentKind::StandardXyz:
         return "standard-xyz";
     case ExportComponentKind::RawTiles:
@@ -78,6 +84,14 @@ std::optional<ExportComponentKind> ComponentKindFrom(std::string_view value)
     if (value == "merged-image")
     {
         return ExportComponentKind::MergedImage;
+    }
+    if (value == "dom-geotiff")
+    {
+        return ExportComponentKind::DomGeoTiff;
+    }
+    if (value == "dem-geotiff")
+    {
+        return ExportComponentKind::DemGeoTiff;
     }
     if (value == "standard-xyz")
     {
@@ -135,6 +149,10 @@ std::string ComponentDirectoryName(ExportComponentKind kind)
     {
     case ExportComponentKind::MergedImage:
         return "大图";
+    case ExportComponentKind::DomGeoTiff:
+        return "DOM GeoTIFF";
+    case ExportComponentKind::DemGeoTiff:
+        return "DEM GeoTIFF";
     case ExportComponentKind::StandardXyz:
         return "XYZ";
     case ExportComponentKind::RawTiles:
@@ -363,6 +381,7 @@ Json ComponentToJson(const ExportComponent& component)
         {"shape", ShapeValue(component.shape)},
         {"exportElevation", component.exportElevation},
         {"elevationSampleMeters", component.elevationSampleMeters},
+        {"terrainMaximumTriangles", component.GetTerrainMaximumTriangles()},
         {"meshSubdivision", component.meshSubdivision},
         {"wallTexturePath", PathToUtf8(component.wallTexturePath)},
         {"roofTexturePath", PathToUtf8(component.roofTexturePath)},
@@ -416,6 +435,9 @@ std::optional<ExportComponent> ComponentFromJson(const Json& json)
     component.shape = ShapeFrom(JsonString(json, "shape", "sphere"));
     component.exportElevation = JsonBool(json, "exportElevation", false);
     component.elevationSampleMeters = JsonNumber(json, "elevationSampleMeters", 30.);
+    component.SetTerrainMaximumTriangles(static_cast<uint32_t>(std::clamp(
+        JsonNumber(json, "terrainMaximumTriangles", 0.), 0.,
+        double(std::numeric_limits<uint32_t>::max()))));
     component.meshSubdivision = static_cast<uint32_t>(
         std::max(0., JsonNumber(json, "meshSubdivision", 64.)));
     const std::string wallPath = JsonString(json, "wallTexturePath");
@@ -713,10 +735,11 @@ std::string GroupedExportError(const ExportConfiguration& configuration)
             switch (component.kind)
             {
             case ExportComponentKind::MergedImage:
+            case ExportComponentKind::DomGeoTiff:
             case ExportComponentKind::StandardXyz:
                 if (component.sources.empty())
                 {
-                    return "大图和标准 XYZ 至少需要一个图源。";
+                    return "大图、DOM GeoTIFF 和标准 XYZ 至少需要一个图源。";
                 }
                 if (component.kind == ExportComponentKind::StandardXyz &&
                     component.xyzTileSize != 256 && component.xyzTileSize != 512 &&
@@ -724,9 +747,20 @@ std::string GroupedExportError(const ExportConfiguration& configuration)
                 {
                     return "标准 XYZ 分辨率只支持 256、512 或 1024。";
                 }
-                if (component.kind == ExportComponentKind::MergedImage && component.maxEdge == 0)
+                if (component.kind == ExportComponentKind::MergedImage &&
+                    component.maxEdge == 0)
                 {
-                    return "大图最大边无效。";
+                    return "栅格最大边无效。";
+                }
+                break;
+            case ExportComponentKind::DemGeoTiff:
+                if (!component.sources.empty())
+                {
+                    return "DEM GeoTIFF 不需要图源。";
+                }
+                if (!(component.elevationSampleMeters > 0.))
+                {
+                    return "DEM GeoTIFF 采样间距必须大于 0 米。";
                 }
                 break;
             case ExportComponentKind::RawTiles:
@@ -743,6 +777,10 @@ std::string GroupedExportError(const ExportConfiguration& configuration)
                 if (component.textureSize == 0)
                 {
                     return "底板贴图尺寸无效。";
+                }
+                if (component.exportElevation && component.GetTerrainMaximumTriangles() == 1)
+                {
+                    return "地形每块三角面上限必须为 0（不限）或至少 2。";
                 }
                 if (!component.exportElevation && component.meshSubdivision == 0)
                 {
@@ -817,7 +855,6 @@ bool ExportGroupedRunner::Run(
         error = validation;
         return false;
     }
-
     struct Job
     {
         const ExportContentGroup* group = nullptr;
@@ -868,14 +905,35 @@ bool ExportGroupedRunner::Run(
     appendJobs(false);
 
     bool needsElevation = false;
+    bool needsGeoTiff = false;
     for (const Job& job : jobs)
     {
         if ((job.component->kind == ExportComponentKind::BasePlate &&
              job.component->exportElevation) ||
             (job.component->kind == ExportComponentKind::BuildingModel &&
-             job.component->followBaseElevation))
+             job.component->followBaseElevation) ||
+            job.component->kind == ExportComponentKind::DemGeoTiff)
         {
             needsElevation = true;
+        }
+        if (job.component->kind == ExportComponentKind::DomGeoTiff ||
+            job.component->kind == ExportComponentKind::DemGeoTiff)
+        {
+            needsGeoTiff = true;
+        }
+    }
+
+    std::optional<DownTool::GeographicBounds> exportBounds;
+    if (needsGeoTiff)
+    {
+        exportBounds = DownTool::CalculateExportGeographicBounds(
+            queuedExport.configuration.centerWgs84,
+            queuedExport.configuration.radiusMeters,
+            queuedExport.configuration.polygonsWgs84);
+        if (!exportBounds.has_value())
+        {
+            error = "无法计算 GeoTIFF 导出范围。";
+            return false;
         }
     }
 
@@ -995,10 +1053,26 @@ bool ExportGroupedRunner::Run(
         const bool wantsElevation =
             (component.kind == ExportComponentKind::BasePlate && component.exportElevation) ||
             (component.kind == ExportComponentKind::BuildingModel &&
-             component.followBaseElevation);
+             component.followBaseElevation) ||
+            component.kind == ExportComponentKind::DemGeoTiff;
         const std::shared_ptr<DownTool::CopernicusDemData> componentElevation =
             wantsElevation ? elevationData : nullptr;
         const std::string imageFormat = NormalizeFormat(component.imageFormat);
+        const bool domGeoTiff =
+            component.kind == ExportComponentKind::DomGeoTiff;
+        std::optional<DownTool::WebMercatorTileGrid> domGeoTiffGrid;
+        if (domGeoTiff)
+        {
+            domGeoTiffGrid = DownTool::BuildWebMercatorTileGrid(
+                *exportBounds,
+                queuedExport.configuration.zoom,
+                256);
+            if (!domGeoTiffGrid.has_value())
+            {
+                error = "无法计算 DOM GeoTIFF 像素网格。";
+                return false;
+            }
+        }
         const std::string workingImageFormat =
             GroupedMergedImageWorkingFormat(component);
         const bool composeMergedLayers =
@@ -1008,7 +1082,7 @@ bool ExportGroupedRunner::Run(
             taskRoot / std::filesystem::u8path("临时") /
             std::filesystem::u8path(SanitizeFileName(component.id));
         const std::filesystem::path mergedImageryRoot =
-            composeMergedLayers ?
+            (composeMergedLayers || domGeoTiff) ?
             temporaryRoot / std::filesystem::u8path("影像") :
             componentDirectory;
         std::set<std::string> usedSourceNames;
@@ -1028,7 +1102,8 @@ bool ExportGroupedRunner::Run(
         {
             ExportTaskManager::QueuedExport step = queuedExport;
             step.configuration.executionRootOverride =
-                merged ? mergedImageryRoot : componentDirectory;
+                (merged || domGeoTiff) ?
+                mergedImageryRoot : componentDirectory;
             step.configuration.flatSourceOutput = true;
             step.configuration.exportTiles = tiles;
             step.configuration.exportMergedImage = merged;
@@ -1039,6 +1114,7 @@ bool ExportGroupedRunner::Run(
             step.configuration.fbxTextureSize = component.textureSize;
             step.configuration.fbxTextureFormat = NormalizeFormat(component.textureFormat);
             step.configuration.fbxTerrainSampleRateMeters = component.elevationSampleMeters;
+            step.configuration.SetTerrainMaximumTriangles(component.GetTerrainMaximumTriangles());
             step.configuration.executionTileSize = tiles ? component.xyzTileSize : 0;
             step.configuration.executionFbxShape = fbx ?
                 std::optional<DownTool::FbxPlanetShape>(component.shape) : std::nullopt;
@@ -1060,7 +1136,35 @@ bool ExportGroupedRunner::Run(
             ExportTaskManager::QueuedExport step = makeStep(tiles, merged, fbx);
             return !failed(manager.RunSatelliteExport(
                 step, ToSatelliteSource(named), componentElevation, stepIndex, stepCount,
-                error));
+                error, domGeoTiff));
+        };
+        const auto writeDomGeoTiff = [&](
+            const std::filesystem::path& baseTileRoot,
+            const std::filesystem::path& overlayTileRoot,
+            const std::filesystem::path& outputPath)
+        {
+            return DownTool::WriteDomGeoTiff(
+                baseTileRoot,
+                overlayTileRoot,
+                outputPath,
+                *domGeoTiffGrid,
+                [&manager] { return manager.IsCancellationRequested(); },
+                [&manager, taskId = queuedExport.taskId, stepIndex, stepCount](
+                    const uint64_t completed,
+                    const uint64_t total)
+                {
+                    const double ratio = total == 0 ? 0. :
+                        static_cast<double>(completed) /
+                            static_cast<double>(total);
+                    manager.UpdateProgress(
+                        taskId,
+                        "生成 DOM GeoTIFF",
+                        (static_cast<double>(stepIndex) + ratio) /
+                            static_cast<double>(stepCount),
+                        completed,
+                        total);
+                },
+                error);
         };
 
         bool succeeded = true;
@@ -1091,6 +1195,7 @@ bool ExportGroupedRunner::Run(
             }
         }
         else if (component.kind == ExportComponentKind::MergedImage ||
+                 component.kind == ExportComponentKind::DomGeoTiff ||
                  component.kind == ExportComponentKind::StandardXyz ||
                  component.kind == ExportComponentKind::BasePlate)
         {
@@ -1111,9 +1216,14 @@ bool ExportGroupedRunner::Run(
                     break;
                 }
                 const std::filesystem::path sourceDirectory =
-                    (merged ? mergedImageryRoot : componentDirectory) /
+                    ((merged || domGeoTiff) ?
+                        mergedImageryRoot : componentDirectory) /
                     std::filesystem::u8path(outputName);
-                if (merged)
+                if (domGeoTiff)
+                {
+                    imageryOutputs.push_back(sourceDirectory / "XYZ");
+                }
+                else if (merged)
                 {
                     const std::filesystem::path workingImage =
                         sourceDirectory / ("merged." + workingImageFormat);
@@ -1125,7 +1235,8 @@ bool ExportGroupedRunner::Run(
                     {
                         const std::filesystem::path finalImage =
                             componentDirectory /
-                            std::filesystem::u8path(outputName + "." + imageFormat);
+                            std::filesystem::u8path(
+                                outputName + "." + imageFormat);
                         if (!MovePathReplacing(workingImage, finalImage, error))
                         {
                             succeeded = false;
@@ -1174,6 +1285,23 @@ bool ExportGroupedRunner::Run(
                     break;
                 }
             }
+            if (succeeded && domGeoTiff && !HasGis(component))
+            {
+                for (const std::filesystem::path& imageryOutput : imageryOutputs)
+                {
+                    const std::string outputName =
+                        PathToUtf8(imageryOutput.parent_path().filename());
+                    if (!writeDomGeoTiff(
+                            imageryOutput,
+                            {},
+                            componentDirectory /
+                                std::filesystem::u8path(outputName + ".tif")))
+                    {
+                        succeeded = false;
+                        break;
+                    }
+                }
+            }
             if (succeeded && HasGis(component))
             {
                 const std::filesystem::path gisXyz = temporaryRoot / "XYZ";
@@ -1183,7 +1311,8 @@ bool ExportGroupedRunner::Run(
                 const std::filesystem::path directXyz =
                     componentDirectory / std::filesystem::u8path(gisName);
                 const std::filesystem::path directImage =
-                    componentDirectory / std::filesystem::u8path(gisName + "." + imageFormat);
+                    componentDirectory /
+                    std::filesystem::u8path(gisName + "." + imageFormat);
                 const std::filesystem::path directFbx =
                     componentDirectory / std::filesystem::u8path(gisName) / "FBX";
                 DownTool::AmapVectorPngDownloadOptions options;
@@ -1209,6 +1338,7 @@ bool ExportGroupedRunner::Run(
                 downloader.SetPostProcessOutputPath(PathToUtf8(imageryOutputs.empty() && tiles ?
                     directXyz : gisXyz));
                 downloader.SetPostProcessEnabled(tiles);
+                downloader.SetPostProcessMaxZoomOnlyEnabled(domGeoTiff);
                 downloader.SetPostProcessMergedImageEnabled(merged);
                 downloader.SetPostProcessMergedImageOutputPath(PathToUtf8(
                     imageryOutputs.empty() && merged ? directImage : gisImage));
@@ -1219,6 +1349,7 @@ bool ExportGroupedRunner::Run(
                 downloader.SetFbxTextureSize(component.textureSize);
                 downloader.SetFbxTextureFormat(NormalizeFormat(component.textureFormat));
                 downloader.SetFbxTerrainSampleRateMeters(component.elevationSampleMeters);
+                downloader.SetFbxTerrainMaximumTriangles(component.GetTerrainMaximumTriangles());
                 if (tiles)
                 {
                     downloader.SetTileSize(component.xyzTileSize);
@@ -1265,6 +1396,37 @@ bool ExportGroupedRunner::Run(
                     error = gisResult.error.empty() ? "GIS 导出失败。" : gisResult.error;
                     succeeded = false;
                 }
+                else if (domGeoTiff)
+                {
+                    if (imageryOutputs.empty())
+                    {
+                        succeeded = writeDomGeoTiff(
+                            {},
+                            gisXyz,
+                            componentDirectory /
+                                std::filesystem::u8path(gisName + ".tif"));
+                    }
+                    else
+                    {
+                        for (const std::filesystem::path& imageryOutput :
+                             imageryOutputs)
+                        {
+                            const std::string outputName =
+                                PathToUtf8(
+                                    imageryOutput.parent_path().filename());
+                            if (!writeDomGeoTiff(
+                                    imageryOutput,
+                                    gisXyz,
+                                    componentDirectory /
+                                        std::filesystem::u8path(
+                                            outputName + ".tif")))
+                            {
+                                succeeded = false;
+                                break;
+                            }
+                        }
+                    }
+                }
                 else if (!imageryOutputs.empty())
                 {
                     const auto cancelled = [&manager] { return manager.IsCancellationRequested(); };
@@ -1272,12 +1434,18 @@ bool ExportGroupedRunner::Run(
                     {
                         if (merged)
                         {
-                            std::filesystem::path composite =
+                            const std::filesystem::path composite =
                                 componentDirectory /
-                                imageryOutput.parent_path().filename();
-                            composite += "." + imageFormat;
+                                std::filesystem::u8path(
+                                    PathToUtf8(
+                                        imageryOutput.parent_path().filename()) +
+                                    "." + imageFormat);
                             if (!ExportImageComposer::CompositeImage(
-                                    imageryOutput, gisImage, composite, error, cancelled))
+                                    imageryOutput,
+                                    gisImage,
+                                    composite,
+                                    error,
+                                    cancelled))
                             {
                                 succeeded = false;
                                 break;
@@ -1317,6 +1485,50 @@ bool ExportGroupedRunner::Run(
                     std::filesystem::remove_all(temporaryRoot, removeError);
                 }
             }
+            if (succeeded && domGeoTiff)
+            {
+                std::error_code removeError;
+                std::filesystem::remove_all(temporaryRoot, removeError);
+            }
+        }
+        else if (component.kind == ExportComponentKind::DemGeoTiff)
+        {
+            if (!componentElevation)
+            {
+                error = "DEM GeoTIFF 缺少高程数据。";
+                return false;
+            }
+            const std::optional<DownTool::WebMercatorRasterGrid> demGrid =
+                DownTool::BuildWebMercatorSampleGrid(
+                    *exportBounds,
+                    component.elevationSampleMeters);
+            if (!demGrid.has_value())
+            {
+                error = "无法计算 DEM GeoTIFF 像素网格。";
+                return false;
+            }
+            succeeded = DownTool::WriteDemGeoTiff(
+                *componentElevation,
+                componentDirectory / "DEM.tif",
+                *demGrid,
+                queuedExport.configuration.polygonsWgs84,
+                [&manager] { return manager.IsCancellationRequested(); },
+                [&manager, taskId = queuedExport.taskId, stepIndex, stepCount](
+                    const uint64_t completed,
+                    const uint64_t total)
+                {
+                    const double ratio = total == 0 ? 0. :
+                        static_cast<double>(completed) /
+                            static_cast<double>(total);
+                    manager.UpdateProgress(
+                        taskId,
+                        "生成 DEM GeoTIFF",
+                        (static_cast<double>(stepIndex) + ratio) /
+                            static_cast<double>(stepCount),
+                        completed,
+                        total);
+                },
+                error);
         }
         else if (component.kind == ExportComponentKind::BuildingModel)
         {

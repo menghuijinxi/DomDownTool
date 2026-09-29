@@ -1079,6 +1079,16 @@ std::optional<ExportConfiguration> loadLegacyTaskConfiguration(
             }
             continue;
         }
+        const std::string terrainBudgetValue = conversionRecordValue(
+            line, "地形每块三角面上限（0不限）：");
+        if (!terrainBudgetValue.empty())
+        {
+            if (const auto budget = parseUint32(terrainBudgetValue))
+            {
+                configuration.SetTerrainMaximumTriangles(*budget);
+            }
+            continue;
+        }
         const std::string buildingValue = conversionRecordValue(line, "建筑按高度着色: ");
         if (!buildingValue.empty())
         {
@@ -5075,6 +5085,10 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
                 configuration.mergedImageFormat = component.imageFormat;
                 configuration.mergedImageResolution = component.maxEdge;
             }
+            else if (component.kind == ExportComponentKind::DemGeoTiff)
+            {
+                configuration.exportTerrainHeight = true;
+            }
             else if (component.kind == ExportComponentKind::StandardXyz)
             {
                 configuration.exportTiles = true;
@@ -5084,6 +5098,8 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
                 configuration.exportFbx = true;
                 configuration.fbxTextureSize = component.textureSize;
                 configuration.fbxTextureFormat = component.textureFormat;
+                configuration.fbxTerrainSampleRateMeters = component.elevationSampleMeters;
+                configuration.SetTerrainMaximumTriangles(component.GetTerrainMaximumTriangles());
                 configuration.exportTerrainHeight = configuration.exportTerrainHeight ||
                     component.exportElevation;
             }

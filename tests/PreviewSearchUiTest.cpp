@@ -203,6 +203,10 @@ std::string exportBasePlatePanelScrollContentFixture()
         "<label class=\"export-field-row is-disabled\"><span>采样率（米）</span>"
         "<input id=\"export-act-set-sample__c-base\" type=\"number\" "
         "value=\"30\" disabled></label>"
+        "<label class=\"export-field-row is-disabled\"><span class=\"export-terrain-budget-label\">"
+        "<span>每块三角面上限</span><span>（0不限）</span></span>"
+        "<input id=\"export-act-set-terrain-budget__c-base\" type=\"number\" "
+        "value=\"8192\" disabled></label>"
         "<label class=\"export-field-row is-disabled\"><span>网格细分</span>"
         "<input id=\"export-act-set-subdivision__c-base\" type=\"number\" "
         "value=\"32\" disabled></label>"
@@ -761,6 +765,10 @@ bool runTest()
                                                "min-width: 240px;") &&
                 postprocess_test::ContainsText(composerPath, "ResetExportComposer") &&
                 postprocess_test::ContainsText(composerPath, "RenderExportComposer") &&
+                postprocess_test::ContainsText(composerPath, "dom-geotiff") &&
+                postprocess_test::ContainsText(composerPath, "dem-geotiff") &&
+                postprocess_test::ContainsText(composerPath, "EPSG:3857") &&
+                postprocess_test::ContainsText(composerPath, "原始瓦片分辨率") &&
                 postprocess_test::ContainsText(composerPath,
                                                "export-panel-scroll-content") &&
                 postprocess_test::ContainsText(
@@ -1651,9 +1659,10 @@ bool runTest()
     rerenderBasePlateOnShapeClick = true;
     basePlateRerenderSucceeded = false;
     lastClickId.clear();
-    sendMouse(runtime, skui::EventType::MouseMove, 1273.F, 514.F);
-    sendMouse(runtime, skui::EventType::MouseDown, 1273.F, 514.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 1273.F, 514.F);
+    const float scrolledShapeY = 653.F - basePlateScrollTarget;
+    sendMouse(runtime, skui::EventType::MouseMove, 1273.F, scrolledShapeY);
+    sendMouse(runtime, skui::EventType::MouseDown, 1273.F, scrolledShapeY);
+    sendMouse(runtime, skui::EventType::MouseUp, 1273.F, scrolledShapeY);
     rerenderBasePlateOnShapeClick = false;
     if (!postprocess_test::Require(
             lastClickId == "export-act-set-shape__c-base__sphere" &&
@@ -1689,6 +1698,16 @@ bool runTest()
                 narrowBasePlatePanelScroll->maxScrollX <= 0.5F &&
                 narrowBasePlatePanelScroll->maxScrollY > 0.F,
             "窄窗口长参数面板没有保持仅纵向滚动"))
+    {
+        return false;
+    }
+    if (!postprocess_test::Require(
+            runtime.setScrollOffsetById("export-panel-body", 0.F,
+                                       narrowBasePlatePanelScroll->maxScrollY),
+            "无法滚动到窄窗口地形预算字段") ||
+        !writeRuntimeScreenshot(
+            runtime, sourceRoot / "tmp" / "preview-export-base-plate-budget-narrow.png",
+            1100, kHeight))
     {
         return false;
     }

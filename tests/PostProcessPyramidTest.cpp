@@ -363,6 +363,11 @@ namespace
                 tool.PostProcessTilePath(DownTool::Tile(0, 0, 0)), tileSize, tileSize) ||
             !postprocess_test::RequireNonEmptyFile(
                 tool.PostProcessRootPath() / "meta.json") ||
+            !postprocess_test::Require(
+                postprocess_test::ContainsText(
+                    tool.PostProcessRootPath() / "meta.json",
+                    "\"proj\":3857"),
+                "XYZ meta.json 没有声明 EPSG:3857") ||
             !postprocess_test::RequireNonEmptyFile(
                 tool.PostProcessRootPath() / "tilemapresource.xml"))
         {

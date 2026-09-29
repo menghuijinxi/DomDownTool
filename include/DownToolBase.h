@@ -128,6 +128,9 @@ namespace DownTool
 		//是否在下载完成后自动执行瓦片后处理
 		bool PostProcessEnabled = false;
 
+		//是否只生成最高层级后处理瓦片，不生成低层级金字塔和元数据
+		bool PostProcessMaxZoomOnlyEnabled = false;
+
 		//是否在下载完成后把请求范围合并成一张大图
 		bool PostProcessMergedImageEnabled = false;
 
@@ -164,6 +167,7 @@ namespace DownTool
 
 		//FBX 高程采样间距，单位米
 		double FbxTerrainSampleRateMeters = 30.;
+        uint32_t FbxTerrainMaximumTriangles = 0;
 
 		//输入 WGS84 经纬度，返回相对同一垂直基准的高程米数
 		std::function<std::optional<double>(const LonLat&)> FbxElevationSampler;
@@ -404,7 +408,7 @@ namespace DownTool
 			uint32_t& columnCount,
 			uint32_t& rowCount) const;
 
-        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Proxy, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxTextureFormat, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTerrainHeightEnabled, FbxElevationReferenceMeters, FbxTerrainSampleRateMeters, FbxElevationSampler, FbxTextureDistanceOffsets, TileSize, ProgressCallback)
+        GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Proxy, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMaxZoomOnlyEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxTextureFormat, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTerrainHeightEnabled, FbxElevationReferenceMeters, FbxTerrainSampleRateMeters, FbxTerrainMaximumTriangles, FbxElevationSampler, FbxTextureDistanceOffsets, TileSize, ProgressCallback)
 
 		const Wgs84Polygons& GetDownloadPolygonsWgs84() const
 		{

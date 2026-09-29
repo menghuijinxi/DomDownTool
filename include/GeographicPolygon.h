@@ -26,6 +26,9 @@ struct GeographicBounds
 [[nodiscard]] std::optional<GeographicBounds> CalculateGeographicBounds(
     const Wgs84Polygons& polygons);
 
+[[nodiscard]] std::optional<GeographicBounds> CalculateGeographicBounds(
+    const LonLat& centerWgs84, double radiusMeters);
+
 [[nodiscard]] LonLat GeographicBoundsCenter(const GeographicBounds& bounds);
 
 [[nodiscard]] double GeographicBoundsRadiusMeters(

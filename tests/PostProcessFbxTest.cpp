@@ -1,7 +1,9 @@
 #include "PostProcessTestSupport.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -531,6 +533,164 @@ namespace
             sharedEdgeCount > 0, "接缝测试没有找到相邻的地形块");
     }
 
+    bool RequireFbxNormalsUseEqualFaceWeights(
+        const std::filesystem::path& fbxPath)
+    {
+        using NormalKey = std::array<int64_t, 2>;
+        struct NormalSums
+        {
+            std::array<double, 3> equalWeight{};
+            std::array<double, 3> areaWeight{};
+        };
+
+        const auto makeNormalKey = [](const aiVector3D& vertex)
+        {
+            constexpr double keyScale = 1000.;
+            return NormalKey{
+                static_cast<int64_t>(std::llround(vertex.x * keyScale)),
+                static_cast<int64_t>(std::llround(vertex.y * keyScale))};
+        };
+        const auto vectorLength = [](const std::array<double, 3>& vector)
+        {
+            return std::sqrt(
+                vector[0] * vector[0] +
+                vector[1] * vector[1] +
+                vector[2] * vector[2]);
+        };
+        const auto normalizedDot = [&](const std::array<double, 3>& first,
+                                       const std::array<double, 3>& second)
+        {
+            const double firstLength = vectorLength(first);
+            const double secondLength = vectorLength(second);
+            if (firstLength <= std::numeric_limits<double>::epsilon() ||
+                secondLength <= std::numeric_limits<double>::epsilon())
+            {
+                return -1.;
+            }
+            return (
+                first[0] * second[0] +
+                first[1] * second[1] +
+                first[2] * second[2]) /
+                (firstLength * secondLength);
+        };
+
+        Assimp::Importer importer;
+        const aiScene* scene = postprocess_test::ReadFbxScene(importer, fbxPath);
+        if (!postprocess_test::Require(
+                scene != nullptr, "法线权重检查无法读取 FBX"))
+        {
+            return false;
+        }
+
+        std::map<NormalKey, NormalSums> normalSums;
+        for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes;
+             meshIndex++)
+        {
+            const aiMesh* mesh = scene->mMeshes[meshIndex];
+            if (!postprocess_test::Require(
+                    mesh != nullptr && mesh->HasNormals(),
+                    "地形 FBX 缺少可检查的显式法线"))
+            {
+                return false;
+            }
+
+            for (unsigned int faceIndex = 0; faceIndex < mesh->mNumFaces;
+                 faceIndex++)
+            {
+                const aiFace& face = mesh->mFaces[faceIndex];
+                if (!postprocess_test::Require(
+                        face.mNumIndices == 3, "地形 FBX 包含非三角形面"))
+                {
+                    return false;
+                }
+
+                const aiVector3D& first = mesh->mVertices[face.mIndices[0]];
+                const aiVector3D& second = mesh->mVertices[face.mIndices[1]];
+                const aiVector3D& third = mesh->mVertices[face.mIndices[2]];
+                const std::array<double, 3> firstEdge{
+                    second.x - first.x,
+                    second.y - first.y,
+                    second.z - first.z};
+                const std::array<double, 3> secondEdge{
+                    third.x - first.x,
+                    third.y - first.y,
+                    third.z - first.z};
+                const std::array<double, 3> faceNormal{
+                    firstEdge[1] * secondEdge[2] -
+                        firstEdge[2] * secondEdge[1],
+                    firstEdge[2] * secondEdge[0] -
+                        firstEdge[0] * secondEdge[2],
+                    firstEdge[0] * secondEdge[1] -
+                        firstEdge[1] * secondEdge[0]};
+                const double faceNormalLength = vectorLength(faceNormal);
+                if (faceNormalLength <= std::numeric_limits<double>::epsilon())
+                {
+                    continue;
+                }
+
+                for (unsigned int faceVertexIndex = 0;
+                     faceVertexIndex < face.mNumIndices;
+                     faceVertexIndex++)
+                {
+                    const unsigned int vertexIndex =
+                        face.mIndices[faceVertexIndex];
+                    NormalSums& sums =
+                        normalSums[makeNormalKey(mesh->mVertices[vertexIndex])];
+                    for (size_t component = 0; component < 3; component++)
+                    {
+                        sums.equalWeight[component] +=
+                            faceNormal[component] / faceNormalLength;
+                        sums.areaWeight[component] += faceNormal[component];
+                    }
+                }
+            }
+        }
+
+        bool foundAreaSensitiveVertex = false;
+        for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes;
+             meshIndex++)
+        {
+            const aiMesh& mesh = *scene->mMeshes[meshIndex];
+            for (unsigned int vertexIndex = 0; vertexIndex < mesh.mNumVertices;
+                 vertexIndex++)
+            {
+                const auto sums = normalSums.find(
+                    makeNormalKey(mesh.mVertices[vertexIndex]));
+                if (!postprocess_test::Require(
+                        sums != normalSums.end(), "地形顶点缺少累计面法线"))
+                {
+                    return false;
+                }
+
+                const aiVector3D& actual = mesh.mNormals[vertexIndex];
+                const std::array<double, 3> actualNormal{
+                    actual.x, actual.y, actual.z};
+                const double normalDot =
+                    normalizedDot(sums->second.equalWeight, actualNormal);
+                if (!postprocess_test::Require(
+                        normalDot >= 0.999,
+                        fmt::format(
+                            "地形法线不是单位面法线等权平均，mesh={} vertex={} 点积={}",
+                            meshIndex,
+                            vertexIndex,
+                            normalDot)))
+                {
+                    return false;
+                }
+
+                foundAreaSensitiveVertex =
+                    foundAreaSensitiveVertex ||
+                    normalizedDot(
+                        sums->second.equalWeight,
+                        sums->second.areaWeight) < 0.999;
+            }
+        }
+
+        return postprocess_test::Require(
+            foundAreaSensitiveVertex,
+            "法线测试地形没有覆盖面积权重与等权平均的差异");
+    }
+
     std::filesystem::path FindFirstPng(const std::filesystem::path& directory)
     {
         std::error_code iteratorError;
@@ -804,9 +964,29 @@ namespace
             !postprocess_test::Require(
                 postprocess_test::ContainsText(
                     sampleRateFbx / "manifest.json", "\"terrainsamplerate\":10"),
-                "FBX 清单没有记录高度采样率"))
+                "FBX 清单没有记录高度采样率") ||
+            !RequireFbxNormalsUseEqualFaceWeights(
+                sampleRateFbx / "plane.fbx"))
         {
             return false;
+        }
+
+        for (uint32_t budget : {2u, 31u, 128u})
+        {
+            sampleRateTool.SetFbxTerrainMaximumTriangles(budget);
+            sampleRateTool.RunPostProcessForTest();
+            const auto faces = CountFbxFacesByMesh(sampleRateFbx / "plane.fbx");
+            if (!postprocess_test::Require(
+                    !faces.empty() && std::ranges::max(faces) <= budget,
+                    "每块地形面数超出预算") ||
+                !RequireFbxTerrainSeamsClosed(sampleRateFbx / "plane.fbx") ||
+                !postprocess_test::Require(
+                    postprocess_test::ContainsText(sampleRateFbx / "manifest.json",
+                        "\"terrainmaximumtriangles\":" + std::to_string(budget)),
+                    "FBX 清单没有记录地形面数预算"))
+            {
+                return false;
+            }
         }
 
         std::cout << "PostProcessFbxTest passed\n";

@@ -265,6 +265,7 @@ DomDownToolPreview::ExportConfiguration makeCancelableConfiguration(
     configuration.exportTiles = true;
     configuration.fbxTextureFormat = "jpg";
     configuration.fbxTerrainSampleRateMeters = 60.;
+    configuration.SetTerrainMaximumTriangles(8192);
     configuration.satelliteSources.push_back(
         {"test.satellite", "测试卫星", outputRoot / "cache"});
     return configuration;
@@ -994,6 +995,7 @@ bool runTest()
             "test.satellite.second", "测试卫星",
             DomDownToolPreview::ExportSourceKind::Imagery,
             testRoot / "grouped-cache-second"});
+        component.SetTerrainMaximumTriangles(4096);
         group.components.push_back(std::move(component));
         configuration.groups.push_back(std::move(group));
 
@@ -1014,6 +1016,8 @@ bool runTest()
                     record->configuration->groups.size() == 1 &&
                     record->configuration->groups.front().components.size() == 1 &&
                     record->configuration->groups.front().components.front().maxEdge == 8192 &&
+                    record->configuration->groups.front().components.front().
+                        GetTerrainMaximumTriangles() == 4096 &&
                     std::filesystem::exists(
                         componentRoot / std::filesystem::u8path("测试卫星.png")) &&
                     std::filesystem::exists(
@@ -1034,7 +1038,9 @@ bool runTest()
                     configuration->groups.front().name == "卫星底图" &&
                     configuration->groups.front().components.size() == 1 &&
                     configuration->groups.front().components.front().sources.size() == 2 &&
-                    configuration->groups.front().components.front().maxEdge == 8192,
+                    configuration->groups.front().components.front().maxEdge == 8192 &&
+                    configuration->groups.front().components.front().
+                        GetTerrainMaximumTriangles() == 4096,
                 "重启后没有恢复内容组、组件和图源参数"))
         {
             return false;
@@ -1192,6 +1198,7 @@ bool runTest()
                     !record->configuration->exportBuildingFbx &&
                     record->configuration->fbxTextureFormat == "jpg" &&
                     record->configuration->fbxTerrainSampleRateMeters == 60. &&
+                    record->configuration->GetTerrainMaximumTriangles() == 8192 &&
                     burstChangeCount.load(std::memory_order_relaxed) <= 10 &&
                     persistedHasConfiguration,
                 "任务记录没有保存可恢复的导出参数或高频进度触发了过量界面刷新"))
@@ -1217,6 +1224,7 @@ bool runTest()
                     !configuration->exportBuildingFbx &&
                     configuration->fbxTextureFormat == "jpg" &&
                     configuration->fbxTerrainSampleRateMeters == 60. &&
+                    configuration->GetTerrainMaximumTriangles() == 8192 &&
                     configuration->outputRoot == testRoot / "progress-burst-output" &&
                     configuration->satelliteSources.size() == 1 &&
                     configuration->satelliteSources.front().id == "test.satellite",

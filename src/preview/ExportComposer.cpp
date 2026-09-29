@@ -124,6 +124,10 @@ std::string KindName(ExportComponentKind kind)
     {
     case ExportComponentKind::MergedImage:
         return "大图";
+    case ExportComponentKind::DomGeoTiff:
+        return "DOM GeoTIFF";
+    case ExportComponentKind::DemGeoTiff:
+        return "DEM GeoTIFF";
     case ExportComponentKind::StandardXyz:
         return "标准 XYZ";
     case ExportComponentKind::RawTiles:
@@ -144,6 +148,10 @@ std::string KindValue(ExportComponentKind kind)
     {
     case ExportComponentKind::MergedImage:
         return "merged-image";
+    case ExportComponentKind::DomGeoTiff:
+        return "dom-geotiff";
+    case ExportComponentKind::DemGeoTiff:
+        return "dem-geotiff";
     case ExportComponentKind::StandardXyz:
         return "standard-xyz";
     case ExportComponentKind::RawTiles:
@@ -163,6 +171,14 @@ std::optional<ExportComponentKind> KindFrom(std::string_view value)
     if (value == "merged-image")
     {
         return ExportComponentKind::MergedImage;
+    }
+    if (value == "dom-geotiff")
+    {
+        return ExportComponentKind::DomGeoTiff;
+    }
+    if (value == "dem-geotiff")
+    {
+        return ExportComponentKind::DemGeoTiff;
     }
     if (value == "standard-xyz")
     {
@@ -189,12 +205,16 @@ std::optional<ExportComponentKind> KindFrom(std::string_view value)
 
 bool AllowsImagery(ExportComponentKind kind)
 {
-    return kind != ExportComponentKind::GeoJson && kind != ExportComponentKind::BuildingModel;
+    return kind != ExportComponentKind::GeoJson &&
+        kind != ExportComponentKind::BuildingModel &&
+        kind != ExportComponentKind::DemGeoTiff;
 }
 
 bool AllowsGis(ExportComponentKind kind)
 {
-    return kind != ExportComponentKind::RawTiles && kind != ExportComponentKind::BuildingModel;
+    return kind != ExportComponentKind::RawTiles &&
+        kind != ExportComponentKind::BuildingModel &&
+        kind != ExportComponentKind::DemGeoTiff;
 }
 
 std::string ShapeName(DownTool::FbxPlanetShape shape)
@@ -345,6 +365,12 @@ std::string ComponentSummary(const ExportComponent& component)
     case ExportComponentKind::MergedImage:
         return fmt::format("{} · {} · {}", names, FormatName(component.imageFormat),
                            component.maxEdge);
+    case ExportComponentKind::DomGeoTiff:
+        return fmt::format("{} · EPSG:3857 · 原始分辨率", names);
+    case ExportComponentKind::DemGeoTiff:
+        return fmt::format(
+            "EPSG:3857 · {:.0f} 米",
+            component.elevationSampleMeters);
     case ExportComponentKind::StandardXyz:
         return fmt::format("{} · {}", names, component.xyzTileSize);
     case ExportComponentKind::RawTiles:
@@ -492,6 +518,7 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
             component.textureFormat = configuration->fbxTextureFormat;
             component.exportElevation = configuration->exportTerrainHeight;
             component.elevationSampleMeters = configuration->fbxTerrainSampleRateMeters;
+            component.SetTerrainMaximumTriangles(configuration->GetTerrainMaximumTriangles());
             group.components.push_back(std::move(component));
         };
         if (configuration->exportMergedImage || configuration->exportTiles ||
@@ -868,9 +895,12 @@ std::string PanelBodyHtml(
 {
     std::string html;
     const bool building = component.kind == ExportComponentKind::BuildingModel;
-    html += "<div class=\"export-panel-section\"><span class=\"export-panel-label\">图源</span>";
-    html += SourceBlockHtml(component, openSourceMenu, timelines, !building);
-    html += "</div>";
+    if (component.kind != ExportComponentKind::DemGeoTiff)
+    {
+        html += "<div class=\"export-panel-section\"><span class=\"export-panel-label\">图源</span>";
+        html += SourceBlockHtml(component, openSourceMenu, timelines, !building);
+        html += "</div>";
+    }
     if (component.kind == ExportComponentKind::MergedImage)
     {
         const bool jpgLosesAlpha = component.imageFormat == "jpg" &&
@@ -888,6 +918,25 @@ std::string PanelBodyHtml(
         {
             html += "<p class=\"export-hint\">JPG 会丢失 GIS 透明通道。</p>";
         }
+        html += "</div>";
+    }
+    else if (component.kind == ExportComponentKind::DomGeoTiff)
+    {
+        html += "<div class=\"export-panel-section\"><span class=\"export-panel-label\">输出</span>";
+        html += "<p class=\"export-hint\">按当前导出层级的原始瓦片分辨率输出，"
+            "投影坐标系固定为 EPSG:3857。</p>";
+        html += "</div>";
+    }
+    else if (component.kind == ExportComponentKind::DemGeoTiff)
+    {
+        html += "<div class=\"export-panel-section\"><span class=\"export-panel-label\">输出</span>";
+        html += fmt::format(
+            "<label class=\"export-field-row\"><span>采样间距（米）</span>"
+            "<input id=\"export-act-set-sample__{}\" type=\"number\" "
+            "min=\"1\" step=\"1\" value=\"{:.0f}\"></label>",
+            component.id,
+            component.elevationSampleMeters);
+        html += "<p class=\"export-hint\">32 位浮点高程，投影坐标系固定为 EPSG:3857。</p>";
         html += "</div>";
     }
     else if (component.kind == ExportComponentKind::StandardXyz)
@@ -919,6 +968,13 @@ std::string PanelBodyHtml(
             "<input id=\"export-act-set-sample__{}\" type=\"number\" min=\"1\" step=\"1\" value=\"{:.0f}\"{}></label>",
             component.exportElevation ? "" : " is-disabled", component.id,
             component.elevationSampleMeters, component.exportElevation ? "" : " disabled");
+        html += fmt::format(
+            "<label class=\"export-field-row{}\"><span class=\"export-terrain-budget-label\">"
+            "<span>每块三角面上限</span><span>（0不限）</span></span>"
+            "<input id=\"export-act-set-terrain-budget__{}\" type=\"number\" min=\"0\" "
+            "max=\"4294967295\" step=\"1\" value=\"{}\"{}></label>",
+            component.exportElevation ? "" : " is-disabled", component.id,
+            component.GetTerrainMaximumTriangles(), component.exportElevation ? "" : " disabled");
         html += fmt::format(
             "<label class=\"export-field-row{}\"><span>网格细分</span>"
             "<input id=\"export-act-set-subdivision__{}\" type=\"number\" min=\"1\" step=\"1\" value=\"{}\"{}></label>",
@@ -1052,9 +1108,14 @@ void DomDownToolPreview::PreviewController::RenderExportComposer(skui::Runtime& 
         {
             menu = "<div class=\"export-menu\">";
             constexpr ExportComponentKind kKinds[] = {
-                ExportComponentKind::MergedImage, ExportComponentKind::StandardXyz,
-                ExportComponentKind::RawTiles, ExportComponentKind::BasePlate,
-                ExportComponentKind::BuildingModel, ExportComponentKind::GeoJson};
+                ExportComponentKind::MergedImage,
+                ExportComponentKind::DomGeoTiff,
+                ExportComponentKind::DemGeoTiff,
+                ExportComponentKind::StandardXyz,
+                ExportComponentKind::RawTiles,
+                ExportComponentKind::BasePlate,
+                ExportComponentKind::BuildingModel,
+                ExportComponentKind::GeoJson};
             for (const ExportComponentKind kind : kKinds)
             {
                 menu += fmt::format(
@@ -1430,6 +1491,17 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
             {
                 component->elevationSampleMeters = *sample;
                 runtime.setTextById("export-summary__" + component->id, ComponentSummary(*component));
+            }
+        }
+        refresh = false;
+    }
+    else if (verb == "set-terrain-budget")
+    {
+        if (ExportComponent* component = findComponent(first))
+        {
+            if (const auto budget = ParseUnsigned(value))
+            {
+                component->SetTerrainMaximumTriangles(*budget);
             }
         }
         refresh = false;

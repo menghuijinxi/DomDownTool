@@ -265,6 +265,59 @@ DownTool::CalculateGeographicBounds(const Wgs84Polygons& polygons)
     return bounds;
 }
 
+std::optional<DownTool::GeographicBounds>
+DownTool::CalculateGeographicBounds(
+    const LonLat& centerWgs84, const double radiusMeters)
+{
+    if (!IsFiniteCoordinate(centerWgs84) ||
+        centerWgs84.lon < -180. || centerWgs84.lon > 180. ||
+        centerWgs84.lat < -90. || centerWgs84.lat > 90. ||
+        !std::isfinite(radiusMeters) || radiusMeters <= 0.)
+    {
+        return std::nullopt;
+    }
+
+    GeographicBounds bounds;
+    GeographicLib::Math::real unused;
+    const GeographicLib::Geodesic& geodesic =
+        GeographicLib::Geodesic::WGS84();
+    geodesic.Direct(
+        centerWgs84.lat,
+        centerWgs84.lon,
+        0.,
+        radiusMeters,
+        bounds.north,
+        unused);
+    geodesic.Direct(
+        centerWgs84.lat,
+        centerWgs84.lon,
+        180.,
+        radiusMeters,
+        bounds.south,
+        unused);
+    geodesic.Direct(
+        centerWgs84.lat,
+        centerWgs84.lon,
+        90.,
+        radiusMeters,
+        unused,
+        bounds.east);
+    geodesic.Direct(
+        centerWgs84.lat,
+        centerWgs84.lon,
+        270.,
+        radiusMeters,
+        unused,
+        bounds.west);
+
+    if (bounds.west > bounds.east)
+    {
+        bounds.west = -180.;
+        bounds.east = 180.;
+    }
+    return bounds;
+}
+
 DownTool::LonLat DownTool::GeographicBoundsCenter(
     const GeographicBounds& bounds)
 {

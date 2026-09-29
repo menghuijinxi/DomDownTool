@@ -70,6 +70,8 @@ using ExportDownloaderFactory =
 enum class ExportComponentKind
 {
     MergedImage,
+    DomGeoTiff,
+    DemGeoTiff,
     StandardXyz,
     RawTiles,
     BasePlate,
@@ -129,6 +131,12 @@ struct ExportComponent
     std::string basePlateComponentId;
     bool includeBaseLayers = true;
     bool includeLabels = false;
+
+    uint32_t GetTerrainMaximumTriangles() const { return terrainMaximumTriangles_; }
+    void SetTerrainMaximumTriangles(uint32_t value) { terrainMaximumTriangles_ = value; }
+
+protected:
+    uint32_t terrainMaximumTriangles_ = 0;
 };
 
 struct ExportContentGroup
@@ -186,6 +194,12 @@ struct ExportConfiguration
     uint32_t executionTileSize = 0;
     uint32_t executionFbxSubdivision = 0;
     std::optional<DownTool::FbxPlanetShape> executionFbxShape;
+
+    uint32_t GetTerrainMaximumTriangles() const { return terrainMaximumTriangles_; }
+    void SetTerrainMaximumTriangles(uint32_t value) { terrainMaximumTriangles_ = value; }
+
+protected:
+    uint32_t terrainMaximumTriangles_ = 0;
 };
 
 struct ExportTaskRecord
@@ -268,6 +282,7 @@ class ExportTaskManager
         uint32_t maxDownloadQueue = 0;
         bool transparentMultidateEmptyTiles = false;
         bool forceMultidateLatestWmts = false;
+        bool maxZoomTilesOnly = false;
         bool reportStepComplete = true;
         std::optional<bool> exportTilesOverride;
         std::optional<bool> exportMergedImageOverride;
@@ -292,7 +307,8 @@ class ExportTaskManager
                             const SatelliteExportSource& source,
                             const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
                             size_t stepIndex, size_t stepCount,
-                            std::string& error);
+                            std::string& error,
+                            bool maxZoomTilesOnly = false);
 
     bool RunSatelliteDownloaderToRoot(
         const QueuedExport& queuedExport,
@@ -307,7 +323,8 @@ class ExportTaskManager
         const SatelliteExportSource& source,
         const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
         size_t stepIndex, size_t stepCount,
-        std::string& error);
+        std::string& error,
+        bool maxZoomTilesOnly = false);
 
     bool RunGisExport(const QueuedExport& queuedExport,
                       const std::set<DownTool::AmapVectorRenderCategory>& categories,

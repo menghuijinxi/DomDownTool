@@ -7,7 +7,7 @@
 1. 重新整理瓦片金字塔，生成低层级瓦片、`meta.json` 和 `tilemapresource.xml`。
 2. 将高德、腾讯等 GCJ02 源瓦片转换成去火星偏移后的 Google Mercator 瓦片，并按目标贴图大小生成中心锚定贴图和 FBX 网格。
 
-这里的“转换成 WGS84”定义为：输出瓦片仍使用 Google/XYZ 瓦片编号规则，瓦片代表的经纬度语义为 WGS84，不再带 GCJ02 火星偏移。元数据字段以 `GaoDeTiffTileDownloadComponent::StartDownloadGenerateGoogleTile` 为准。
+这里的“转换成 WGS84”定义为：输出瓦片仍使用 Google/XYZ 瓦片编号规则和 Web Mercator 投影，瓦片内容对应的地理位置使用 WGS84 经纬度，不再带 GCJ02 火星偏移。`meta.json` 的 `proj` 与实际瓦片矩阵保持一致，写为 `3857`。
 
 ## 参考实现
 
@@ -50,26 +50,28 @@
 默认目标网格固定为：
 
 - 瓦片矩阵：Google/XYZ。
-- 元数据投影字段：按 `GaoDeTiffTileDownloadComponent` 写 `proj = 4326`。
+- 元数据投影字段：`proj = 3857`。
 - 经纬度语义：WGS84。
 - 默认瓦片大小：256。
 - 最高层级：下载任务指定的最高层级。
 
 每个输出瓦片都从自己的 Google/XYZ 坐标反算 WGS84 经纬度范围，再反查源瓦片采样。这样输出范围和像素边界完全由目标网格决定，不依赖 GeoTIFF 裁剪时的四舍五入。
 
-注意：这里的 `proj = 4326` 是现有高德组件的元数据约定，表示 `bounds` / `latLonBounds` 使用 WGS84 经纬度；它不改变瓦片编号仍使用 Google/XYZ 的事实。
+注意：`proj` 描述瓦片矩阵采用的坐标参考系，因此 Google/XYZ 应写 `3857`。`bounds` / `latLonBounds` 仍保留 WGS84 经纬度数值，供现有读取端定位地理范围。
 
-### GeoTIFF/VRT 只作为辅助路径
+### GeoTIFF 作为独立导出路径
 
-大 GeoTIFF 或 VRT 可以作为调试输出或后续导出能力，但不作为主切片路径。原因是 GDAL 自动 warp/translate 时，如果 `extent`、`resolution`、像素外边界和瓦片矩阵没有完全对齐，容易产生半像素误差、边缘透明洞或少一行/一列。
+大 GeoTIFF 不作为主切片路径，而是和 XYZ、大图、FBX 并列的独立导出组件。DOM 和 DEM GeoTIFF 都固定使用 EPSG:3857，避免维护另一套 EPSG:4326 栅格写出逻辑。
 
-如果未来提供 GeoTIFF/VRT 路径，必须显式指定：
+GeoTIFF 写出必须显式指定：
 
-- 输出范围 `te`。
-- 输出分辨率 `tr`。
-- 与瓦片矩阵一致的 origin。
-- nodata/alpha 策略。
-- 是否使用 target aligned pixels。
+- DOM 使用当前导出层级的 Google/XYZ 原始瓦片尺寸，图像像元与瓦片矩阵对齐，
+  不设置人为最大边；写出过程按 TIFF 分块流式处理，不生成整张中间大图，预计超过
+  经典 TIFF 容量时自动使用 BigTIFF。
+- DEM 使用用户设置的米制采样间距生成单通道 32 位浮点栅格。
+- DOM 未选中的瓦片位置写透明，KML 边界仍保留与多边形相交的完整瓦片；DEM
+  范围外像元写 NoData。
+- GeoTIFF 的 ModelPixelScale、ModelTiepoint 和 GeoKeyDirectory 明确声明 EPSG:3857。
 
 ## 功能一：下载后重新切片
 
@@ -88,13 +90,12 @@
    - 使用 `INTER_AREA` 缩放到 256。
 4. 生成 `meta.json`：
    - `bounds` / `latLonBounds` 使用 WGS84 经纬度。
-   - `proj = 4326`，和 `GaoDeTiffTileDownloadComponent` 保持一致。
+   - `proj = 3857`，与 Google/XYZ Web Mercator 瓦片矩阵一致。
    - `tiletrans = "google"`。
    - `minzoom = 0`，`maxzoom = maxZoom`。
 5. 生成 `tilemapresource.xml`：
-   - `GaoDeTiffTileDownloadComponent::StartDownloadGenerateGoogleTile` 当前只写 `meta.json`，没有写 `tilemapresource.xml`。
-   - 本工具如果补充生成 XML，应作为兼容文件单独处理，不能反向修改 `meta.json` 的 `proj = 4326` 约定。
-   - 对 Google/XYZ 输出，XML 按 WMTS 兼容语义写 `SRS = EPSG:3857`、`profile = global-mercator`，BoundingBox 写 Web Mercator 米制坐标。
+   - 对 Google/XYZ 输出，XML 写 `SRS = EPSG:3857`、`profile = global-mercator`，BoundingBox 写 Web Mercator 米制坐标。
+   - XML 和 `meta.json` 对瓦片矩阵投影保持一致。
 
 ### 边界策略
 
@@ -236,6 +237,16 @@ FBX 贴图覆盖下载任务的方形瓦片范围，不做圆形裁剪：
 
 贴图的 WGS84 bounds 由它覆盖的全局像素范围反算，而不是由参与采样的瓦片外边界推导。这样纹理、网格和 UV 的边界完全一致。
 
+### 地形面数预算
+
+启用 DEM 的底板网格在完整高度采样后，使用 CDT 初始化共享矩形边界，再通过
+hmm 渐进细化在误差最大处逐点增加细节。采样间距与每块面数上限相互独立；
+预算为 0 时不限，预算为正数时严格控制每个贴图地块的面数。
+共享边先合并，再以同一结果同步到两侧；必要时按高度插值误差共同减少边界点，
+为内部细化保留约一半预算。不会分别减面产生 T 型接缝，也不通过裙边遮盖接缝。
+默认法线及高光处理保持不变。选型、误差定义与实测见
+`../knowledge/terrain-simplification-study.md`。
+
 ### 距离降级
 
 `TextureDistanceOffsets` 用来减少远距离贴图的尺寸，降低硬盘和显存占用。语义沿用参考脚本：
@@ -354,6 +365,11 @@ output/
     {maxZoom}/
     meta.json
     tilemapresource.xml
+  GeoTIFF/
+    DOM GeoTIFF/
+      {图源名}.tif
+    DEM GeoTIFF/
+      DEM.tif
   FBX/
     manifest.json
     {gridX}_{gridY}.png

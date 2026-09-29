@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -335,7 +336,8 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
         {"mergedImageFormat", configuration.mergedImageFormat},
         {"fbxTextureSize", configuration.fbxTextureSize},
         {"fbxTextureFormat", NormalizeImageFormat(configuration.fbxTextureFormat)},
-        {"fbxTerrainSampleRateMeters", configuration.fbxTerrainSampleRateMeters}};
+        {"fbxTerrainSampleRateMeters", configuration.fbxTerrainSampleRateMeters},
+        {"terrainMaximumTriangles", configuration.GetTerrainMaximumTriangles()}};
     if (!configuration.groups.empty())
     {
         json["groups"] = DomDownToolPreview::ExportGroupsToJson(configuration.groups);
@@ -472,6 +474,9 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
         GetJsonString(value, "fbxTextureFormat"));
     configuration.fbxTerrainSampleRateMeters =
         GetJsonDouble(value, "fbxTerrainSampleRateMeters", 30.);
+    configuration.SetTerrainMaximumTriangles(static_cast<uint32_t>(std::clamp(
+        GetJsonDouble(value, "terrainMaximumTriangles", 0.), 0.,
+        double(std::numeric_limits<uint32_t>::max()))));
 
     const auto sources = value.find("satelliteSources");
     if (sources != value.end() && sources->is_array())
@@ -1126,6 +1131,12 @@ std::string BuildTaskDetailsText(const ExportConfiguration& configuration)
                 case ExportComponentKind::MergedImage:
                     addOutput("大图");
                     break;
+                case ExportComponentKind::DomGeoTiff:
+                    addOutput("DOM GeoTIFF");
+                    break;
+                case ExportComponentKind::DemGeoTiff:
+                    addOutput("DEM GeoTIFF");
+                    break;
                 case ExportComponentKind::StandardXyz:
                     addOutput("标准 XYZ");
                     break;
@@ -1292,6 +1303,8 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
            << (configuration.exportTerrainHeight ? "是" : "否") << "\n"
            << "FBX 高度采样率 (米): "
            << configuration.fbxTerrainSampleRateMeters << "\n"
+           << "地形每块三角面上限（0不限）："
+           << configuration.GetTerrainMaximumTriangles() << "\n"
            << "建筑按高度着色: "
            << (configuration.colorBuildingsByHeight ? "是" : "否") << "\n"
             << "建筑 FBX: "
@@ -1318,6 +1331,23 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
            << "建筑贴图随机种子: "
            << configuration.buildingTextureRandomSeed << "\n"
            << "结果: " << result << "\n";
+    for (const ExportContentGroup& group : configuration.groups)
+    {
+        if (!group.enabled)
+        {
+            continue;
+        }
+        for (const ExportComponent& component : group.components)
+        {
+            if (component.kind == ExportComponentKind::BasePlate && component.exportElevation)
+            {
+                output << "地形组件: " << group.name << " [" << component.id << "]\n"
+                       << "  高度采样率 (米): " << component.elevationSampleMeters << "\n"
+                       << "  每块三角面上限（0不限）: "
+                       << component.GetTerrainMaximumTriangles() << "\n";
+            }
+        }
+    }
     if (!output.good())
     {
         error = "写入导出转换记录失败。";
@@ -2152,13 +2182,20 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
     const QueuedExport& queuedExport, const SatelliteExportSource& source,
     const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
     size_t stepIndex, size_t stepCount,
-    std::string& error)
+    std::string& error,
+    const bool maxZoomTilesOnly)
 {
     const ExportConfiguration& configuration = queuedExport.configuration;
     if (IsTianDiTuMultidateHistorySource(source))
     {
         return RunTianDiTuMultidateCompositeExport(
-            queuedExport, source, elevationData, stepIndex, stepCount, error);
+            queuedExport,
+            source,
+            elevationData,
+            stepIndex,
+            stepCount,
+            error,
+            maxZoomTilesOnly);
     }
 
     SatelliteDownloadOptions options;
@@ -2166,6 +2203,7 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteExport(
     options.mergedImageFormat = NormalizeImageFormat(configuration.mergedImageFormat);
     options.fbxTextureFormat = NormalizeImageFormat(configuration.fbxTextureFormat);
     options.forceMultidateLatestWmts = IsTianDiTuMultidateSource(source);
+    options.maxZoomTilesOnly = maxZoomTilesOnly;
     return RunSatelliteDownloaderToRoot(
         queuedExport, source, options, elevationData, stepIndex, stepCount, error);
 }
@@ -2253,6 +2291,7 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteDownloaderToRoot(
         outputRoot / "FBX" : options.fbxOutputPathOverride;
     downloader->SetPostProcessOutputPath(PathToUtf8(xyzOutputRoot));
     downloader->SetPostProcessEnabled(exportTiles);
+    downloader->SetPostProcessMaxZoomOnlyEnabled(options.maxZoomTilesOnly);
     downloader->SetPostProcessMergedImageEnabled(exportMergedImage);
     const std::string mergedImageFormat = NormalizeImageFormat(options.mergedImageFormat);
     const std::filesystem::path mergedImagePath =
@@ -2267,6 +2306,7 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteDownloaderToRoot(
     downloader->SetFbxTextureFormat(NormalizeImageFormat(options.fbxTextureFormat));
     downloader->SetFbxTerrainSampleRateMeters(
         configuration.fbxTerrainSampleRateMeters);
+    downloader->SetFbxTerrainMaximumTriangles(configuration.GetTerrainMaximumTriangles());
     ConfigureFbxElevation(*downloader, elevationData);
     downloader->SetProgressCallback(
         [this, taskId = queuedExport.taskId, stepIndex, stepCount, options](
@@ -2309,6 +2349,13 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteDownloaderToRoot(
         error = "卫星 XYZ 瓦片未生成完整元数据。";
         return false;
     }
+    if (options.maxZoomTilesOnly &&
+        !std::filesystem::exists(
+            xyzOutputRoot / std::to_string(configuration.zoom)))
+    {
+        error = "卫星图最高层级瓦片未生成。";
+        return false;
+    }
     if (exportMergedImage && !std::filesystem::exists(mergedImagePath))
     {
         error = "卫星合并大图未生成。";
@@ -2334,7 +2381,8 @@ bool DomDownToolPreview::ExportTaskManager::RunTianDiTuMultidateCompositeExport(
     const SatelliteExportSource& source,
     const std::shared_ptr<DownTool::CopernicusDemData>& elevationData,
     size_t stepIndex, size_t stepCount,
-    std::string& error)
+    std::string& error,
+    const bool maxZoomTilesOnly)
 {
     const ExportConfiguration& configuration = queuedExport.configuration;
     const std::filesystem::path finalOutputRoot = SatelliteOutputRoot(
@@ -2374,6 +2422,7 @@ bool DomDownToolPreview::ExportTaskManager::RunTianDiTuMultidateCompositeExport(
     baseOptions.progressStagePrefix = "多时相底图 · ";
     baseOptions.stepProgressSpan = 0.42;
     baseOptions.forceMultidateLatestWmts = true;
+    baseOptions.maxZoomTilesOnly = maxZoomTilesOnly;
     baseOptions.reportStepComplete = false;
     if (!RunSatelliteDownloaderToRoot(
             queuedExport, baseSource, baseOptions, elevationData,
@@ -2391,6 +2440,7 @@ bool DomDownToolPreview::ExportTaskManager::RunTianDiTuMultidateCompositeExport(
     historyOptions.stepProgressSpan = 0.42;
     historyOptions.maxDownloadQueue = 2;
     historyOptions.transparentMultidateEmptyTiles = true;
+    historyOptions.maxZoomTilesOnly = maxZoomTilesOnly;
     historyOptions.reportStepComplete = false;
     if (!RunSatelliteDownloaderToRoot(
             queuedExport, source, historyOptions, elevationData,
@@ -2413,7 +2463,7 @@ bool DomDownToolPreview::ExportTaskManager::RunTianDiTuMultidateCompositeExport(
         return false;
     }
 
-    if (configuration.exportTiles &&
+    if ((configuration.exportTiles || maxZoomTilesOnly) &&
         !ExportImageComposer::CompositeXyzTileTree(
             finalOutputRoot / "XYZ",
             historyOutputRoot / "XYZ",
@@ -2448,6 +2498,14 @@ bool DomDownToolPreview::ExportTaskManager::RunTianDiTuMultidateCompositeExport(
         !std::filesystem::exists(finalOutputRoot / "XYZ" / "meta.json"))
     {
         error = "卫星 XYZ 瓦片未生成完整元数据。";
+        return false;
+    }
+    if (maxZoomTilesOnly &&
+        !std::filesystem::exists(
+            finalOutputRoot / "XYZ" /
+            std::to_string(configuration.zoom)))
+    {
+        error = "多时相最高层级瓦片未生成。";
         return false;
     }
     if (configuration.exportMergedImage &&
@@ -2586,6 +2644,7 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
         "png" : NormalizeImageFormat(configuration.fbxTextureFormat));
     downloader.SetFbxTerrainSampleRateMeters(
         configuration.fbxTerrainSampleRateMeters);
+    downloader.SetFbxTerrainMaximumTriangles(configuration.GetTerrainMaximumTriangles());
     ConfigureFbxElevation(downloader, elevationData);
     downloader.SetMaxDownQueue(std::max(1u, std::thread::hardware_concurrency()));
     downloader.SetProgressCallback(

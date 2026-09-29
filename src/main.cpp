@@ -67,6 +67,7 @@ namespace
         DownTool::FbxPlanetShape fbxShape = DownTool::FbxPlanetShape::Plane;
         uint32_t fbxSubdivision = 64;
         double fbxTerrainSampleRateMeters = 30.;
+        uint32_t fbxTerrainMaximumTriangles = 0;
         bool showHelp = false;
         bool dryRun = false;
     };
@@ -530,6 +531,15 @@ namespace
                     return false;
                 }
             }
+            else if (argument == "--fbx-terrain-max-triangles")
+            {
+                if (!ParseUint32(value, options.fbxTerrainMaximumTriangles) ||
+                    options.fbxTerrainMaximumTriangles == 1)
+                {
+                    error = "--fbx-terrain-max-triangles 必须是 0（不限）或至少 2。";
+                    return false;
+                }
+            }
             else if (argument == "--fbx-terrain-sample-rate")
             {
                 if (!ParseDouble(value, options.fbxTerrainSampleRateMeters) ||
@@ -676,6 +686,7 @@ namespace
         downloader.SetFbxShape(options.fbxShape);
         downloader.SetFbxMeshSubdivision(options.fbxSubdivision);
         downloader.SetFbxTerrainSampleRateMeters(options.fbxTerrainSampleRateMeters);
+        downloader.SetFbxTerrainMaximumTriangles(options.fbxTerrainMaximumTriangles);
         return outputRoot;
     }
 
@@ -732,6 +743,7 @@ namespace
             "  --fbx-shape <形态>            plane,sphere,both\n"
             "  --fbx-subdivision <数量>      球面网格细分数，默认 64\n"
             "  --fbx-terrain-sample-rate <米> 高度采样间距，默认 30\n"
+            "  --fbx-terrain-max-triangles <数量> 每个贴图地块的三角面上限，0 不限\n"
             "  --dry-run                    只检查并打印配置，不下载\n"
             "  -h, --help                    显示帮助\n\n"
             "示例：\n"
