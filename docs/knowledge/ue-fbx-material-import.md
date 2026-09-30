@@ -53,8 +53,8 @@ AssetTools 和 MaterialEditor。
 
 ## 自动化验证注意事项
 
-- UE FBX 重导入会恢复已有网格的 Nanite 开关。仅设置导入选项不够，
-  导入完成后还需显式应用本次开关，再构建和保存。
+- UE FBX 原生重导入保留已有网格的 Nanite 开关。新建网格应用导入选项，
+  重导入不可再次显式套用面板开关，否则会覆盖用户的资源设置。
 - 自动截图前必须提交并等待材质实际需要的 shader。仅等待当前编译队列可能遗漏延迟编译，
   导致截图拍到 WorldGridMaterial。测试检查渲染线程是否使用 fallback，并检查彩色像素，
   不把「成功写出 PNG」当作渲染正确。
@@ -102,3 +102,43 @@ AssetTools 和 MaterialEditor。
 回归入口 `MHJX.DomDown.TextureModes`：独立导入散图建筑、卫星屋顶建筑、
 atlas 建筑，检查只创建所需父材质、墙体/屋顶直接共享对应父材质和旧实例迁移。
 混合导入与实际渲染继续由 `MHJX.DomDown.RealExports` 覆盖。
+
+## 2026-09-30：重导入确认与资源设置保留
+
+现象：专用导入器没有覆盖确认，重导入后用户手动调整的减面、LOD、Nanite
+及贴图参数会丢失。影响合并和未合并 FBX，未合并网格的设置丢失范围更大。
+
+根因和排查：
+
+- 导入任务设置 `bAutomated=true`、`bReplaceExisting=true`，因此不会出现
+  通用导入器的覆盖询问，必须在本入口执行写操作前统一确认。
+- `UFbxFactory` 只对入口名称对应的已有资源转到原生重导入；未合并多网格的实际
+  名称带节点后缀，会经过覆盖创建，不能假定设置 `bReplaceExistingSettings=false`
+  就完整保留所有静态网格参数。
+- 导入后无条件写 Nanite 开关、BuildSettings 和贴图默认值，会进一步覆盖用户修改。
+- UE 5.5.4 `StaticMeshImportUtils::SaveExistingStaticMeshData` 按渲染 LOD 遍历，
+  新增但尚未构建的 LOD 可能没有完整快照；还需要保存这些源模型的设置。
+- 贴图普通覆盖创建仅恢复部分参数；`FReimportManager` 的原生贴图重导入在原对象
+  上更新 Source，保留最大尺寸等其他资源属性，不能用手工复制少数参数替代。
+
+解决方案：
+
+1. 校验所有输入后，查询各来源目录已有资源，整批弹一次确认；拒绝时没有资源写入。
+2. 对已有网格沿用 UE 的导入与快照恢复流程，按资产路径恢复 LOD、减面、构建、
+   碰撞等已有设置，另外保留未构建源模型及引擎会按导入选项修补的 Build/Nanite 设置。
+3. 已有图片通过 `FReimportManager::Reimport` 更新；资源默认值只用于新建网格和贴图。
+4. 继续同步生成实例的 MainTex 绑定，并保留已有父材质图；旧资产不自动删除。
+
+验证：`MHJX.DomDown.ReimportSettings` 在独立项目复制输入，修改未保存的资源设置，
+同时更新源顶点和 PNG 像素。检查合并/未合并两条路径、接受/拒绝、混合批次取消、
+Nanite 开关与面板选项相反、贴图属性保留及数据确实更新。最终 D3D12 SM6 为 6/6 通过。
+交互窗口的实际点击仍需人工验收，不能把无人值守默认拒绝视为界面已验收。
+
+本地源码参考：UE 5.5 `UnrealEd/Private/Fbx/FbxFactory.cpp`、
+`FbxStaticMeshImport.cpp`、`Private/ImportUtils/StaticMeshImportUtils.cpp`、
+`Private/Factories/EditorFactories.cpp`。使用游戏线程和现有 UE 模块，不引入第三方库。
+UE 部分 ReimportFactory 类型/内部函数没有模块导出，插件应通过公开管理器入口调用，
+不能依赖引擎内部未导出的类构造函数。
+
+快速检查：先辨别「重新导入」与「覆盖创建」路径，再查导入后是否无条件赋默认值；
+同时验证未保存设置、资源持久化和源数据刷新，不能只看资源对象是否仍存在。
