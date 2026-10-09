@@ -338,7 +338,8 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
         {"fbxTextureSize", configuration.fbxTextureSize},
         {"fbxTextureFormat", NormalizeImageFormat(configuration.fbxTextureFormat)},
         {"fbxTerrainSampleRateMeters", configuration.fbxTerrainSampleRateMeters},
-        {"terrainMaximumTriangles", configuration.GetTerrainMaximumTriangles()}};
+        {"terrainMaximumTriangles", configuration.GetTerrainMaximumTriangles()},
+        {"distanceLod", DownTool::FbxDistanceLodToJson(configuration.GetDistanceLod())}};
     if (!configuration.groups.empty())
     {
         json["groups"] = DomDownToolPreview::ExportGroupsToJson(configuration.groups);
@@ -480,6 +481,15 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
     configuration.SetTerrainMaximumTriangles(static_cast<uint32_t>(std::clamp(
         GetJsonDouble(value, "terrainMaximumTriangles", 0.), 0.,
         double(std::numeric_limits<uint32_t>::max()))));
+    if (const auto lodJson = value.find("distanceLod"); lodJson != value.end())
+    {
+        const auto settings = DownTool::FbxDistanceLodFromJson(*lodJson);
+        if (!settings)
+        {
+            return std::nullopt;
+        }
+        configuration.SetDistanceLod(*settings);
+    }
 
     const auto sources = value.find("satelliteSources");
     if (sources != value.end() && sources->is_array())
@@ -1308,6 +1318,8 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
            << configuration.fbxTerrainSampleRateMeters << "\n"
            << "地形每块三角面上限（0不限）："
            << configuration.GetTerrainMaximumTriangles() << "\n"
+           << "FBX 距离档位: "
+           << DownTool::FbxDistanceLodToJson(configuration.GetDistanceLod()).dump() << "\n"
            << "建筑按高度着色: "
            << (configuration.colorBuildingsByHeight ? "是" : "否") << "\n"
             << "建筑 FBX: "
@@ -1344,9 +1356,11 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
         }
         for (const ExportComponent& component : group.components)
         {
-            if (component.kind == ExportComponentKind::BasePlate && component.exportElevation)
+            if (component.kind == ExportComponentKind::BasePlate)
             {
-                output << "地形组件: " << group.name << " [" << component.id << "]\n"
+                output << "底板组件: " << group.name << " [" << component.id << "]\n"
+                       << "  距离档位: "
+                       << DownTool::FbxDistanceLodToJson(component.GetDistanceLod()).dump() << "\n"
                        << "  高度采样率 (米): " << component.elevationSampleMeters << "\n"
                        << "  每块三角面上限（0不限）: "
                        << component.GetTerrainMaximumTriangles() << "\n";
@@ -2005,6 +2019,14 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
     }
 
     const ExportConfiguration& configuration = queuedExport.configuration;
+    if (configuration.exportFbx)
+    {
+        error = configuration.GetDistanceLod().Validate();
+        if (!error.empty())
+        {
+            return false;
+        }
+    }
     if (configuration.exportBuildingFbx &&
         (!std::isfinite(configuration.GetBuildingChunkSizeMeters()) ||
             configuration.GetBuildingChunkSizeMeters() <= 0.))
@@ -2320,6 +2342,7 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteDownloaderToRoot(
     downloader->SetFbxTerrainSampleRateMeters(
         configuration.fbxTerrainSampleRateMeters);
     downloader->SetFbxTerrainMaximumTriangles(configuration.GetTerrainMaximumTriangles());
+    downloader->SetFbxDistanceLod(configuration.GetDistanceLod());
     ConfigureFbxElevation(*downloader, elevationData);
     downloader->SetProgressCallback(
         [this, taskId = queuedExport.taskId, stepIndex, stepCount, options](
@@ -2659,6 +2682,7 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
     downloader.SetFbxTerrainSampleRateMeters(
         configuration.fbxTerrainSampleRateMeters);
     downloader.SetFbxTerrainMaximumTriangles(configuration.GetTerrainMaximumTriangles());
+    downloader.SetFbxDistanceLod(configuration.GetDistanceLod());
     ConfigureFbxElevation(downloader, elevationData);
     downloader.SetMaxDownQueue(std::max(1u, std::thread::hardware_concurrency()));
     downloader.SetProgressCallback(

@@ -8,12 +8,110 @@
 #include <map>
 #include <numbers>
 #include <optional>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <vector>
 
+#include "nlohmann/json.hpp"
+
 namespace
 {
+    bool RequireDistanceLodOutputs(const std::filesystem::path& fbxRoot)
+    {
+        std::ifstream input(fbxRoot / "manifest.json");
+        const auto manifest = nlohmann::json::parse(input);
+        Assimp::Importer importer;
+        const aiScene* scene = postprocess_test::ReadFbxScene(importer, fbxRoot / "plane.fbx");
+        Assimp::Importer sphereImporter;
+        const aiScene* sphereScene =
+            postprocess_test::ReadFbxScene(sphereImporter, fbxRoot / "sphere.fbx");
+        if (!postprocess_test::Require(scene != nullptr && sphereScene != nullptr,
+                "distance LOD FBX cannot be read"))
+        {
+            return false;
+        }
+        std::map<std::string, const aiMesh*> meshes;
+        std::map<std::string, const aiMesh*> sphereMeshes;
+        for (unsigned int index = 0; index < scene->mNumMeshes; ++index)
+        {
+            meshes[scene->mMeshes[index]->mName.C_Str()] = scene->mMeshes[index];
+        }
+        for (unsigned int index = 0; index < sphereScene->mNumMeshes; ++index)
+        {
+            sphereMeshes[sphereScene->mMeshes[index]->mName.C_Str()] =
+                sphereScene->mMeshes[index];
+        }
+        std::set<uint32_t> seenSizes;
+        std::set<uint32_t> seenBudgets;
+        const auto settings = DownTool::FbxDistanceLodFromJson(manifest.at("distancelod"));
+        if (!postprocess_test::Require(settings.has_value(), "manifest did not save LOD rules"))
+        {
+            return false;
+        }
+        for (const auto& texture : manifest.at("textures"))
+        {
+            const double distance = texture.at("distancemeters").get<double>();
+            const uint32_t expectedSize = settings->ResolveTextureSize(distance, 512);
+            const uint32_t expectedBudget = settings->ResolveMaximumTriangles(distance, 0);
+            const auto meshName = fmt::format("tile_{}_{}",
+                texture.at("gridx").get<int>(), texture.at("gridy").get<int>());
+            const auto found = meshes.find(meshName);
+            const auto sphereFound = sphereMeshes.find(meshName);
+            if (!postprocess_test::Require(
+                    texture.at("outputtexturesize") == expectedSize &&
+                        texture.at("terrainmaximumtriangles") == expectedBudget &&
+                        found != meshes.end() && sphereFound != sphereMeshes.end() &&
+                        found->second->mNumFaces == sphereFound->second->mNumFaces &&
+                        (expectedBudget == 0 || found->second->mNumFaces <= expectedBudget),
+                    "distance band did not control actual texture size or mesh face count") ||
+                !postprocess_test::RequireImageSize(
+                    fbxRoot / texture.at("path").get<std::string>(),
+                    static_cast<int>(expectedSize), static_cast<int>(expectedSize)))
+            {
+                return false;
+            }
+            seenSizes.insert(expectedSize);
+            seenBudgets.insert(expectedBudget);
+        }
+        return postprocess_test::Require(
+            seenSizes == std::set<uint32_t>{128, 256, 512} &&
+                seenBudgets == std::set<uint32_t>{0, 31, 128},
+            "distance test did not exercise near, medium and far blocks");
+    }
+
+    bool ExportDistanceLodFixture(const std::filesystem::path& testRoot)
+    {
+        postprocess_test::TestPostProcessDown tool;
+        const auto root = testRoot / "distance-lod";
+        tool.Configure(root / "cache", root / "XYZ", 13, 256,
+            DownTool::Tile(4089, 4089, 13), DownTool::Tile(4102, 4102, 13), {0., 0.});
+        tool.SetPostProcessEnabled(true);
+        tool.SetPostProcessMaxZoomOnlyEnabled(true);
+        tool.SetPostProcessFbxEnabled(true);
+        tool.SetFbxOutputPath(postprocess_test::PathToUtf8String(root / "FBX"));
+        tool.SetFbxTextureSize(512);
+        tool.SetFbxShape(DownTool::FbxPlanetShape::Both);
+        tool.SetFbxTerrainHeightEnabled(true);
+        tool.SetFbxTerrainSampleRateMeters(400.);
+        tool.SetFbxElevationSampler([](const DownTool::LonLat& point)
+        {
+            return std::optional<double>(
+                200. + 100. * std::sin(point.lon * 500.) * std::cos(point.lat * 500.));
+        });
+        DownTool::FbxDistanceLod settings;
+        settings.SetTextureRules({{30000., 128}, {10000., 256}});
+        settings.SetTriangleRules({{30000., 31}, {10000., 128}});
+        tool.SetFbxDistanceLod(settings);
+        tool.SetMaxDownQueue(2);
+        if (!postprocess_test::WriteSourceTiles(tool))
+        {
+            return false;
+        }
+        tool.RunPostProcessForTest();
+        return RequireDistanceLodOutputs(root / "FBX");
+    }
+
     bool RequireFbxTexturesBesideModel(
         const std::filesystem::path& fbxPath,
         const std::filesystem::path& fbxRoot)
@@ -987,6 +1085,12 @@ namespace
             {
                 return false;
             }
+        }
+
+        if (!ExportDistanceLodFixture(testRoot) ||
+            !RequireFbxTerrainSeamsClosed(testRoot / "distance-lod" / "FBX" / "plane.fbx"))
+        {
+            return false;
         }
 
         std::cout << "PostProcessFbxTest passed\n";

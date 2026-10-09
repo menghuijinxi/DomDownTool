@@ -12,6 +12,8 @@
 #include "fmt/format.h"
 #include "skui_runtime.h"
 
+#include "preview/ExportDistanceLodUi.h"
+
 namespace
 {
 using DomDownToolPreview::ExportComponent;
@@ -519,6 +521,7 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
             component.exportElevation = configuration->exportTerrainHeight;
             component.elevationSampleMeters = configuration->fbxTerrainSampleRateMeters;
             component.SetTerrainMaximumTriangles(configuration->GetTerrainMaximumTriangles());
+            component.SetDistanceLod(configuration->GetDistanceLod());
             group.components.push_back(std::move(component));
         };
         if (configuration->exportMergedImage || configuration->exportTiles ||
@@ -981,6 +984,7 @@ std::string PanelBodyHtml(
             "<input id=\"export-act-set-subdivision__{}\" type=\"number\" min=\"1\" step=\"1\" value=\"{}\"{}></label>",
             subdivisionEnabled ? "" : " is-disabled", component.id, component.meshSubdivision,
             subdivisionEnabled ? "" : " disabled");
+        html += ExportDistanceLodHtml(component);
         html += "<p class=\"export-hint\">零面取范围内最低高程。</p>";
     }
     else if (building)
@@ -1280,7 +1284,20 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
     }
 
     bool refresh = true;
-    if (verb == "remove-group" && fromClick)
+    if (verb.starts_with("lod-"))
+    {
+        const bool command = verb.ends_with("-add") || verb.ends_with("-remove");
+        if ((command && !fromClick) || (!command && fromClick))
+        {
+            return true;
+        }
+        if (ExportComponent* component = findComponent(first))
+        {
+            UpdateExportDistanceLod(*component, verb, second, value);
+        }
+        refresh = command;
+    }
+    else if (verb == "remove-group" && fromClick)
     {
         std::erase_if(exportContentGroups_, [&](const ExportContentGroup& group)
         {
@@ -1328,6 +1345,10 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
             ExportComponent component;
             component.id = nextId('c');
             component.kind = *kind;
+            if (*kind == ExportComponentKind::BasePlate)
+            {
+                component.SetDistanceLod(DownTool::DefaultFbxDistanceLod());
+            }
             if (*kind == ExportComponentKind::BuildingModel)
             {
                 if (const GisCatalogItem* item = FindGis(DownTool::AmapVectorRenderCategory::Building))

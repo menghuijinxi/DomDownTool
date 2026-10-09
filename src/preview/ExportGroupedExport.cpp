@@ -382,6 +382,7 @@ Json ComponentToJson(const ExportComponent& component)
         {"exportElevation", component.exportElevation},
         {"elevationSampleMeters", component.elevationSampleMeters},
         {"terrainMaximumTriangles", component.GetTerrainMaximumTriangles()},
+        {"distanceLod", DownTool::FbxDistanceLodToJson(component.GetDistanceLod())},
         {"meshSubdivision", component.meshSubdivision},
         {"wallTexturePath", PathToUtf8(component.wallTexturePath)},
         {"roofTexturePath", PathToUtf8(component.roofTexturePath)},
@@ -439,6 +440,15 @@ std::optional<ExportComponent> ComponentFromJson(const Json& json)
     component.SetTerrainMaximumTriangles(static_cast<uint32_t>(std::clamp(
         JsonNumber(json, "terrainMaximumTriangles", 0.), 0.,
         double(std::numeric_limits<uint32_t>::max()))));
+    if (const auto lodJson = json.find("distanceLod"); lodJson != json.end())
+    {
+        const auto settings = DownTool::FbxDistanceLodFromJson(*lodJson);
+        if (!settings)
+        {
+            return std::nullopt;
+        }
+        component.SetDistanceLod(*settings);
+    }
     component.meshSubdivision = static_cast<uint32_t>(
         std::max(0., JsonNumber(json, "meshSubdivision", 64.)));
     const std::string wallPath = JsonString(json, "wallTexturePath");
@@ -773,6 +783,11 @@ std::string GroupedExportError(const ExportConfiguration& configuration)
                 }
                 break;
             case ExportComponentKind::BasePlate:
+                if (const std::string lodError = component.GetDistanceLod().Validate();
+                    !lodError.empty())
+                {
+                    return lodError;
+                }
                 if (component.sources.empty())
                 {
                     return "底板模型至少需要一个图源。";
@@ -1123,6 +1138,7 @@ bool ExportGroupedRunner::Run(
             step.configuration.fbxTextureFormat = NormalizeFormat(component.textureFormat);
             step.configuration.fbxTerrainSampleRateMeters = component.elevationSampleMeters;
             step.configuration.SetTerrainMaximumTriangles(component.GetTerrainMaximumTriangles());
+            step.configuration.SetDistanceLod(component.GetDistanceLod());
             step.configuration.executionTileSize = tiles ? component.xyzTileSize : 0;
             step.configuration.executionFbxShape = fbx ?
                 std::optional<DownTool::FbxPlanetShape>(component.shape) : std::nullopt;
@@ -1358,6 +1374,7 @@ bool ExportGroupedRunner::Run(
                 downloader.SetFbxTextureFormat(NormalizeFormat(component.textureFormat));
                 downloader.SetFbxTerrainSampleRateMeters(component.elevationSampleMeters);
                 downloader.SetFbxTerrainMaximumTriangles(component.GetTerrainMaximumTriangles());
+                downloader.SetFbxDistanceLod(component.GetDistanceLod());
                 if (tiles)
                 {
                     downloader.SetTileSize(component.xyzTileSize);

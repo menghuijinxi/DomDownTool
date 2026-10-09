@@ -19,6 +19,7 @@
 
 #include "AmapVectorPngDownloader.h"
 #include "DataType.h"
+#include "FbxDistanceLod.h"
 #include "GeographicPolygon.h"
 
 namespace DownTool
@@ -134,11 +135,14 @@ struct ExportComponent
 
     uint32_t GetTerrainMaximumTriangles() const { return terrainMaximumTriangles_; }
     void SetTerrainMaximumTriangles(uint32_t value) { terrainMaximumTriangles_ = value; }
+    const DownTool::FbxDistanceLod& GetDistanceLod() const { return distanceLod_; }
+    void SetDistanceLod(const DownTool::FbxDistanceLod& value) { distanceLod_ = value; }
     double GetBuildingChunkSizeMeters() const { return buildingChunkSizeMeters_; }
     void SetBuildingChunkSizeMeters(double value) { buildingChunkSizeMeters_ = value; }
 
 protected:
     uint32_t terrainMaximumTriangles_ = 0;
+    DownTool::FbxDistanceLod distanceLod_;
     double buildingChunkSizeMeters_ = 2200.;
 };
 
@@ -200,11 +204,14 @@ struct ExportConfiguration
 
     uint32_t GetTerrainMaximumTriangles() const { return terrainMaximumTriangles_; }
     void SetTerrainMaximumTriangles(uint32_t value) { terrainMaximumTriangles_ = value; }
+    const DownTool::FbxDistanceLod& GetDistanceLod() const { return distanceLod_; }
+    void SetDistanceLod(const DownTool::FbxDistanceLod& value) { distanceLod_ = value; }
     double GetBuildingChunkSizeMeters() const { return buildingChunkSizeMeters_; }
     void SetBuildingChunkSizeMeters(double value) { buildingChunkSizeMeters_ = value; }
 
 protected:
     uint32_t terrainMaximumTriangles_ = 0;
+    DownTool::FbxDistanceLod distanceLod_;
     double buildingChunkSizeMeters_ = 2200.;
 };
 

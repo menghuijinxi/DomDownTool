@@ -357,6 +357,10 @@ bool runTest()
                 defaultRenderOptions.GetBuildingChunkSizeMeters() == 2200.,
             "建筑分块边长的默认值必须是 2200 米") ||
         !postprocess_test::Require(
+            defaultOutputConfiguration.GetDistanceLod().GetTextureRules().empty() &&
+                defaultOutputConfiguration.GetDistanceLod().GetTriangleRules().empty(),
+            "旧导出配置默认不能启用距离档位") ||
+        !postprocess_test::Require(
             !defaultOutputConfiguration.exportBuildingFbx &&
                 !defaultRenderOptions.exportBuildingsToFbx,
             "建筑 FBX 不应在配置或渲染选项中默认启用") ||
@@ -482,7 +486,9 @@ bool runTest()
                     missingDefaults->configuration->buildingFbxAtlasImageFormat ==
                         DownTool::AmapBuildingFbxAtlasImageFormat::Jpg &&
                     missingDefaults->configuration->GetBuildingChunkSizeMeters() == 2200. &&
+                    missingDefaults->configuration->GetDistanceLod().GetTextureRules().empty() &&
                     missingComponent &&
+                    missingComponent->GetDistanceLod().GetTriangleRules().empty() &&
                     missingComponent->GetBuildingChunkSizeMeters() == 2200. &&
                     missingComponent->wallTextureMode ==
                         DownTool::AmapBuildingFbxTextureMode::MergedAtlas &&
@@ -1022,6 +1028,7 @@ bool runTest()
         configuration.zoom = 15;
         configuration.outputRoot = testRoot / "grouped-output";
         configuration.SetBuildingChunkSizeMeters(1600.);
+        configuration.SetDistanceLod(DownTool::DefaultFbxDistanceLod());
 
         DomDownToolPreview::ExportContentGroup group;
         group.id = "g1";
@@ -1041,6 +1048,10 @@ bool runTest()
             testRoot / "grouped-cache-second"});
         component.SetTerrainMaximumTriangles(4096);
         component.SetBuildingChunkSizeMeters(800.);
+        DownTool::FbxDistanceLod componentLod;
+        componentLod.SetTextureRules({{15000., 1024}});
+        componentLod.SetTriangleRules({{20000., 128}, {40000., 0}});
+        component.SetDistanceLod(componentLod);
         group.components.push_back(std::move(component));
         configuration.groups.push_back(std::move(group));
 
@@ -1059,6 +1070,7 @@ bool runTest()
                     record->state == DomDownToolPreview::ExportTaskState::Succeeded &&
                     record->configuration.has_value() &&
                     record->configuration->GetBuildingChunkSizeMeters() == 1600. &&
+                    record->configuration->GetDistanceLod() == DownTool::DefaultFbxDistanceLod() &&
                     record->configuration->groups.size() == 1 &&
                     record->configuration->groups.front().components.size() == 1 &&
                     record->configuration->groups.front().components.front().maxEdge == 8192 &&
@@ -1066,6 +1078,8 @@ bool runTest()
                         GetTerrainMaximumTriangles() == 4096 &&
                     record->configuration->groups.front().components.front().
                         GetBuildingChunkSizeMeters() == 800. &&
+                    record->configuration->groups.front().components.front().
+                        GetDistanceLod() == componentLod &&
                     std::filesystem::exists(
                         componentRoot / std::filesystem::u8path("测试卫星.png")) &&
                     std::filesystem::exists(
@@ -1084,6 +1098,7 @@ bool runTest()
         if (!postprocess_test::Require(
                 configuration.has_value() &&
                     configuration->GetBuildingChunkSizeMeters() == 1600. &&
+                    configuration->GetDistanceLod() == DownTool::DefaultFbxDistanceLod() &&
                     configuration->groups.size() == 1 &&
                     configuration->groups.front().name == "卫星底图" &&
                     configuration->groups.front().components.size() == 1 &&
@@ -1092,7 +1107,14 @@ bool runTest()
                     configuration->groups.front().components.front().
                         GetTerrainMaximumTriangles() == 4096 &&
                     configuration->groups.front().components.front().
-                        GetBuildingChunkSizeMeters() == 800.,
+                        GetBuildingChunkSizeMeters() == 800. &&
+                    configuration->groups.front().components.front().
+                        GetDistanceLod().GetTextureRules() ==
+                            std::vector<DownTool::FbxDistanceLodRule>{{15000., 1024}} &&
+                    configuration->groups.front().components.front().
+                        GetDistanceLod().GetTriangleRules() ==
+                            std::vector<DownTool::FbxDistanceLodRule>{
+                                {20000., 128}, {40000., 0}},
                 "重启后没有恢复内容组、组件和图源参数"))
         {
             return false;

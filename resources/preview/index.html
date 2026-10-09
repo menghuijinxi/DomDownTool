@@ -1452,6 +1452,7 @@
         .export-range-field input,
         .export-group-check input[type="text"],
         .export-field-row input,
+        .export-lod-row input,
         .export-select {
             width: 100%;
             height: 52px;
@@ -1467,6 +1468,7 @@
         .export-range-field input:focus,
         .export-group-check input[type="text"]:focus,
         .export-field-row input:focus,
+        .export-lod-row input:focus,
         .export-select:focus {
             border-color: #2ea694;
         }
@@ -1865,6 +1867,46 @@
         .export-building-mode-row .export-segment-button {
             padding: 0 8px;
             font-size: 15px;
+        }
+
+        .export-lod-section {
+            margin: 16px 0 20px;
+        }
+
+        .export-lod-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: #b7bfbc;
+            font-size: 15px;
+        }
+
+        .export-lod-columns,
+        .export-lod-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .export-lod-columns {
+            color: #8d9793;
+            font-size: 13px;
+        }
+
+        .export-lod-row input,
+        .export-lod-row select {
+            width: 100%;
+            min-width: 0;
+            height: 46px;
+            font-size: 15px;
+        }
+
+        .export-lod-row input:disabled {
+            border-color: #303638;
+            background: #171a1b;
+            color: #626a67;
         }
 
         .export-directory-row {

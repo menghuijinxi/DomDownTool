@@ -1155,6 +1155,16 @@ std::optional<ExportConfiguration> loadLegacyTaskConfiguration(
             configuration.buildingRoofTexturePath = std::filesystem::u8path(roofTexturePath);
             continue;
         }
+        const std::string lodValue = conversionRecordValue(line, "FBX 距离档位: ");
+        if (!lodValue.empty())
+        {
+            const auto lodJson = nlohmann::json::parse(lodValue, nullptr, false);
+            if (const auto settings = DownTool::FbxDistanceLodFromJson(lodJson))
+            {
+                configuration.SetDistanceLod(*settings);
+            }
+            continue;
+        }
         const std::string layerHeightValue = conversionRecordValue(
             line, "建筑楼层高度 (厘米): ");
         if (!layerHeightValue.empty())
@@ -5110,6 +5120,7 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
                 configuration.fbxTextureFormat = component.textureFormat;
                 configuration.fbxTerrainSampleRateMeters = component.elevationSampleMeters;
                 configuration.SetTerrainMaximumTriangles(component.GetTerrainMaximumTriangles());
+                configuration.SetDistanceLod(component.GetDistanceLod());
                 configuration.exportTerrainHeight = configuration.exportTerrainHeight ||
                     component.exportElevation;
             }

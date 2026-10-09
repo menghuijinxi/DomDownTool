@@ -223,6 +223,7 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/Dx12GisRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/Dx12FbxRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportComposer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportDistanceLodUi.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportGroupedExport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportImageComposer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportTaskManager.cpp
@@ -332,6 +333,9 @@ add_domdown_test(PostProcessMergedImageTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/PostProcessMergedImageTest.cpp)
 add_domdown_test(PostProcessFbxTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/PostProcessFbxTest.cpp)
+add_domdown_test(FbxDistanceLodTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/FbxDistanceLodTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportDistanceLodUi.cpp)
 add_domdown_test(FbxTerrainTriangulatorTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/FbxTerrainTriangulatorTest.cpp)
 add_domdown_test(CopernicusDemTest
@@ -416,7 +420,8 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
   add_test(NAME GisMeshBuilderTest COMMAND GisMeshBuilderTest)
 
   add_executable(PreviewSearchUiTest
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/PreviewSearchUiTest.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/PreviewSearchUiTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportDistanceLodUi.cpp)
   target_link_libraries(PreviewSearchUiTest PRIVATE
     DomDownToolCore
     SkiaUI::SkuiWin32Dx12)

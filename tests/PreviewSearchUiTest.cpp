@@ -12,6 +12,7 @@
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/core/mat.hpp"
 #include "preview/PreviewInputRouting.h"
+#include "preview/ExportDistanceLodUi.h"
 #include "skui_runtime.h"
 
 namespace
@@ -177,8 +178,14 @@ bool setExportComponentMenuOverflowFixture(skui::Runtime& runtime)
     return runtime.replaceHtmlById("export-group-list", groups);
 }
 
-std::string exportBasePlatePanelScrollContentFixture()
+std::string exportBasePlatePanelScrollContentFixture(bool withDistanceLod = false)
 {
+    DomDownToolPreview::ExportComponent component;
+    component.id = "c-base";
+    component.exportElevation = true;
+    component.SetDistanceLod(DownTool::DefaultFbxDistanceLod());
+    const std::string lodHtml = withDistanceLod ?
+        DomDownToolPreview::ExportDistanceLodHtml(component) : "";
     return
         "<div id=\"export-panel-scroll-content\" class=\"export-panel-scroll-content\">"
         "<div class=\"export-panel-section\"><span class=\"export-panel-label\">图源</span>"
@@ -209,11 +216,11 @@ std::string exportBasePlatePanelScrollContentFixture()
         "value=\"8192\" disabled></label>"
         "<label class=\"export-field-row is-disabled\"><span>网格细分</span>"
         "<input id=\"export-act-set-subdivision__c-base\" type=\"number\" "
-        "value=\"32\" disabled></label>"
+        "value=\"32\" disabled></label>" + lodHtml +
         "<p class=\"export-hint\">零面取范围内最低高程。</p></div>";
 }
 
-bool setExportBasePlatePanelFixture(skui::Runtime& runtime)
+bool setExportBasePlatePanelFixture(skui::Runtime& runtime, bool withDistanceLod = false)
 {
     const std::string panel =
         "<aside id=\"export-param-panel\" class=\"export-param-panel\">"
@@ -221,7 +228,7 @@ bool setExportBasePlatePanelFixture(skui::Runtime& runtime)
         "<button id=\"export-act-close-panel\" class=\"export-icon-button\" type=\"button\" "
         "data-action=\"export-composer\" aria-label=\"关闭参数\">×</button></header>"
         "<div id=\"export-panel-body\" class=\"export-panel-body\">" +
-        exportBasePlatePanelScrollContentFixture() +
+        exportBasePlatePanelScrollContentFixture(withDistanceLod) +
         "</div>"
         "<button id=\"export-act-done-panel\" class=\"primary-command export-panel-done\" "
         "type=\"button\" data-action=\"export-composer\">完成</button></aside>";
@@ -1726,6 +1733,27 @@ bool runTest()
         return false;
     }
 
+    for (int width : {1440, 1100})
+    {
+        runtime.resize(width, kHeight, 1.F);
+        if (!postprocess_test::Require(setExportBasePlatePanelFixture(runtime, true),
+                "无法填充距离档位面板"))
+        {
+            return false;
+        }
+        const auto scroll = runtime.scrollStateById("export-panel-body");
+        if (!postprocess_test::Require(
+                scroll && scroll->maxScrollX <= 0.5F &&
+                    runtime.setScrollOffsetById("export-panel-body", 0.F, scroll->maxScrollY),
+                "距离档位面板发生横向裁切或无法滚动") ||
+            !writeRuntimeScreenshot(runtime,
+                sourceRoot / "tmp" / ("preview-distance-lod-" + std::to_string(width) + ".png"),
+                width, kHeight))
+        {
+            return false;
+        }
+    }
+    runtime.resize(kWidth, kHeight, 1.F);
     if (!postprocess_test::Require(setExportBuildingPanelFixture(runtime),
                                    "无法填充建筑模型参数面板") ||
         !writeRuntimeScreenshot(

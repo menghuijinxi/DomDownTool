@@ -12,6 +12,7 @@
 #include <fmt/base.h>
 #include <GeographicLib/Geodesic.hpp>
 #include "DataType.h"
+#include "FbxDistanceLod.h"
 #include "GeographicPolygon.h"
 #include "curl/curl.h"
 
@@ -174,6 +175,7 @@ namespace DownTool
 
 		//远距离贴图降级参数
 		std::vector<FbxTextureDistanceOffset> FbxTextureDistanceOffsets;
+        FbxDistanceLod fbxDistanceLod_;
 
 		//瓦片像素大小
 		uint32_t TileSize = 256;
@@ -409,6 +411,9 @@ namespace DownTool
 			uint32_t& rowCount) const;
 
         GEN_GETSET_FOR(CenterLonLat, Radius, UrlTemplate, Proxy, Zoom, MaxLonLat, MinLonLat, CachePath, MaxDownQueue, MinTile, MaxTile, DowningCount, PostProcessOutputPath, PostProcessEnabled, PostProcessMaxZoomOnlyEnabled, PostProcessMergedImageEnabled, PostProcessMergedImageResolution, PostProcessMergedImageOutputPath, PostProcessFbxEnabled, FbxTextureSize, FbxTextureFormat, FbxOutputPath, FbxShape, FbxMeshSubdivision, FbxTerrainHeightEnabled, FbxElevationReferenceMeters, FbxTerrainSampleRateMeters, FbxTerrainMaximumTriangles, FbxElevationSampler, FbxTextureDistanceOffsets, TileSize, ProgressCallback)
+
+        const FbxDistanceLod& GetFbxDistanceLod() const { return fbxDistanceLod_; }
+        void SetFbxDistanceLod(const FbxDistanceLod& value) { fbxDistanceLod_ = value; }
 
 		const Wgs84Polygons& GetDownloadPolygonsWgs84() const
 		{
