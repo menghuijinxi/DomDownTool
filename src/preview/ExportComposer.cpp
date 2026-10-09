@@ -572,6 +572,7 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
             building.roofTextureMode = configuration->buildingFbxRoofTextureMode;
             building.atlasImageFormat = configuration->buildingFbxAtlasImageFormat;
             building.layerHeightCentimeters = configuration->buildingLayerHeightCentimeters;
+            building.SetBuildingChunkSizeMeters(configuration->GetBuildingChunkSizeMeters());
             building.maxWallMaterialsPerBucket = configuration->buildingMaxWallMaterialsPerBucket;
             building.textureRandomSeed = configuration->buildingTextureRandomSeed;
             building.followBaseElevation = configuration->exportTerrainHeight;
@@ -987,6 +988,11 @@ std::string PanelBodyHtml(
         const bool satelliteRoof = component.roofTextureMode ==
             DownTool::AmapBuildingFbxRoofTextureMode::Satellite;
         html += ShapeRow(component);
+        html += fmt::format(
+            "<label class=\"export-field-row\"><span>分块边长 (米)</span>"
+            "<input id=\"export-act-set-building-chunk-size__{}\" type=\"number\" "
+            "min=\"1\" step=\"1\" value=\"{}\"></label>",
+            component.id, component.GetBuildingChunkSizeMeters());
         html += "<div class=\"export-field-row export-building-mode-row\">"
             "<span>墙体模式</span><div class=\"export-segment\">";
         html += SegmentButton("export-act-set-wall-mode__" + component.id + "__scattered", "散图",
@@ -1266,7 +1272,8 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
     }
     const bool textVerb = verb == "rename-group" || verb == "set-sample" || verb == "set-subdivision" ||
         verb == "set-wall-path" || verb == "set-roof-path" || verb == "set-layer-height" ||
-        verb == "set-wall-materials" || verb == "set-seed" || verb == "set-color";
+        verb == "set-building-chunk-size" || verb == "set-wall-materials" ||
+        verb == "set-seed" || verb == "set-color";
     if (textVerb && fromClick)
     {
         return true;
@@ -1640,6 +1647,17 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
             if (const std::optional<double> height = ParsePositive(value))
             {
                 component->layerHeightCentimeters = *height;
+            }
+        }
+        refresh = false;
+    }
+    else if (verb == "set-building-chunk-size")
+    {
+        if (ExportComponent* component = findComponent(first))
+        {
+            if (const std::optional<double> size = ParsePositive(value))
+            {
+                component->SetBuildingChunkSizeMeters(*size);
             }
         }
         refresh = false;

@@ -1023,6 +1023,7 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
                 renderOptions.buildingFbxSatelliteRoofTextures;
             buildingFbxOptions.layerHeightCentimeters =
                 renderOptions.buildingLayerHeightCentimeters;
+            buildingFbxOptions.SetChunkSizeMeters(renderOptions.GetBuildingChunkSizeMeters());
             buildingFbxOptions.textureUnitLayer = renderOptions.buildingTextureUnitLayer;
             buildingFbxOptions.textureUnitPixelSize =
                 renderOptions.buildingTextureUnitPixelSize;

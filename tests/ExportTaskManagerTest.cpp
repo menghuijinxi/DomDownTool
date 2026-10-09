@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -351,6 +352,11 @@ bool runTest()
         DomDownToolPreview::ExportComponentKind::BuildingModel;
     DownTool::AmapVectorRenderOptions defaultRenderOptions;
     if (!postprocess_test::Require(
+            defaultOutputConfiguration.GetBuildingChunkSizeMeters() == 2200. &&
+                defaultBuildingComponent.GetBuildingChunkSizeMeters() == 2200. &&
+                defaultRenderOptions.GetBuildingChunkSizeMeters() == 2200.,
+            "建筑分块边长的默认值必须是 2200 米") ||
+        !postprocess_test::Require(
             !defaultOutputConfiguration.exportBuildingFbx &&
                 !defaultRenderOptions.exportBuildingsToFbx,
             "建筑 FBX 不应在配置或渲染选项中默认启用") ||
@@ -424,6 +430,7 @@ bool runTest()
         "buildingFbxWallTextureMode": "scattered",
         "buildingFbxRoofTextureMode": "scattered",
         "buildingFbxAtlasImageFormat": "png",
+        "buildingChunkSizeMeters": 1500,
         "groups": [{
           "id": "g2",
           "name": "旧值",
@@ -433,7 +440,8 @@ bool runTest()
             "kind": "building-model",
             "wallTextureMode": "scattered",
             "roofTextureMode": "scattered",
-            "atlasImageFormat": "png"
+            "atlasImageFormat": "png",
+            "buildingChunkSizeMeters": 750
           }]
         }]
       }
@@ -473,7 +481,9 @@ bool runTest()
                         DownTool::AmapBuildingFbxRoofTextureMode::MergedAtlas &&
                     missingDefaults->configuration->buildingFbxAtlasImageFormat ==
                         DownTool::AmapBuildingFbxAtlasImageFormat::Jpg &&
+                    missingDefaults->configuration->GetBuildingChunkSizeMeters() == 2200. &&
                     missingComponent &&
+                    missingComponent->GetBuildingChunkSizeMeters() == 2200. &&
                     missingComponent->wallTextureMode ==
                         DownTool::AmapBuildingFbxTextureMode::MergedAtlas &&
                     missingComponent->roofTextureMode ==
@@ -489,7 +499,9 @@ bool runTest()
                         DownTool::AmapBuildingFbxRoofTextureMode::Scattered &&
                     explicitLegacy->configuration->buildingFbxAtlasImageFormat ==
                         DownTool::AmapBuildingFbxAtlasImageFormat::Png &&
+                    explicitLegacy->configuration->GetBuildingChunkSizeMeters() == 1500. &&
                     explicitComponent &&
+                    explicitComponent->GetBuildingChunkSizeMeters() == 750. &&
                     explicitComponent->wallTextureMode ==
                         DownTool::AmapBuildingFbxTextureMode::Scattered &&
                     explicitComponent->roofTextureMode ==
@@ -499,6 +511,37 @@ bool runTest()
                 "显式保存的旧建筑参数没有保持原值"))
         {
             return false;
+        }
+
+        DomDownToolPreview::ExportConfiguration buildingConfiguration =
+            *explicitLegacy->configuration;
+        buildingConfiguration.radiusMeters = 1000.;
+        buildingConfiguration.zoom = 15;
+        auto& buildingComponent = buildingConfiguration.groups.front().components.front();
+        DomDownToolPreview::ExportSourceEntry buildingSource;
+        buildingSource.id = "gis.building";
+        buildingSource.kind = DomDownToolPreview::ExportSourceKind::Gis;
+        buildingSource.gisCategory = DownTool::AmapVectorRenderCategory::Building;
+        buildingComponent.sources.push_back(std::move(buildingSource));
+        const std::string buildingValidation =
+            DomDownToolPreview::GroupedExportError(buildingConfiguration);
+        if (!postprocess_test::Require(
+                buildingValidation.empty(),
+                "有效的建筑分块参数没有通过校验：" + buildingValidation))
+        {
+            return false;
+        }
+        for (double size : {0., -1., std::numeric_limits<double>::infinity(),
+                           std::numeric_limits<double>::quiet_NaN()})
+        {
+            buildingComponent.SetBuildingChunkSizeMeters(size);
+            if (!postprocess_test::Require(
+                    DomDownToolPreview::GroupedExportError(buildingConfiguration) ==
+                        "建筑分块边长必须是大于 0 的米数。",
+                    "无效的建筑分块边长没有在下载前拦截"))
+            {
+                return false;
+            }
         }
     }
 
@@ -978,6 +1021,7 @@ bool runTest()
         configuration.radiusMeters = 1000.;
         configuration.zoom = 15;
         configuration.outputRoot = testRoot / "grouped-output";
+        configuration.SetBuildingChunkSizeMeters(1600.);
 
         DomDownToolPreview::ExportContentGroup group;
         group.id = "g1";
@@ -996,6 +1040,7 @@ bool runTest()
             DomDownToolPreview::ExportSourceKind::Imagery,
             testRoot / "grouped-cache-second"});
         component.SetTerrainMaximumTriangles(4096);
+        component.SetBuildingChunkSizeMeters(800.);
         group.components.push_back(std::move(component));
         configuration.groups.push_back(std::move(group));
 
@@ -1013,11 +1058,14 @@ bool runTest()
                 finished && record &&
                     record->state == DomDownToolPreview::ExportTaskState::Succeeded &&
                     record->configuration.has_value() &&
+                    record->configuration->GetBuildingChunkSizeMeters() == 1600. &&
                     record->configuration->groups.size() == 1 &&
                     record->configuration->groups.front().components.size() == 1 &&
                     record->configuration->groups.front().components.front().maxEdge == 8192 &&
                     record->configuration->groups.front().components.front().
                         GetTerrainMaximumTriangles() == 4096 &&
+                    record->configuration->groups.front().components.front().
+                        GetBuildingChunkSizeMeters() == 800. &&
                     std::filesystem::exists(
                         componentRoot / std::filesystem::u8path("测试卫星.png")) &&
                     std::filesystem::exists(
@@ -1034,13 +1082,17 @@ bool runTest()
         const std::optional<DomDownToolPreview::ExportConfiguration> configuration =
             records.size() == 1 ? records.front().configuration : std::nullopt;
         if (!postprocess_test::Require(
-                configuration.has_value() && configuration->groups.size() == 1 &&
+                configuration.has_value() &&
+                    configuration->GetBuildingChunkSizeMeters() == 1600. &&
+                    configuration->groups.size() == 1 &&
                     configuration->groups.front().name == "卫星底图" &&
                     configuration->groups.front().components.size() == 1 &&
                     configuration->groups.front().components.front().sources.size() == 2 &&
                     configuration->groups.front().components.front().maxEdge == 8192 &&
                     configuration->groups.front().components.front().
-                        GetTerrainMaximumTriangles() == 4096,
+                        GetTerrainMaximumTriangles() == 4096 &&
+                    configuration->groups.front().components.front().
+                        GetBuildingChunkSizeMeters() == 800.,
                 "重启后没有恢复内容组、组件和图源参数"))
         {
             return false;

@@ -102,6 +102,12 @@ namespace DownTool
         uint32_t buildingTextureUnitPixelSize = 64;
         uint32_t buildingMaxWallMaterialsPerBucket = 1;
         uint32_t buildingTextureRandomSeed = 0;
+
+        double GetBuildingChunkSizeMeters() const { return buildingChunkSizeMeters_; }
+        void SetBuildingChunkSizeMeters(double value) { buildingChunkSizeMeters_ = value; }
+
+    protected:
+        double buildingChunkSizeMeters_ = 2200.;
     };
 
     struct AmapVectorPngDownloadOptions

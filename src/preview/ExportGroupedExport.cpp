@@ -390,6 +390,7 @@ Json ComponentToJson(const ExportComponent& component)
         {"atlasImageFormat", component.atlasImageFormat ==
             DownTool::AmapBuildingFbxAtlasImageFormat::Jpg ? "jpg" : "png"},
         {"layerHeightCentimeters", component.layerHeightCentimeters},
+        {"buildingChunkSizeMeters", component.GetBuildingChunkSizeMeters()},
         {"maxWallMaterialsPerBucket", component.maxWallMaterialsPerBucket},
         {"textureRandomSeed", component.textureRandomSeed},
         {"followBaseElevation", component.followBaseElevation},
@@ -485,6 +486,8 @@ std::optional<ExportComponent> ComponentFromJson(const Json& json)
         component.atlasImageFormat = DownTool::AmapBuildingFbxAtlasImageFormat::Jpg;
     }
     component.layerHeightCentimeters = JsonNumber(json, "layerHeightCentimeters", 45.);
+    component.SetBuildingChunkSizeMeters(JsonNumber(
+        json, "buildingChunkSizeMeters", component.GetBuildingChunkSizeMeters()));
     component.maxWallMaterialsPerBucket = static_cast<uint32_t>(
         std::max(1., JsonNumber(json, "maxWallMaterialsPerBucket", 1.)));
     component.textureRandomSeed = static_cast<uint32_t>(
@@ -792,6 +795,11 @@ std::string GroupedExportError(const ExportConfiguration& configuration)
                 }
                 break;
             case ExportComponentKind::BuildingModel:
+                if (!std::isfinite(component.GetBuildingChunkSizeMeters()) ||
+                    component.GetBuildingChunkSizeMeters() <= 0.)
+                {
+                    return "建筑分块边长必须是大于 0 的米数。";
+                }
                 if (!HasBuildingSource(component))
                 {
                     return "建筑模型的图源必须包含建筑。";
@@ -1543,6 +1551,7 @@ bool ExportGroupedRunner::Run(
             step.configuration.buildingFbxRoofTextureMode = component.roofTextureMode;
             step.configuration.buildingFbxAtlasImageFormat = component.atlasImageFormat;
             step.configuration.buildingLayerHeightCentimeters = component.layerHeightCentimeters;
+            step.configuration.SetBuildingChunkSizeMeters(component.GetBuildingChunkSizeMeters());
             step.configuration.buildingMaxWallMaterialsPerBucket =
                 component.maxWallMaterialsPerBucket;
             step.configuration.buildingTextureRandomSeed = component.textureRandomSeed;

@@ -106,6 +106,7 @@ namespace
     struct BuildingMeshData
     {
         std::string name;
+        std::string materialName;
         BuildingMeshKind kind = BuildingMeshKind::Roof;
         std::filesystem::path texturePath;
         bool wrapTextureU = false;
@@ -175,6 +176,10 @@ namespace
         BuildingMeshData mesh;
     };
 
+    using BuildingChunkIndex = std::pair<int64_t, int64_t>;
+    using BuildingChunkBuckets =
+        std::map<BuildingChunkIndex, std::map<std::filesystem::path, MeshBucket>>;
+
     struct BuildingGeometry
     {
         std::vector<BuildingPolygon> polygons;
@@ -187,6 +192,26 @@ namespace
     {
         std::vector<size_t> textureIndices;
     };
+
+    std::optional<BuildingChunkIndex> BuildingChunkFor(
+        const Point2& centroid, double sideCentimeters)
+    {
+        const double column = std::floor(centroid.x / sideCentimeters);
+        const double row = std::floor(centroid.y / sideCentimeters);
+        const double limit = static_cast<double>(std::numeric_limits<int64_t>::max());
+        if (!std::isfinite(column) || !std::isfinite(row) ||
+            column <= -limit || column >= limit || row <= -limit || row >= limit)
+        {
+            return std::nullopt;
+        }
+        return BuildingChunkIndex{static_cast<int64_t>(column), static_cast<int64_t>(row)};
+    }
+
+    std::string BuildingChunkMeshName(
+        const std::string& materialName, const BuildingChunkIndex& chunk)
+    {
+        return fmt::format("{}_chunk_{}_{}", materialName, chunk.first, chunk.second);
+    }
 
     std::string PathToUtf8String(const std::filesystem::path& path)
     {
@@ -1312,6 +1337,7 @@ namespace
         if (bucket.mesh.name.empty())
         {
             bucket.mesh.name = texture.materialName;
+            bucket.mesh.materialName = texture.materialName;
             bucket.mesh.kind = kind;
             bucket.mesh.texturePath = texture.outputPath;
             bucket.mesh.wrapTextureU = wrapTextureU;
@@ -2000,18 +2026,26 @@ namespace
     }
 
     std::vector<const TextureInfo*> CollectUsedTextures(
-        const std::map<std::filesystem::path, MeshBucket>& meshBuckets,
+        const BuildingChunkBuckets& chunkBuckets,
         const std::vector<TextureInfo>& textures)
     {
         const std::unordered_map<std::string, const TextureInfo*> lookup =
             BuildTextureLookup(textures);
         std::vector<const TextureInfo*> usedTextures;
-        for (const auto& [texturePath, bucket] : meshBuckets)
+        std::set<std::filesystem::path> seen;
+        for (const auto& [chunk, meshBuckets] : chunkBuckets)
         {
-            if (bucket.mesh.vertices.empty() || bucket.mesh.indices.empty())
+            for (const auto& [texturePath, bucket] : meshBuckets)
             {
-                continue;
+                if (bucket.mesh.vertices.empty() || bucket.mesh.indices.empty())
+                {
+                    continue;
+                }
+                seen.insert(texturePath);
             }
+        }
+        for (const auto& texturePath : seen)
+        {
             const auto found = lookup.find(PathToUtf8String(texturePath));
             if (found != lookup.end())
             {
@@ -2385,17 +2419,17 @@ namespace
         return true;
     }
 
-    bool BuildAtlasMesh(
-        const std::map<std::filesystem::path, MeshBucket>& meshBuckets,
+    bool BuildAtlasMeshes(
+        const BuildingChunkBuckets& chunkBuckets,
         const std::vector<TextureInfo>& textures,
         const std::filesystem::path& atlasPath,
         const std::string& materialName,
         BuildingMeshKind meshKind,
-        BuildingMeshData& atlasMesh,
+        std::vector<BuildingMeshData>& meshDatas,
         std::string& error)
     {
         std::vector<AtlasSource> sources;
-        if (!BuildAtlasSources(CollectUsedTextures(meshBuckets, textures), sources, error))
+        if (!BuildAtlasSources(CollectUsedTextures(chunkBuckets, textures), sources, error))
         {
             return false;
         }
@@ -2410,25 +2444,50 @@ namespace
             return false;
         }
 
-        atlasMesh.name = materialName;
-        atlasMesh.kind = meshKind;
-        atlasMesh.texturePath = atlasPath;
-        atlasMesh.wrapTextureU = false;
-        atlasMesh.usesAtlasTransform = true;
-        for (const auto& [texturePath, bucket] : meshBuckets)
+        // 所有空间块共用一张 atlas 和一个材质，只拆网格，不复制贴图资源。
+        for (const auto& [chunk, meshBuckets] : chunkBuckets)
         {
-            const auto rect = atlasRects.find(PathToUtf8String(texturePath));
-            if (rect == atlasRects.end())
+            BuildingMeshData atlasMesh;
+            atlasMesh.name = BuildingChunkMeshName(materialName, chunk);
+            atlasMesh.materialName = materialName;
+            atlasMesh.kind = meshKind;
+            atlasMesh.texturePath = atlasPath;
+            atlasMesh.usesAtlasTransform = true;
+            for (const auto& [texturePath, bucket] : meshBuckets)
             {
-                continue;
+                const auto rect = atlasRects.find(PathToUtf8String(texturePath));
+                if (rect == atlasRects.end())
+                {
+                    continue;
+                }
+                if (!AppendAtlasBucketMesh(bucket, rect->second, atlasMesh))
+                {
+                    error = "建筑合并贴图网格顶点数量超过 FBX 索引上限。";
+                    return false;
+                }
             }
-            if (!AppendAtlasBucketMesh(bucket, rect->second, atlasMesh))
+            if (!atlasMesh.indices.empty())
             {
-                error = "建筑合并贴图网格顶点数量超过 FBX 索引上限。";
-                return false;
+                meshDatas.push_back(std::move(atlasMesh));
             }
         }
         return true;
+    }
+
+    void AppendScatteredChunkMeshes(
+        BuildingChunkBuckets& chunkBuckets, std::vector<BuildingMeshData>& meshDatas)
+    {
+        for (auto& [chunk, meshBuckets] : chunkBuckets)
+        {
+            for (auto& [texturePath, bucket] : meshBuckets)
+            {
+                if (!bucket.mesh.vertices.empty() && !bucket.mesh.indices.empty())
+                {
+                    bucket.mesh.name = BuildingChunkMeshName(bucket.mesh.materialName, chunk);
+                    meshDatas.push_back(std::move(bucket.mesh));
+                }
+            }
+        }
     }
 
     aiMesh* CreateAssimpMesh(const BuildingMeshData& meshData, unsigned int materialIndex)
@@ -2496,7 +2555,7 @@ namespace
         const std::filesystem::path& fbxPath)
     {
         aiMaterial* material = new aiMaterial();
-        const aiString materialName(meshData.name);
+        const aiString materialName(meshData.materialName);
         material->AddProperty(&materialName, AI_MATKEY_NAME);
 
         const std::string texturePath = ToPortableRelativePath(
@@ -2534,6 +2593,7 @@ namespace
     bool ExportAssimpFbx(
         const std::vector<BuildingMeshData>& meshDatas,
         const std::filesystem::path& fbxPath,
+        uint32_t& materialCount,
         std::string& error)
     {
         if (meshDatas.empty())
@@ -2547,16 +2607,31 @@ namespace
         scene.mRootNode = new aiNode("RootNode");
         scene.mNumMeshes = static_cast<unsigned int>(meshDatas.size());
         scene.mMeshes = new aiMesh * [scene.mNumMeshes];
-        scene.mNumMaterials = scene.mNumMeshes;
+        std::map<std::string, unsigned int> materialIndices;
+        std::vector<const BuildingMeshData*> materials;
+        for (const BuildingMeshData& meshData : meshDatas)
+        {
+            const auto [entry, inserted] = materialIndices.emplace(
+                meshData.materialName, static_cast<unsigned int>(materials.size()));
+            if (inserted)
+            {
+                materials.push_back(&meshData);
+            }
+        }
+        scene.mNumMaterials = static_cast<unsigned int>(materials.size());
         scene.mMaterials = new aiMaterial * [scene.mNumMaterials];
+        for (unsigned int index = 0; index < scene.mNumMaterials; ++index)
+        {
+            scene.mMaterials[index] = CreateAssimpMaterial(*materials[index], fbxPath);
+        }
         scene.mRootNode->mNumChildren = scene.mNumMeshes;
         scene.mRootNode->mChildren = new aiNode * [scene.mRootNode->mNumChildren];
 
         for (unsigned int index = 0; index < scene.mNumMeshes; index++)
         {
             const BuildingMeshData& meshData = meshDatas[index];
-            scene.mMeshes[index] = CreateAssimpMesh(meshData, index);
-            scene.mMaterials[index] = CreateAssimpMaterial(meshData, fbxPath);
+            scene.mMeshes[index] = CreateAssimpMesh(
+                meshData, materialIndices.at(meshData.materialName));
 
             aiNode* childNode = new aiNode(meshData.name);
             childNode->mParent = scene.mRootNode;
@@ -2578,6 +2653,7 @@ namespace
             error = "建筑 FBX 文件写入失败：" + PathToUtf8String(fbxPath);
             return false;
         }
+        materialCount = scene.mNumMaterials;
         return true;
     }
 }
@@ -2603,6 +2679,12 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
         result.error = "建筑楼层高度必须大于 0。";
         return result;
     }
+    const double chunkSideCentimeters = options.GetChunkSizeMeters() * 100.;
+    if (!std::isfinite(chunkSideCentimeters) || chunkSideCentimeters <= 0.)
+    {
+        result.error = "建筑分块边长必须是大于 0 的米数。";
+        return result;
+    }
 
     TextureLibrary textureLibrary;
     if (!LoadTextureLibrary(options, textureLibrary, result.error))
@@ -2622,8 +2704,8 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
         options.roofTextureMode == AmapBuildingFbxRoofTextureMode::MergedAtlas;
     const bool useSatelliteRoof =
         options.roofTextureMode == AmapBuildingFbxRoofTextureMode::Satellite;
-    std::map<std::filesystem::path, MeshBucket> wallMeshBuckets;
-    std::map<std::filesystem::path, MeshBucket> roofMeshBuckets;
+    BuildingChunkBuckets wallChunkBuckets;
+    BuildingChunkBuckets roofChunkBuckets;
     std::unordered_map<std::string, WallMaterialBucketState> wallBucketStates;
     std::set<std::filesystem::path> copiedTextures;
     std::mt19937 randomEngine(options.randomSeed);
@@ -2647,6 +2729,15 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
         {
             continue;
         }
+        // 整栋按同一个中心点归块，墙体和屋顶不因跨边界而被切开。
+        const auto chunk = BuildingChunkFor(geometry.centroid, chunkSideCentimeters);
+        if (!chunk)
+        {
+            result.error = "建筑分块坐标超出有效范围，请增大分块边长。";
+            return result;
+        }
+        auto& wallMeshBuckets = wallChunkBuckets[*chunk];
+        auto& roofMeshBuckets = roofChunkBuckets[*chunk];
 
         const double heightCentimeters =
             static_cast<double>(feature.height) * options.layerHeightCentimeters;
@@ -2724,85 +2815,46 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
         const std::string atlasExtension = AtlasImageExtension(options.atlasImageFormat);
         if (useWallAtlas)
         {
-            BuildingMeshData wallAtlasMesh;
-            if (!BuildAtlasMesh(
-                    wallMeshBuckets,
+            if (!BuildAtlasMeshes(
+                    wallChunkBuckets,
                     textureLibrary.wallTextures,
                     outputDirectory / ("building_wall_atlas" + atlasExtension),
                     "building_wall_atlas",
                     BuildingMeshKind::Wall,
-                    wallAtlasMesh,
+                    meshDatas,
                     result.error))
             {
                 return result;
             }
-            if (!wallAtlasMesh.vertices.empty() && !wallAtlasMesh.indices.empty())
-            {
-                meshDatas.push_back(std::move(wallAtlasMesh));
-            }
         }
         else
         {
-            meshDatas.reserve(meshDatas.size() + wallMeshBuckets.size());
-            for (auto& [texturePath, bucket] : wallMeshBuckets)
-            {
-                if (!bucket.mesh.vertices.empty() && !bucket.mesh.indices.empty())
-                {
-                    meshDatas.push_back(std::move(bucket.mesh));
-                }
-            }
+            AppendScatteredChunkMeshes(wallChunkBuckets, meshDatas);
         }
         if (useRoofAtlas)
         {
-            BuildingMeshData roofAtlasMesh;
-            if (!BuildAtlasMesh(
-                    roofMeshBuckets,
+            if (!BuildAtlasMeshes(
+                    roofChunkBuckets,
                     textureLibrary.roofTextures,
                     outputDirectory / ("building_roof_atlas" + atlasExtension),
                     "building_roof_atlas",
                     BuildingMeshKind::Roof,
-                    roofAtlasMesh,
+                    meshDatas,
                     result.error))
             {
                 return result;
             }
-            if (!roofAtlasMesh.vertices.empty() && !roofAtlasMesh.indices.empty())
-            {
-                meshDatas.push_back(std::move(roofAtlasMesh));
-            }
         }
         else
         {
-            meshDatas.reserve(meshDatas.size() + roofMeshBuckets.size());
-            for (auto& [texturePath, bucket] : roofMeshBuckets)
-            {
-                if (!bucket.mesh.vertices.empty() && !bucket.mesh.indices.empty())
-                {
-                    meshDatas.push_back(std::move(bucket.mesh));
-                }
-            }
+            AppendScatteredChunkMeshes(roofChunkBuckets, meshDatas);
         }
     }
     else
     {
-        meshDatas.reserve(wallMeshBuckets.size() + roofMeshBuckets.size());
-        const auto appendMeshData = [&meshDatas](MeshBucket& bucket)
-        {
-            if (!bucket.mesh.vertices.empty() && !bucket.mesh.indices.empty())
-            {
-                meshDatas.push_back(std::move(bucket.mesh));
-            }
-        };
-
         // 墙体优先输出，低角度检查和渐进加载时先看到建筑立面。
-        for (auto& [texturePath, bucket] : wallMeshBuckets)
-        {
-            appendMeshData(bucket);
-        }
-        for (auto& [texturePath, bucket] : roofMeshBuckets)
-        {
-            appendMeshData(bucket);
-        }
+        AppendScatteredChunkMeshes(wallChunkBuckets, meshDatas);
+        AppendScatteredChunkMeshes(roofChunkBuckets, meshDatas);
     }
 
     if (meshDatas.empty())
@@ -2819,13 +2871,12 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
             ConvertMeshToSphere(meshData, coordinateContext);
         }
     }
-    if (!ExportAssimpFbx(meshDatas, options.outputPath, result.error))
+    if (!ExportAssimpFbx(meshDatas, options.outputPath, result.materialCount, result.error))
     {
         return result;
     }
 
     result.meshCount = static_cast<uint32_t>(meshDatas.size());
-    result.materialCount = result.meshCount;
     result.success = true;
     return result;
 }

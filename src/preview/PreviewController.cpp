@@ -1166,6 +1166,16 @@ std::optional<ExportConfiguration> loadLegacyTaskConfiguration(
             }
             continue;
         }
+        const std::string chunkSizeValue = conversionRecordValue(
+            line, "建筑分块边长 (米): ");
+        if (!chunkSizeValue.empty())
+        {
+            if (const std::optional<double> chunkSize = parseFiniteDouble(chunkSizeValue))
+            {
+                configuration.SetBuildingChunkSizeMeters(*chunkSize);
+            }
+            continue;
+        }
         const std::string materialCountValue = conversionRecordValue(
             line, "建筑墙体材质上限: ");
         if (!materialCountValue.empty())

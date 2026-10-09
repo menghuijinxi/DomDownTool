@@ -62,6 +62,12 @@ namespace DownTool
         double elevationReferenceMeters = 0.;
         std::function<std::optional<double>(const LonLat&)> elevationSampler;
         std::function<bool()> cancellationRequested;
+
+        double GetChunkSizeMeters() const { return chunkSizeMeters_; }
+        void SetChunkSizeMeters(double value) { chunkSizeMeters_ = value; }
+
+    protected:
+        double chunkSizeMeters_ = 2200.;
     };
 
     struct AmapBuildingFbxExportResult

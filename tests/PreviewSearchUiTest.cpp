@@ -248,6 +248,9 @@ bool setExportBuildingPanelFixture(skui::Runtime& runtime)
         "<button id=\"export-act-set-shape__c-building__sphere\" "
         "class=\"export-segment-button is-active\" type=\"button\" "
         "data-action=\"export-composer\">球面</button></div></div>"
+        "<label class=\"export-field-row\"><span>分块边长 (米)</span>"
+        "<input id=\"export-act-set-building-chunk-size__c-building\" type=\"number\" "
+        "min=\"1\" step=\"1\" value=\"2200\"></label>"
         "<div class=\"export-field-row export-building-mode-row\"><span>墙体模式</span>"
         "<div class=\"export-segment\">"
         "<button id=\"export-act-set-wall-mode__c-building__scattered\" "
@@ -764,6 +767,10 @@ bool runTest()
                 postprocess_test::ContainsText(documentPath,
                                                "min-width: 240px;") &&
                 postprocess_test::ContainsText(composerPath, "ResetExportComposer") &&
+                postprocess_test::ContainsText(
+                    composerPath, "export-act-set-building-chunk-size__") &&
+                postprocess_test::ContainsText(
+                    composerPath, "component->SetBuildingChunkSizeMeters(*size);") &&
                 postprocess_test::ContainsText(composerPath, "RenderExportComposer") &&
                 postprocess_test::ContainsText(composerPath, "dom-geotiff") &&
                 postprocess_test::ContainsText(composerPath, "dem-geotiff") &&

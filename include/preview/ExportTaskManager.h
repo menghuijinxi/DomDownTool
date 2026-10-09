@@ -134,9 +134,12 @@ struct ExportComponent
 
     uint32_t GetTerrainMaximumTriangles() const { return terrainMaximumTriangles_; }
     void SetTerrainMaximumTriangles(uint32_t value) { terrainMaximumTriangles_ = value; }
+    double GetBuildingChunkSizeMeters() const { return buildingChunkSizeMeters_; }
+    void SetBuildingChunkSizeMeters(double value) { buildingChunkSizeMeters_ = value; }
 
 protected:
     uint32_t terrainMaximumTriangles_ = 0;
+    double buildingChunkSizeMeters_ = 2200.;
 };
 
 struct ExportContentGroup
@@ -197,9 +200,12 @@ struct ExportConfiguration
 
     uint32_t GetTerrainMaximumTriangles() const { return terrainMaximumTriangles_; }
     void SetTerrainMaximumTriangles(uint32_t value) { terrainMaximumTriangles_ = value; }
+    double GetBuildingChunkSizeMeters() const { return buildingChunkSizeMeters_; }
+    void SetBuildingChunkSizeMeters(double value) { buildingChunkSizeMeters_ = value; }
 
 protected:
     uint32_t terrainMaximumTriangles_ = 0;
+    double buildingChunkSizeMeters_ = 2200.;
 };
 
 struct ExportTaskRecord

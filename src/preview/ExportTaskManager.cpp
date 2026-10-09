@@ -330,6 +330,7 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
         {"buildingFbxAtlasImageFormat", BuildingFbxAtlasImageFormatValue(
             configuration.buildingFbxAtlasImageFormat)},
         {"buildingLayerHeightCentimeters", configuration.buildingLayerHeightCentimeters},
+        {"buildingChunkSizeMeters", configuration.GetBuildingChunkSizeMeters()},
         {"buildingMaxWallMaterialsPerBucket", configuration.buildingMaxWallMaterialsPerBucket},
         {"buildingTextureRandomSeed", configuration.buildingTextureRandomSeed},
         {"mergedImageResolution", configuration.mergedImageResolution},
@@ -456,6 +457,8 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
     }
     configuration.buildingLayerHeightCentimeters = GetJsonDouble(
         value, "buildingLayerHeightCentimeters", 45.);
+    configuration.SetBuildingChunkSizeMeters(GetJsonDouble(
+        value, "buildingChunkSizeMeters", configuration.GetBuildingChunkSizeMeters()));
     configuration.buildingMaxWallMaterialsPerBucket = static_cast<uint32_t>(
         std::max(1., GetJsonDouble(value, "buildingMaxWallMaterialsPerBucket", 1.)));
     configuration.buildingTextureRandomSeed = static_cast<uint32_t>(
@@ -1326,6 +1329,8 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
            << PathToUtf8(configuration.buildingRoofTexturePath) << "\n"
            << "建筑楼层高度 (厘米): "
            << configuration.buildingLayerHeightCentimeters << "\n"
+           << "建筑分块边长 (米): "
+           << configuration.GetBuildingChunkSizeMeters() << "\n"
            << "建筑墙体材质上限: "
            << configuration.buildingMaxWallMaterialsPerBucket << "\n"
            << "建筑贴图随机种子: "
@@ -1479,6 +1484,7 @@ bool ExportBuildingFbxDataToRoot(
     exportOptions.atlasImageFormat = configuration.buildingFbxAtlasImageFormat;
     exportOptions.satelliteRoofTextures = satelliteRoofTextures;
     exportOptions.layerHeightCentimeters = configuration.buildingLayerHeightCentimeters;
+    exportOptions.SetChunkSizeMeters(configuration.GetBuildingChunkSizeMeters());
     exportOptions.maxWallMaterialsPerBucket =
         configuration.buildingMaxWallMaterialsPerBucket;
     exportOptions.randomSeed = configuration.buildingTextureRandomSeed;
@@ -1999,6 +2005,13 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
     }
 
     const ExportConfiguration& configuration = queuedExport.configuration;
+    if (configuration.exportBuildingFbx &&
+        (!std::isfinite(configuration.GetBuildingChunkSizeMeters()) ||
+            configuration.GetBuildingChunkSizeMeters() <= 0.))
+    {
+        error = "建筑分块边长必须是大于 0 的米数。";
+        return false;
+    }
     if (configuration.exportTerrainHeight && !configuration.exportFbx)
     {
         error = "导出高度需要同时启用 FBX。";
@@ -2599,6 +2612,7 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
         queuedExport.taskId);
     options.render.buildingLayerHeightCentimeters =
         configuration.buildingLayerHeightCentimeters;
+    options.render.SetBuildingChunkSizeMeters(configuration.GetBuildingChunkSizeMeters());
     options.render.buildingMaxWallMaterialsPerBucket =
         configuration.buildingMaxWallMaterialsPerBucket;
     options.render.buildingTextureRandomSeed = configuration.buildingTextureRandomSeed;

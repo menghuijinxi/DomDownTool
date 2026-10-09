@@ -352,6 +352,8 @@ add_domdown_test(RealDataFbxIntegrationTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/RealDataFbxIntegrationTest.cpp)
 add_domdown_test(AmapVectorGeoJsonTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorGeoJsonTest.cpp)
+add_domdown_test(AmapBuildingChunkTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapBuildingChunkTest.cpp)
 add_domdown_test(MapViewportTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/MapViewportTest.cpp)
 add_domdown_test(AmapPlaceSearchTest
