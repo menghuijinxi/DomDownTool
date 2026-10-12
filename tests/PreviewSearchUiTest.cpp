@@ -781,6 +781,10 @@ bool runTest()
                 postprocess_test::ContainsText(composerPath, "RenderExportComposer") &&
                 postprocess_test::ContainsText(composerPath, "dom-geotiff") &&
                 postprocess_test::ContainsText(composerPath, "dem-geotiff") &&
+                postprocess_test::ContainsText(composerPath,
+                    "export-act-toggle-cesium-mipmaps__") &&
+                postprocess_test::ContainsText(composerPath,
+                    "component->SetCesiumTextureMipmaps(checked);") &&
                 postprocess_test::ContainsText(composerPath, "EPSG:3857") &&
                 postprocess_test::ContainsText(composerPath, "原始瓦片分辨率") &&
                 postprocess_test::ContainsText(composerPath,

@@ -24,6 +24,10 @@
     },
     "openssl",
     "assimp",
+    {
+      "name": "ktx",
+      "version>=": "4.4.2"
+    },
     "protobuf",
     "earcut-hpp",
     {

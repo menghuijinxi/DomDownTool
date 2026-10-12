@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DomDownTool Cesium</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cesium@1.146.0/Build/Cesium/Widgets/widgets.css">
+    <style>
+        * { box-sizing: border-box; letter-spacing: 0; }
+        body { margin: 0; font: 14px system-ui, sans-serif; background: #e8eceb; color: #252a2a; }
+        #scene { position: fixed; inset: 0; }
+        aside { position: absolute; top: 12px; left: 12px; width: 330px; max-width: calc(100% - 24px);
+            max-height: calc(100dvh - 24px); overflow: auto;
+            background: #f8faf9f2; border: 1px solid #aebdb8; padding: 14px; border-radius: 4px; }
+        h1 { font-size: 18px; margin: 0 0 14px; }
+        label { display: grid; gap: 5px; margin: 10px 0; }
+        input, select, button { font: inherit; min-width: 0; }
+        input[type=text], select { width: 100%; padding: 7px; border: 1px solid #a5b3af;
+            border-radius: 3px; background: white; color: #202726; }
+        input[type=range] { width: 100%; }
+        button { border: 1px solid #587b70; border-radius: 3px; padding: 7px 12px;
+            cursor: pointer; background: #13674f; color: white; }
+        .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+        .check { display: flex; align-items: center; gap: 5px; }
+        #status { margin: 12px 0 0; line-height: 1.6; overflow-wrap: anywhere; }
+        #status.error { color: #a12630; }
+        details { margin-top: 10px; border-top: 1px solid #c4ceca; padding-top: 10px; }
+        #requests { max-height: 130px; overflow: auto; font: 11px monospace; overflow-wrap: anywhere; }
+        @media(max-width: 600px) {
+            aside { width: calc(100% - 24px); padding: 10px; }
+            label { margin: 6px 0; }
+            details { display: none; }
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/cesium@1.146.0/Build/Cesium/Cesium.js"></script>
+</head>
+<body>
+    <div id="scene"></div>
+    <aside>
+        <h1>DomDownTool · Cesium</h1>
+        <label>地形目录<input id="terrain" type="text" value="/data/terrain/"></label>
+        <label>建筑 Tileset<input id="buildings" type="text" value="/data/buildings/tileset.json"></label>
+        <label>影像来源<select id="provider">
+            <option value="local">本地 XYZ DOM</option>
+            <option value="osm">OpenStreetMap</option>
+            <option value="arcgis">Esri World Imagery</option>
+            <option value="custom">自定义 XYZ</option>
+        </select></label>
+        <label>XYZ 地址<input id="xyz" type="text" value="/data/xyz/{z}/{x}/{y}.png"></label>
+        <div class="row">
+            <label class="check"><input id="terrain-show" type="checkbox" checked>地形</label>
+            <label class="check"><input id="building-show" type="checkbox" checked>建筑</label>
+            <label class="check"><input id="imagery-show" type="checkbox" checked>影像</label>
+        </div>
+        <label>屏幕误差 <output id="sse-value">8</output>
+            <input id="sse" type="range" min="1" max="64" value="8"></label>
+        <div class="row">
+            <button id="load" type="button">加载</button>
+            <button id="locate" type="button">定位</button>
+            <label class="check"><input id="wire" type="checkbox">线框</label>
+        </div>
+        <div id="status" role="status">未加载</div>
+        <details><summary>请求记录</summary><div id="requests"></div></details>
+    </aside>
+    <script type="module" src="preview.mjs"></script>
+</body>
+</html>

@@ -77,6 +77,8 @@ enum class ExportComponentKind
     RawTiles,
     BasePlate,
     BuildingModel,
+    CesiumTerrain,
+    CesiumBuildings,
     GeoJson
 };
 
@@ -139,11 +141,26 @@ struct ExportComponent
     void SetDistanceLod(const DownTool::FbxDistanceLod& value) { distanceLod_ = value; }
     double GetBuildingChunkSizeMeters() const { return buildingChunkSizeMeters_; }
     void SetBuildingChunkSizeMeters(double value) { buildingChunkSizeMeters_ = value; }
+    double GetCesiumErrorMeters() const { return cesiumErrorMeters_; }
+    void SetCesiumErrorMeters(double value) { cesiumErrorMeters_ = value; }
+    uint32_t GetCesiumLodLevels() const { return cesiumLodLevels_; }
+    void SetCesiumLodLevels(uint32_t value) { cesiumLodLevels_ = value; }
+    double GetCesiumHeightOffsetMeters() const { return cesiumHeightOffsetMeters_; }
+    void SetCesiumHeightOffsetMeters(double value) { cesiumHeightOffsetMeters_ = value; }
+    const std::filesystem::path& GetCesiumGeoidPath() const { return cesiumGeoidPath_; }
+    void SetCesiumGeoidPath(const std::filesystem::path& value) { cesiumGeoidPath_ = value; }
+    bool GetCesiumTextureMipmaps() const { return cesiumTextureMipmaps_; }
+    void SetCesiumTextureMipmaps(bool value) { cesiumTextureMipmaps_ = value; }
 
 protected:
     uint32_t terrainMaximumTriangles_ = 0;
     DownTool::FbxDistanceLod distanceLod_;
     double buildingChunkSizeMeters_ = 2200.;
+    double cesiumErrorMeters_ = 1.;
+    uint32_t cesiumLodLevels_ = 4;
+    double cesiumHeightOffsetMeters_ = 0.;
+    std::filesystem::path cesiumGeoidPath_;
+    bool cesiumTextureMipmaps_ = false;
 };
 
 struct ExportContentGroup

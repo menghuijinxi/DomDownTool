@@ -1162,6 +1162,12 @@ std::string BuildTaskDetailsText(const ExportConfiguration& configuration)
                 case ExportComponentKind::BuildingModel:
                     addOutput("建筑 FBX");
                     break;
+                case ExportComponentKind::CesiumTerrain:
+                    addOutput("Cesium 地形");
+                    break;
+                case ExportComponentKind::CesiumBuildings:
+                    addOutput("3D Tiles 建筑");
+                    break;
                 case ExportComponentKind::GeoJson:
                     addOutput("GeoJSON");
                     break;

@@ -1309,6 +1309,110 @@ namespace
         return candidates[distribution(randomEngine)];
     }
 
+    bool ValidateBuildingOptions(
+        const DownTool::AmapBuildingFbxExportOptions& options, std::string& error)
+    {
+        if (!std::isfinite(options.centerWgs84.lon) || !std::isfinite(options.centerWgs84.lat))
+        {
+            error = "建筑 FBX 中心经纬度无效。";
+            return false;
+        }
+        if (options.layerHeightCentimeters <= 0.)
+        {
+            error = "建筑楼层高度必须大于 0。";
+            return false;
+        }
+        const double side = options.GetChunkSizeMeters() * 100.;
+        if (!std::isfinite(side) || side <= 0.)
+        {
+            error = "建筑分块边长必须是大于 0 的米数。";
+            return false;
+        }
+        return true;
+    }
+
+    std::optional<BuildingGeometry> BuildExportableBuildingGeometry(
+        const DownTool::AmapVectorFeature& feature,
+        const DownTool::AmapBuildingFbxExportOptions& options)
+    {
+        if (feature.geometryType != DownTool::AmapVectorGeometryType::Polygon ||
+            !feature.hasHeight || feature.height == 0)
+        {
+            return std::nullopt;
+        }
+        BuildingGeometry geometry = BuildBuildingGeometry(feature, options.centerWgs84);
+        if (geometry.polygons.empty() || !geometry.bounds.IsValid() ||
+            geometry.wallLengthCentimeters <= 1.e-6)
+        {
+            return std::nullopt;
+        }
+        return geometry;
+    }
+
+    class BuildingTextureSelector
+    {
+    public:
+        BuildingTextureSelector(const TextureLibrary& library,
+            const DownTool::AmapBuildingFbxExportOptions& options)
+            : library_(library), options_(options), randomEngine_(options.randomSeed)
+        {
+        }
+
+        DownTool::AmapBuildingTextureSelection Select(
+            const DownTool::AmapVectorFeature& feature, const BuildingGeometry& geometry)
+        {
+            const size_t wall = SelectWallTexture(library_.wallTextures, geometry,
+                feature.height, double(feature.height) * options_.layerHeightCentimeters,
+                options_, wallBucketStates_, randomEngine_);
+            std::optional<size_t> roof;
+            if (options_.roofTextureMode != DownTool::AmapBuildingFbxRoofTextureMode::Satellite)
+            {
+                roof = SelectRoofTexture(library_.roofTextures, geometry, randomEngine_);
+            }
+            return {wall, roof};
+        }
+
+    protected:
+        const TextureLibrary& library_;
+        const DownTool::AmapBuildingFbxExportOptions& options_;
+        std::mt19937 randomEngine_;
+        std::unordered_map<std::string, WallMaterialBucketState> wallBucketStates_;
+    };
+
+    bool ValidateTextureSelections(
+        size_t featureCount, const TextureLibrary& library,
+        const DownTool::AmapBuildingFbxExportOptions& options, std::string& error)
+    {
+        const auto& selections = options.GetTextureSelections();
+        if (selections.empty())
+        {
+            return true;
+        }
+        if (selections.size() != featureCount)
+        {
+            error = "建筑选图结果与源建筑数量不一致。";
+            return false;
+        }
+        const bool satellite =
+            options.roofTextureMode == DownTool::AmapBuildingFbxRoofTextureMode::Satellite;
+        for (const auto& selection : selections)
+        {
+            if (!selection)
+            {
+                continue;
+            }
+            const auto& roof = selection->GetRoofTextureIndex();
+            if (selection->GetWallTextureIndex() >= library.wallTextures.size() ||
+                (satellite ? roof.has_value() :
+                    !roof || *roof >= library.roofTextures.size()))
+            {
+                error = "建筑选图结果与当前墙体或屋顶图库不一致。";
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool ContainsPoint(const Bounds2& bounds, const Point2& point)
     {
         return point.x >= bounds.minX && point.x <= bounds.maxX &&
@@ -2594,7 +2698,8 @@ namespace
         const std::vector<BuildingMeshData>& meshDatas,
         const std::filesystem::path& fbxPath,
         uint32_t& materialCount,
-        std::string& error)
+        std::string& error,
+        const DownTool::AmapBuildingSceneWriter& writer)
     {
         if (meshDatas.empty())
         {
@@ -2641,6 +2746,13 @@ namespace
             scene.mRootNode->mChildren[index] = childNode;
         }
 
+        materialCount = scene.mNumMaterials;
+        if (writer)
+        {
+            const bool written = writer(scene, error);
+            materialCount = scene.mNumMaterials;
+            return written;
+        }
         Assimp::Exporter exporter;
         const aiExportDataBlob* blob = exporter.ExportToBlob(&scene, "fbx");
         if (!blob || !blob->data || blob->size == 0)
@@ -2658,9 +2770,45 @@ namespace
     }
 }
 
-DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
+bool DownTool::PrepareAmapBuildingTextureSelections(
     const AmapVectorDecodedData& decodedData,
-    const AmapBuildingFbxExportOptions& options)
+    const AmapBuildingFbxExportOptions& options,
+    AmapBuildingTextureSelections& selections,
+    std::string& error)
+{
+    if (!ValidateBuildingOptions(options, error))
+    {
+        return false;
+    }
+    TextureLibrary library;
+    if (!LoadTextureLibrary(options, library, error))
+    {
+        return false;
+    }
+    BuildingTextureSelector selector(library, options);
+    AmapBuildingTextureSelections prepared;
+    prepared.reserve(decodedData.features.size());
+    for (const auto& feature : decodedData.features)
+    {
+        if (options.cancellationRequested && options.cancellationRequested())
+        {
+            error = "建筑选图已取消。";
+            return false;
+        }
+        const auto geometry = BuildExportableBuildingGeometry(feature, options);
+        prepared.push_back(geometry ?
+            std::optional<AmapBuildingTextureSelection>(selector.Select(feature, *geometry)) :
+            std::nullopt);
+    }
+    selections = std::move(prepared);
+    error.clear();
+    return true;
+}
+
+DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingScene(
+    const AmapVectorDecodedData& decodedData,
+    const AmapBuildingFbxExportOptions& options,
+    const AmapBuildingSceneWriter& writer)
 {
     AmapBuildingFbxExportResult result;
     result.outputPath = options.outputPath;
@@ -2669,25 +2817,20 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
         result.error = "建筑 FBX 输出路径为空。";
         return result;
     }
-    if (!std::isfinite(options.centerWgs84.lon) || !std::isfinite(options.centerWgs84.lat))
+    if (!ValidateBuildingOptions(options, result.error))
     {
-        result.error = "建筑 FBX 中心经纬度无效。";
-        return result;
-    }
-    if (options.layerHeightCentimeters <= 0.)
-    {
-        result.error = "建筑楼层高度必须大于 0。";
         return result;
     }
     const double chunkSideCentimeters = options.GetChunkSizeMeters() * 100.;
-    if (!std::isfinite(chunkSideCentimeters) || chunkSideCentimeters <= 0.)
-    {
-        result.error = "建筑分块边长必须是大于 0 的米数。";
-        return result;
-    }
 
     TextureLibrary textureLibrary;
     if (!LoadTextureLibrary(options, textureLibrary, result.error))
+    {
+        return result;
+    }
+    const auto& selections = options.GetTextureSelections();
+    if (!ValidateTextureSelections(
+        decodedData.features.size(), textureLibrary, options, result.error))
     {
         return result;
     }
@@ -2706,29 +2849,27 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
         options.roofTextureMode == AmapBuildingFbxRoofTextureMode::Satellite;
     BuildingChunkBuckets wallChunkBuckets;
     BuildingChunkBuckets roofChunkBuckets;
-    std::unordered_map<std::string, WallMaterialBucketState> wallBucketStates;
     std::set<std::filesystem::path> copiedTextures;
-    std::mt19937 randomEngine(options.randomSeed);
+    BuildingTextureSelector selector(textureLibrary, options);
 
-    for (const AmapVectorFeature& feature : decodedData.features)
+    for (size_t featureIndex = 0; featureIndex < decodedData.features.size(); ++featureIndex)
     {
+        const auto& feature = decodedData.features[featureIndex];
         if (options.cancellationRequested && options.cancellationRequested())
         {
             result.error = "建筑 FBX 导出已取消。";
             return result;
         }
-        if (feature.geometryType != AmapVectorGeometryType::Polygon || !feature.hasHeight ||
-            feature.height == 0)
+        if (!selections.empty() && !selections[featureIndex])
         {
             continue;
         }
-
-        const BuildingGeometry geometry = BuildBuildingGeometry(feature, options.centerWgs84);
-        if (geometry.polygons.empty() || !geometry.bounds.IsValid() ||
-            geometry.wallLengthCentimeters <= 1.e-6)
+        const auto exportableGeometry = BuildExportableBuildingGeometry(feature, options);
+        if (!exportableGeometry)
         {
             continue;
         }
+        const BuildingGeometry& geometry = *exportableGeometry;
         // 整栋按同一个中心点归块，墙体和屋顶不因跨边界而被切开。
         const auto chunk = BuildingChunkFor(geometry.centroid, chunkSideCentimeters);
         if (!chunk)
@@ -2746,15 +2887,10 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
         const double bottomCentimeters = terrainHeightRange ? terrainHeightRange->first : 0.;
         const double topCentimeters =
             (terrainHeightRange ? terrainHeightRange->second : 0.) + heightCentimeters;
-        const size_t wallTextureIndex = SelectWallTexture(
-            textureLibrary.wallTextures,
-            geometry,
-            feature.height,
-            heightCentimeters,
-            options,
-            wallBucketStates,
-            randomEngine);
-        const TextureInfo& wallTexture = textureLibrary.wallTextures[wallTextureIndex];
+        const AmapBuildingTextureSelection selection = selections.empty() ?
+            selector.Select(feature, geometry) : *selections[featureIndex];
+        const TextureInfo& wallTexture =
+            textureLibrary.wallTextures[selection.GetWallTextureIndex()];
 
         if (!useWallAtlas &&
             !WritePowerOfTwoScatterTexture(wallTexture, copiedTextures, result.error))
@@ -2785,11 +2921,8 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
         }
         else
         {
-            const size_t roofTextureIndex = SelectRoofTexture(
-                textureLibrary.roofTextures,
-                geometry,
-                randomEngine);
-            const TextureInfo& roofTexture = textureLibrary.roofTextures[roofTextureIndex];
+            const TextureInfo& roofTexture =
+                textureLibrary.roofTextures[*selection.GetRoofTextureIndex()];
             if (!useRoofAtlas &&
                 !WritePowerOfTwoScatterTexture(roofTexture, copiedTextures, result.error))
             {
@@ -2871,7 +3004,8 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
             ConvertMeshToSphere(meshData, coordinateContext);
         }
     }
-    if (!ExportAssimpFbx(meshDatas, options.outputPath, result.materialCount, result.error))
+    if (!ExportAssimpFbx(
+            meshDatas, options.outputPath, result.materialCount, result.error, writer))
     {
         return result;
     }
@@ -2879,4 +3013,11 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
     result.meshCount = static_cast<uint32_t>(meshDatas.size());
     result.success = true;
     return result;
+}
+
+DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingsToFbx(
+    const AmapVectorDecodedData& decodedData,
+    const AmapBuildingFbxExportOptions& options)
+{
+    return ExportAmapBuildingScene(decodedData, options, {});
 }

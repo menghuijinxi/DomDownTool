@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -9,6 +10,8 @@
 
 #include "AmapVectorDecoder.h"
 #include "DataType.h"
+
+struct aiScene;
 
 namespace DownTool
 {
@@ -40,6 +43,27 @@ namespace DownTool
         double north = 0.;
     };
 
+    class AmapBuildingTextureSelection
+    {
+    public:
+        AmapBuildingTextureSelection(
+            size_t wallTextureIndex, std::optional<size_t> roofTextureIndex)
+            : wallTextureIndex_(wallTextureIndex), roofTextureIndex_(roofTextureIndex)
+        {
+        }
+
+        size_t GetWallTextureIndex() const { return wallTextureIndex_; }
+        const std::optional<size_t>& GetRoofTextureIndex() const { return roofTextureIndex_; }
+
+    protected:
+        size_t wallTextureIndex_;
+        std::optional<size_t> roofTextureIndex_;
+    };
+
+    // 与源 features 一一对应；无效建筑没有选图，分块时保留源索引，不依赖 UID。
+    using AmapBuildingTextureSelections =
+        std::vector<std::optional<AmapBuildingTextureSelection>>;
+
     struct AmapBuildingFbxExportOptions
     {
         std::filesystem::path outputPath;
@@ -65,9 +89,18 @@ namespace DownTool
 
         double GetChunkSizeMeters() const { return chunkSizeMeters_; }
         void SetChunkSizeMeters(double value) { chunkSizeMeters_ = value; }
+        const AmapBuildingTextureSelections& GetTextureSelections() const
+        {
+            return textureSelections_;
+        }
+        void SetTextureSelections(const AmapBuildingTextureSelections& value)
+        {
+            textureSelections_ = value;
+        }
 
     protected:
         double chunkSizeMeters_ = 2200.;
+        AmapBuildingTextureSelections textureSelections_;
     };
 
     struct AmapBuildingFbxExportResult
@@ -83,4 +116,19 @@ namespace DownTool
     [[nodiscard]] AmapBuildingFbxExportResult ExportAmapBuildingsToFbx(
         const AmapVectorDecodedData& decodedData,
         const AmapBuildingFbxExportOptions& options);
+
+    // 在简化前复用 FBX 规则选图；后续各层使用相同图库和对应 feature 的选图结果。
+    [[nodiscard]] bool PrepareAmapBuildingTextureSelections(
+        const AmapVectorDecodedData& decodedData,
+        const AmapBuildingFbxExportOptions& options,
+        AmapBuildingTextureSelections& selections,
+        std::string& error);
+
+    // 复用建筑几何和贴图生成，格式写入由调用方负责，不生成中间 FBX。
+    using AmapBuildingSceneWriter =
+        std::function<bool(aiScene&, std::string&)>;
+    [[nodiscard]] AmapBuildingFbxExportResult ExportAmapBuildingScene(
+        const AmapVectorDecodedData& decodedData,
+        const AmapBuildingFbxExportOptions& options,
+        const AmapBuildingSceneWriter& writer);
 }

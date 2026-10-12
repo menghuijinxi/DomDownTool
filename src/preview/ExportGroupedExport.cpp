@@ -13,6 +13,8 @@
 
 #include "AmapVectorPngDownloader.h"
 #include "CopernicusDem.h"
+#include "CesiumExport.h"
+#include "AmapVectorDownloader.h"
 #include "GeoTiffExporter.h"
 
 #include "fmt/format.h"
@@ -73,6 +75,10 @@ std::string ComponentKindValue(ExportComponentKind kind)
         return "base-plate";
     case ExportComponentKind::BuildingModel:
         return "building-model";
+    case ExportComponentKind::CesiumTerrain:
+        return "cesium-terrain";
+    case ExportComponentKind::CesiumBuildings:
+        return "cesium-buildings";
     case ExportComponentKind::GeoJson:
         return "geojson";
     }
@@ -112,6 +118,14 @@ std::optional<ExportComponentKind> ComponentKindFrom(std::string_view value)
     if (value == "geojson")
     {
         return ExportComponentKind::GeoJson;
+    }
+    if (value == "cesium-terrain")
+    {
+        return ExportComponentKind::CesiumTerrain;
+    }
+    if (value == "cesium-buildings")
+    {
+        return ExportComponentKind::CesiumBuildings;
     }
     return std::nullopt;
 }
@@ -161,6 +175,10 @@ std::string ComponentDirectoryName(ExportComponentKind kind)
         return "底板模型";
     case ExportComponentKind::BuildingModel:
         return "建筑模型";
+    case ExportComponentKind::CesiumTerrain:
+        return "Cesium 地形";
+    case ExportComponentKind::CesiumBuildings:
+        return "3D Tiles 建筑";
     case ExportComponentKind::GeoJson:
         return "GeoJSON";
     }
@@ -392,6 +410,11 @@ Json ComponentToJson(const ExportComponent& component)
             DownTool::AmapBuildingFbxAtlasImageFormat::Jpg ? "jpg" : "png"},
         {"layerHeightCentimeters", component.layerHeightCentimeters},
         {"buildingChunkSizeMeters", component.GetBuildingChunkSizeMeters()},
+        {"cesiumErrorMeters", component.GetCesiumErrorMeters()},
+        {"cesiumLodLevels", component.GetCesiumLodLevels()},
+        {"cesiumHeightOffsetMeters", component.GetCesiumHeightOffsetMeters()},
+        {"cesiumGeoidPath", PathToUtf8(component.GetCesiumGeoidPath())},
+        {"cesiumTextureMipmaps", component.GetCesiumTextureMipmaps()},
         {"maxWallMaterialsPerBucket", component.maxWallMaterialsPerBucket},
         {"textureRandomSeed", component.textureRandomSeed},
         {"followBaseElevation", component.followBaseElevation},
@@ -498,6 +521,12 @@ std::optional<ExportComponent> ComponentFromJson(const Json& json)
     component.layerHeightCentimeters = JsonNumber(json, "layerHeightCentimeters", 45.);
     component.SetBuildingChunkSizeMeters(JsonNumber(
         json, "buildingChunkSizeMeters", component.GetBuildingChunkSizeMeters()));
+    component.SetCesiumErrorMeters(JsonNumber(json, "cesiumErrorMeters", 1.));
+    component.SetCesiumLodLevels(static_cast<uint32_t>(
+        std::clamp(JsonNumber(json, "cesiumLodLevels", 4.), 0., 8.)));
+    component.SetCesiumHeightOffsetMeters(JsonNumber(json, "cesiumHeightOffsetMeters", 0.));
+    component.SetCesiumGeoidPath(std::filesystem::u8path(JsonString(json, "cesiumGeoidPath")));
+    component.SetCesiumTextureMipmaps(JsonBool(json, "cesiumTextureMipmaps", false));
     component.maxWallMaterialsPerBucket = static_cast<uint32_t>(
         std::max(1., JsonNumber(json, "maxWallMaterialsPerBucket", 1.)));
     component.textureRandomSeed = static_cast<uint32_t>(
@@ -767,13 +796,27 @@ std::string GroupedExportError(const ExportConfiguration& configuration)
                 }
                 break;
             case ExportComponentKind::DemGeoTiff:
+            case ExportComponentKind::CesiumTerrain:
                 if (!component.sources.empty())
                 {
-                    return "DEM GeoTIFF 不需要图源。";
+                    return "DEM GeoTIFF 和 Cesium 地形不需要图源。";
                 }
-                if (!(component.elevationSampleMeters > 0.))
+                if (!std::isfinite(component.elevationSampleMeters) ||
+                    component.elevationSampleMeters <= 0.)
                 {
-                    return "DEM GeoTIFF 采样间距必须大于 0 米。";
+                    return "DEM GeoTIFF 和 Cesium 地形采样间距必须是有限正数。";
+                }
+                break;
+            case ExportComponentKind::CesiumBuildings:
+                if (!HasBuildingSource(component) ||
+                    !std::isfinite(component.GetBuildingChunkSizeMeters()) ||
+                    component.GetBuildingChunkSizeMeters() <= 0. ||
+                    !std::isfinite(component.layerHeightCentimeters) ||
+                    component.layerHeightCentimeters <= 0. ||
+                    component.GetCesiumLodLevels() < 2 || component.GetCesiumLodLevels() > 8 ||
+                    component.textureSize < 256 || component.textureSize > 4096)
+                {
+                    return "3D Tiles 建筑的图源、分块、LOD 层数或图集参数无效。";
                 }
                 break;
             case ExportComponentKind::RawTiles:
@@ -847,6 +890,14 @@ std::string GroupedExportError(const ExportConfiguration& configuration)
                     return "GeoJSON 只接受 GIS 图源。";
                 }
                 break;
+            }
+            if ((component.kind == ExportComponentKind::CesiumTerrain ||
+                 component.kind == ExportComponentKind::CesiumBuildings) &&
+                (!std::isfinite(component.GetCesiumErrorMeters()) ||
+                 component.GetCesiumErrorMeters() <= 0. ||
+                 !std::isfinite(component.GetCesiumHeightOffsetMeters())))
+            {
+                return "Cesium 几何误差或高度修正参数无效。";
             }
         }
     }
@@ -935,7 +986,10 @@ bool ExportGroupedRunner::Run(
              job.component->exportElevation) ||
             (job.component->kind == ExportComponentKind::BuildingModel &&
              job.component->followBaseElevation) ||
-            job.component->kind == ExportComponentKind::DemGeoTiff)
+            job.component->kind == ExportComponentKind::DemGeoTiff ||
+            job.component->kind == ExportComponentKind::CesiumTerrain ||
+            (job.component->kind == ExportComponentKind::CesiumBuildings &&
+             job.component->followBaseElevation))
         {
             needsElevation = true;
         }
@@ -1077,7 +1131,10 @@ bool ExportGroupedRunner::Run(
             (component.kind == ExportComponentKind::BasePlate && component.exportElevation) ||
             (component.kind == ExportComponentKind::BuildingModel &&
              component.followBaseElevation) ||
-            component.kind == ExportComponentKind::DemGeoTiff;
+            component.kind == ExportComponentKind::DemGeoTiff ||
+            component.kind == ExportComponentKind::CesiumTerrain ||
+            (component.kind == ExportComponentKind::CesiumBuildings &&
+             component.followBaseElevation);
         const std::shared_ptr<DownTool::CopernicusDemData> componentElevation =
             wantsElevation ? elevationData : nullptr;
         const std::string imageFormat = NormalizeFormat(component.imageFormat);
@@ -1514,6 +1571,89 @@ bool ExportGroupedRunner::Run(
             {
                 std::error_code removeError;
                 std::filesystem::remove_all(temporaryRoot, removeError);
+            }
+        }
+        else if (component.kind == ExportComponentKind::CesiumTerrain ||
+                 component.kind == ExportComponentKind::CesiumBuildings)
+        {
+            const auto bounds = DownTool::CalculateExportGeographicBounds(
+                queuedExport.configuration.centerWgs84,
+                queuedExport.configuration.radiusMeters,
+                queuedExport.configuration.polygonsWgs84);
+            if (!bounds)
+            {
+                error = "无法计算 Cesium 导出范围。";
+                return false;
+            }
+            DownTool::CesiumBuildingOptions options;
+            options.SetOutputPath(componentDirectory);
+            options.SetBounds(*bounds);
+            options.SetPolygons(queuedExport.configuration.polygonsWgs84);
+            options.SetSampleMeters(component.elevationSampleMeters);
+            options.SetErrorMeters(component.GetCesiumErrorMeters());
+            options.SetHeightOffsetMeters(component.GetCesiumHeightOffsetMeters());
+            options.SetGeoidPath(component.GetCesiumGeoidPath());
+            options.SetCancellation([&manager] { return manager.IsCancellationRequested(); });
+            options.SetProgress(
+                [&manager, taskId = queuedExport.taskId, stepIndex, stepCount](
+                    uint64_t completed, uint64_t total)
+                {
+                    manager.UpdateProgress(taskId, "生成 Cesium 金字塔",
+                        (stepIndex + (total ? double(completed) / total : 0.)) / stepCount,
+                        completed, total);
+                });
+            options.SetSampler([componentElevation](const DownTool::LonLat& point)
+                -> std::optional<double>
+                {
+                    return componentElevation ? componentElevation->Sample(point) :
+                        std::optional<double>(0.);
+                });
+            if (component.kind == ExportComponentKind::CesiumTerrain)
+            {
+                succeeded = DownTool::ExportCesiumTerrain(options, error);
+            }
+            else
+            {
+                DownTool::AmapVectorDownloadOptions download;
+                download.centerWgs84 = queuedExport.configuration.centerWgs84;
+                download.radiusMeters = queuedExport.configuration.radiusMeters;
+                download.polygonsWgs84 = queuedExport.configuration.polygonsWgs84;
+                download.zoom = queuedExport.configuration.zoom;
+                download.includeBaseLayers = true;
+                download.cancellationRequested = options.GetCancellation();
+                download.progressCallback =
+                    [&manager, taskId = queuedExport.taskId, stepIndex, stepCount](
+                        const DownTool::AmapVectorDownloadProgress& progress)
+                    {
+                        manager.UpdateProgress(taskId, "下载 3D Tiles 建筑",
+                            double(stepIndex) / stepCount,
+                            progress.completedTaskCount, progress.totalTaskCount);
+                    };
+                DownTool::AmapVectorDownloader downloader;
+                const auto data = downloader.Download(download);
+                if (!data.success)
+                {
+                    error = data.error;
+                    return false;
+                }
+                DownTool::AmapBuildingFbxExportOptions building;
+                building.centerWgs84 = queuedExport.configuration.centerWgs84;
+                building.wallTexturePath = component.wallTexturePath;
+                building.roofTexturePath = component.roofTexturePath;
+                building.layerHeightCentimeters = component.layerHeightCentimeters;
+                building.randomSeed = component.textureRandomSeed;
+                building.SetChunkSizeMeters(component.GetBuildingChunkSizeMeters());
+                options.SetBuildingOptions(building);
+                options.SetLodLevels(component.GetCesiumLodLevels());
+                options.SetAtlasSize(component.textureSize);
+                options.SetTextureMipmaps(component.GetCesiumTextureMipmaps());
+                auto buildings = data.decodedData;
+                std::erase_if(buildings.features, [](const DownTool::AmapVectorFeature& feature)
+                    {
+                        return DownTool::ClassifyAmapVectorFeature(feature) !=
+                            DownTool::AmapVectorRenderCategory::Building;
+                    });
+                succeeded = DownTool::ExportCesiumBuildings(buildings, options, error);
             }
         }
         else if (component.kind == ExportComponentKind::DemGeoTiff)

@@ -138,6 +138,10 @@ std::string KindName(ExportComponentKind kind)
         return "底板模型";
     case ExportComponentKind::BuildingModel:
         return "建筑模型";
+    case ExportComponentKind::CesiumTerrain:
+        return "Cesium 地形";
+    case ExportComponentKind::CesiumBuildings:
+        return "3D Tiles 建筑";
     case ExportComponentKind::GeoJson:
         return "GeoJSON";
     }
@@ -162,6 +166,10 @@ std::string KindValue(ExportComponentKind kind)
         return "base-plate";
     case ExportComponentKind::BuildingModel:
         return "building-model";
+    case ExportComponentKind::CesiumTerrain:
+        return "cesium-terrain";
+    case ExportComponentKind::CesiumBuildings:
+        return "cesium-buildings";
     case ExportComponentKind::GeoJson:
         return "geojson";
     }
@@ -202,6 +210,14 @@ std::optional<ExportComponentKind> KindFrom(std::string_view value)
     {
         return ExportComponentKind::GeoJson;
     }
+    if (value == "cesium-terrain")
+    {
+        return ExportComponentKind::CesiumTerrain;
+    }
+    if (value == "cesium-buildings")
+    {
+        return ExportComponentKind::CesiumBuildings;
+    }
     return std::nullopt;
 }
 
@@ -209,6 +225,8 @@ bool AllowsImagery(ExportComponentKind kind)
 {
     return kind != ExportComponentKind::GeoJson &&
         kind != ExportComponentKind::BuildingModel &&
+        kind != ExportComponentKind::CesiumBuildings &&
+        kind != ExportComponentKind::CesiumTerrain &&
         kind != ExportComponentKind::DemGeoTiff;
 }
 
@@ -216,6 +234,8 @@ bool AllowsGis(ExportComponentKind kind)
 {
     return kind != ExportComponentKind::RawTiles &&
         kind != ExportComponentKind::BuildingModel &&
+        kind != ExportComponentKind::CesiumBuildings &&
+        kind != ExportComponentKind::CesiumTerrain &&
         kind != ExportComponentKind::DemGeoTiff;
 }
 
@@ -393,6 +413,11 @@ std::string ComponentSummary(const ExportComponent& component)
                                ShapeName(component.shape));
         }
         return fmt::format("建筑 · {}", ShapeName(component.shape));
+    case ExportComponentKind::CesiumTerrain:
+        return fmt::format("quantized-mesh · {:.0f} 米", component.elevationSampleMeters);
+    case ExportComponentKind::CesiumBuildings:
+        return fmt::format("{} 层 · {:.0f} 米分块", component.GetCesiumLodLevels(),
+            component.GetBuildingChunkSizeMeters());
     case ExportComponentKind::GeoJson:
         return names;
     }
@@ -809,7 +834,8 @@ std::string SourceBlockHtml(
     for (size_t index = 0; index < component.sources.size(); ++index)
     {
         const ExportSourceEntry& source = component.sources[index];
-        const bool fixedBuilding = component.kind == ExportComponentKind::BuildingModel;
+        const bool fixedBuilding = component.kind == ExportComponentKind::BuildingModel ||
+            component.kind == ExportComponentKind::CesiumBuildings;
         std::string color;
         if (source.kind == ExportSourceKind::Gis && !fixedBuilding)
         {
@@ -899,13 +925,78 @@ std::string PanelBodyHtml(
 {
     std::string html;
     const bool building = component.kind == ExportComponentKind::BuildingModel;
-    if (component.kind != ExportComponentKind::DemGeoTiff)
+    const bool cesiumBuilding = component.kind == ExportComponentKind::CesiumBuildings;
+    const bool cesium = cesiumBuilding || component.kind == ExportComponentKind::CesiumTerrain;
+    if (component.kind != ExportComponentKind::DemGeoTiff &&
+        component.kind != ExportComponentKind::CesiumTerrain)
     {
         html += "<div class=\"export-panel-section\"><span class=\"export-panel-label\">图源</span>";
-        html += SourceBlockHtml(component, openSourceMenu, timelines, !building);
+        html += SourceBlockHtml(component, openSourceMenu, timelines, !building && !cesiumBuilding);
         html += "</div>";
     }
-    if (component.kind == ExportComponentKind::MergedImage)
+    if (cesium)
+    {
+        if (!cesiumBuilding)
+        {
+            html += fmt::format(
+                "<label class=\"export-field-row\"><span>采样间距（米）</span>"
+                "<input id=\"export-act-set-sample__{}\" type=\"number\" "
+                "min=\"1\" step=\"1\" value=\"{}\"></label>",
+                component.id, component.elevationSampleMeters);
+        }
+        html += fmt::format(
+            "<label class=\"export-field-row\"><span>几何误差（米）</span>"
+            "<input id=\"export-act-set-cesium-error__{}\" type=\"number\" "
+            "min=\"0.1\" step=\"0.1\" value=\"{}\"></label>"
+            "<label class=\"export-field-row\"><span>高度偏移（米）</span>"
+            "<input id=\"export-act-set-cesium-offset__{}\" type=\"number\" "
+            "step=\"0.1\" value=\"{}\"></label>"
+            "<label class=\"export-field-row\"><span>Geoid PGM 文件</span>"
+            "<input id=\"export-act-set-cesium-geoid__{}\" type=\"text\" value=\"{}\"></label>",
+            component.id, component.GetCesiumErrorMeters(),
+            component.id, component.GetCesiumHeightOffsetMeters(),
+            component.id, EscapeHtml(PathToUtf8(component.GetCesiumGeoidPath())));
+        if (cesiumBuilding)
+        {
+            html += fmt::format(
+                "<label class=\"export-field-row\"><span>最细层分块（米）</span>"
+                "<input id=\"export-act-set-building-chunk-size__{}\" type=\"number\" "
+                "min=\"1\" step=\"1\" value=\"{}\"></label>"
+                "<label class=\"export-field-row\"><span>LOD 层数</span>"
+                "<input id=\"export-act-set-cesium-levels__{}\" type=\"number\" "
+                "min=\"2\" max=\"8\" step=\"1\" value=\"{}\"></label>",
+                component.id, component.GetBuildingChunkSizeMeters(),
+                component.id, component.GetCesiumLodLevels());
+            html += FieldSelect("粗层图集尺寸", "export-act-set-texture-size__" + component.id,
+                OptionTags({{"256", "256"}, {"512", "512"}, {"1024", "1024"},
+                    {"2048", "2048"}, {"4096", "4096"}}, std::to_string(component.textureSize)));
+            html += fmt::format(
+                "<label class=\"export-switch-row\"><span>生成 Mipmap</span>"
+                "<input id=\"export-act-toggle-cesium-mipmaps__{}\" "
+                "class=\"export-switch\" type=\"checkbox\"{}></label>",
+                component.id, component.GetCesiumTextureMipmaps() ? " checked" : "");
+            html += fmt::format(
+                "<label class=\"export-field-row\"><span>楼层高度（厘米）</span>"
+                "<input id=\"export-act-set-layer-height__{}\" type=\"number\" "
+                "min=\"1\" value=\"{}\"></label>"
+                "<label class=\"export-field-row\"><span>随机种子</span>"
+                "<input id=\"export-act-set-seed__{}\" type=\"number\" "
+                "min=\"0\" value=\"{}\"></label>"
+                "<label class=\"export-switch-row\"><span>采样地形高程</span>"
+                "<input id=\"export-act-toggle-follow-elevation__{}\" "
+                "class=\"export-switch\" type=\"checkbox\"{}></label>",
+                component.id, component.layerHeightCentimeters,
+                component.id, component.textureRandomSeed,
+                component.id, component.followBaseElevation ? " checked" : "");
+            html += DirectoryField("墙体贴图目录",
+                "export-act-set-wall-path__" + component.id,
+                "export-act-browse-wall-path__" + component.id, PathToUtf8(component.wallTexturePath));
+            html += DirectoryField("屋顶贴图目录",
+                "export-act-set-roof-path__" + component.id,
+                "export-act-browse-roof-path__" + component.id, PathToUtf8(component.roofTexturePath));
+        }
+    }
+    else if (component.kind == ExportComponentKind::MergedImage)
     {
         const bool jpgLosesAlpha = component.imageFormat == "jpg" &&
             std::ranges::any_of(component.sources, [](const ExportSourceEntry& source)
@@ -1125,6 +1216,8 @@ void DomDownToolPreview::PreviewController::RenderExportComposer(skui::Runtime& 
                 ExportComponentKind::RawTiles,
                 ExportComponentKind::BasePlate,
                 ExportComponentKind::BuildingModel,
+                ExportComponentKind::CesiumTerrain,
+                ExportComponentKind::CesiumBuildings,
                 ExportComponentKind::GeoJson};
             for (const ExportComponentKind kind : kKinds)
             {
@@ -1349,7 +1442,13 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
             {
                 component.SetDistanceLod(DownTool::DefaultFbxDistanceLod());
             }
-            if (*kind == ExportComponentKind::BuildingModel)
+            if (*kind == ExportComponentKind::CesiumBuildings)
+            {
+                component.textureSize = 1024;
+                component.followBaseElevation = true;
+            }
+            if (*kind == ExportComponentKind::BuildingModel ||
+                *kind == ExportComponentKind::CesiumBuildings)
             {
                 if (const GisCatalogItem* item = FindGis(DownTool::AmapVectorRenderCategory::Building))
                 {
@@ -1447,7 +1546,8 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
         ExportComponent* component = findComponent(first);
         const std::optional<uint32_t> index = ParseUnsigned(second);
         if (component != nullptr && index.has_value() && *index < component->sources.size() &&
-            component->kind != ExportComponentKind::BuildingModel)
+            component->kind != ExportComponentKind::BuildingModel &&
+            component->kind != ExportComponentKind::CesiumBuildings)
         {
             component->sources.erase(component->sources.begin() + static_cast<std::ptrdiff_t>(*index));
         }
@@ -1519,6 +1619,56 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
             {
                 component->elevationSampleMeters = *sample;
                 runtime.setTextById("export-summary__" + component->id, ComponentSummary(*component));
+            }
+        }
+        refresh = false;
+    }
+    else if (verb == "toggle-cesium-mipmaps")
+    {
+        if (ExportComponent* component = findComponent(first);
+            component && component->kind == ExportComponentKind::CesiumBuildings)
+        {
+            component->SetCesiumTextureMipmaps(checked);
+        }
+    }
+    else if (verb == "set-cesium-error" || verb == "set-cesium-offset" ||
+             verb == "set-cesium-levels" || verb == "set-cesium-geoid")
+    {
+        if (ExportComponent* component = findComponent(first))
+        {
+            if (verb == "set-cesium-geoid")
+            {
+                component->SetCesiumGeoidPath(std::filesystem::u8path(std::string(value)));
+            }
+            else if (verb == "set-cesium-levels")
+            {
+                if (const auto levels = ParseUnsigned(value))
+                {
+                    component->SetCesiumLodLevels(*levels);
+                }
+            }
+            else
+            {
+                try
+                {
+                    size_t consumed = 0;
+                    const double parsed = std::stod(std::string(value), &consumed);
+                    if (consumed == value.size() && std::isfinite(parsed))
+                    {
+                        if (verb == "set-cesium-error" && parsed > 0.)
+                        {
+                            component->SetCesiumErrorMeters(parsed);
+                        }
+                        else if (verb == "set-cesium-offset")
+                        {
+                            component->SetCesiumHeightOffsetMeters(parsed);
+                        }
+                    }
+                }
+                catch (const std::exception&)
+                {
+                    // 不完整输入保留上一次有效值。
+                }
             }
         }
         refresh = false;

@@ -266,3 +266,110 @@ vcpkg 的 GDAL 默认特性包含多种数据格式和数据库支持，`GDAL::G
 
 后续新增第三方库前，应先确认代码是否真的使用其核心能力。若只需要 JSON、摘要、图片编码等
 基础功能，应优先依赖对应的轻量成熟库，避免为了附属工具类引入大型静态依赖树。
+
+## Cesium 地形剔除与 Assimp GLB 属性边界
+
+日期：2026-10-10。验证环境：CesiumJS 1.146.0、Assimp 6.0.4。
+
+### 现象和影响
+
+新 terrain 服务能够返回根瓦块，但 Cesium 不请求子块，地球显示空白，只有建筑可见。
+另外，GLB 在 Cesium 能显示，但 Khronos glTF Validator 报 `ACCESSOR_MIN_MISMATCH`。
+
+### 根因和排查路径
+
+- 先排除请求 404、gzip 响应头、TMS 可用范围和包围球，再检查剔除头部。
+  terrain 的零 horizon occlusion point 不是“禁用剔除”，而是地球内部的点，
+  会被 `EllipsoidalOccluder.isScaledSpacePointVisible()` 判为不可见。
+- 高度全零不代表地球表面是平面。粗层只按高度误差简化，会生成跨越大范围的弦面，
+  即使文件索引和包围球正确，也可能无法贴合地球和影像。
+- Assimp `ExportToBlob(scene, "glb2")` 的 float accessor 最小值对全正数属性输出 0，
+  与 BIN 中真实 POSITION/UV 最小值不一致。通过独立校验器而非肉眼定位。
+
+### 解决方案
+
+terrain 写入椭球缩放空间有效的 horizon 点；半球根层使用保守远点。
+粗层保持曲率网格，细层在 TIN 细化参考高度中加入球面弧度项。
+`src/CesiumTerrainExporter.cpp` 是协议和剔除边界实现位置。
+
+GLB 仍交给 Assimp 序列化，只对已有 float accessor 边界依据 BIN 重算，
+JSON/BIN 长度及四字节对齐重新写入，顶点/索引不变。
+`src/CesiumGlbWriter.cpp` 实现此窄范围兼容修正，不是通用 glTF 编解码库。
+ExportToBlob 返回对象由 exporter 持有，必须在 exporter 生命周期内处理；
+每次调用使用本地 exporter，不共享跨线程实例。
+
+### 验证和快速检查
+
+- terrain 读取器断言 horizon 有限且位于有效缩放空间，索引合法、三角形不反向。
+- 浏览器确认实际请求并渲染子层，不只检查 root 请求或画布非空。
+- GLB 使用全正数坐标回归测试；真实导出交给 Khronos glTF Validator。
+- 显示不等于协议正确，结构校验也不等于模型形状正确，必须两者结合。
+- 网络来源失败应记录具体 URL；不要把在线影像的连接失败误判为本地格式错误。
+
+参考：CesiumGS quantized-mesh README、Cesium EllipsoidalOccluder 源码、
+KhronosGroup glTF-Validator；来源地址记录在 `docs/design/cesium-3d-tiles-export.md`。
+
+## 建筑 KTX2 / ETC1S 与 Assimp 的 BasisU 引用
+
+日期：2026-10-10。版本：KTX-Software 4.4.2、Assimp 6.0.4、CesiumJS 1.146.0。
+
+### 目标和影响范围
+
+3D Tiles 建筑散图和各级基础色图集改为 KTX2 / BasisU ETC1S，质量参数 128，
+对齐目标项目 OSGB 的 mipless ETC1S 压缩方案。Mipmap 是组件选项且默认关闭。
+不改变 XYZ、FBX、GeoTIFF 或地形纹理逻辑；编码器不额外强制 512 最大边。
+
+ETC1S 是有损压缩，质量参数不是质量百分比，也不能保证所有内容肉眼无差异。
+GPU 转码后的格式由客户端支持情况决定，不可仅由 KTX2 文件大小推断显存或帧率。
+
+### 排查路径和关键约束
+
+- 核对目标项目后期 OSGB 转换流程、实际输出 GLB 和 KTX2 层数，
+  不用早期单模型测试的 512 + mip 设计替代当前配置。
+- `ktxTexture2_Create` 创建 RGBA8 sRGB、2D、单层单面纹理。
+  基础尺寸按 KHR_texture_basisu 要求对齐到 4 的倍数，不必扩成二次幂。
+- `generateMipmaps` 必须为 false；无 mip 时 `numLevels=1`，有 mip 时先填完
+  全部层，再调用 `ktxTexture2_CompressBasisEx`。压缩块不能依赖 WebGL 现场生成 mip。
+  不要事后剥离 BasisLZ 层，否则容易破坏共享码本和层索引。
+- 输入 OpenCV BGR/BGRA 转为 RGBA，基础色标记 sRGB，KTXorientation 为 `rd`。
+  mip 在解码 sRGB 后的线性预乘 RGBA 空间缩小，再转回非预乘 sRGB。
+- ETC1S 参数使用默认 compressionLevel、qualityLevel=128、uastc=false，
+  每张图片最多 4 个压缩线程；每次调用拥有自己的 KTX 对象，不共享可变编码状态。
+- 检查每个 KTX API 返回码。纹理由 RAII 调用 `ktxTexture_Destroy`，
+  `ktxTexture_WriteToMemory` 分配的序列化内存由 `free` 释放；
+  使用 C++ filesystem 流写出，避免第三方窄字符文件 API 的中文路径问题。
+- 取消在编码前、各 mip 写入和单张压缩完成后检查。
+  libktx 的本次同步 API 不能中断内部一张图片的压缩；不会在取消后继续写出纹理。
+
+### Assimp 兼容修正
+
+Assimp 6.0.4 遇到 `.ktx2` URI 会声明 KHR_texture_basisu，但写出 texture 时仍使用
+普通 `source`，未写 `texture.extensions.KHR_texture_basisu.source`。
+仅检查 extensionsUsed 会误判为已兼容。`CesiumGlbWriter` 对已有 JSON 做窄范围修正：
+纹理引用改为标准 BasisU 扩展、标记 image/ktx2、声明 required extension，
+并按是否包含 mip 选择 LINEAR 或 LINEAR_MIPMAP_LINEAR。BIN 顶点/索引保持原样。
+
+### 验证、许可证和快速检查
+
+- `CesiumExportTest` 读取 DFD 确认 ETC1S、sRGB、BasisLZ 和层数，
+  再调用 `ktxTexture2_TranscodeBasis(..., KTX_TTF_RGBA32, 0)` 检查各层像素。
+  覆盖颜色通道、透明度、线性缩小、非二次幂尺寸及失败/取消。
+- 完整 GLB 使用 Khronos glTF Validator，网页检查实际 KTX2 请求、
+  Cesium 加载成功及近远选层；不能只看扩展字段或 HTTP 200。
+- 本机 glTF Validator 2.0.0-dev.3.10 不支持 KHR_texture_basisu，
+  因而产生 KTX2 MIME/图片格式警告。保留警告报告，不把零错误表述为纹理完整验收；
+  补充 `ktx validate --gltf-basisu --warnings-as-errors` 和实际 Cesium 转码显示。
+- 首次 WASM 转码和 shader 构建可能超过固定截图等待时间；
+  浏览器回归等待 tilesLoaded、实际叶层选择和 terrain 渲染就绪，
+  CDN 不稳定时可指定同版本本地 Cesium build，避免外网波动掩盖格式结果。
+- 看不到贴图时先查 BasisU texture 引用、相对 URI、MIME 和全部共享纹理是否部署，
+  再检查客户端转码器加载和 GPU 压缩格式支持。
+- KTX-Software 主体为 Apache-2.0，内置组件还包含 MIT、BSD、Zlib 和
+  Ericsson ETC decoder 的专用许可等；不能将整个软件包笼统标为仅 Apache。
+  CMake 复制 vcpkg 包内 copyright 与 LICENSES 到发行目录 `licenses/ktx/`。
+
+官方参考：<https://github.com/KhronosGroup/KTX-Software/tree/v4.4.2>、
+<https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_texture_basisu>。
+本地入口：`src/CesiumTextureEncoder.cpp`、`src/CesiumGlbWriter.cpp`、
+vcpkg 安装包的 `include/ktx.h`、`share/ktx/copyright` 和 `share/ktx/LICENSES/`；
+Assimp 参考 `code/AssetLib/glTF2/glTF2AssetWriter.inl`。

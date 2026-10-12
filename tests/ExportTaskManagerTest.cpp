@@ -333,6 +333,111 @@ bool verifyFinalJpegComposition(const std::filesystem::path& testRoot)
         "最终 JPG 没有保留 PNG 中间图的透明叠加结果");
 }
 
+bool verifyCesiumConfiguration(const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    ExportConfiguration configuration;
+    configuration.centerWgs84 = {116.4, 39.9};
+    configuration.radiusMeters = 400.;
+    configuration.zoom = 17;
+    configuration.outputRoot = testRoot / "cesium-output";
+    ExportContentGroup group;
+    group.id = "cesium-group";
+    group.name = "Cesium";
+    ExportComponent terrain;
+    terrain.id = "cesium-terrain";
+    terrain.kind = ExportComponentKind::CesiumTerrain;
+    terrain.elevationSampleMeters = 30.;
+    terrain.SetCesiumErrorMeters(2.);
+    terrain.SetCesiumHeightOffsetMeters(12.);
+    terrain.SetCesiumGeoidPath(testRoot / "geoid.pgm");
+    ExportComponent building = terrain;
+    building.id = "cesium-buildings";
+    building.kind = ExportComponentKind::CesiumBuildings;
+    building.SetCesiumLodLevels(3);
+    if (!postprocess_test::Require(!building.GetCesiumTextureMipmaps(),
+            "建筑 Mipmap 必须默认关闭"))
+    {
+        return false;
+    }
+    building.SetCesiumTextureMipmaps(true);
+    building.SetBuildingChunkSizeMeters(250.);
+    building.textureSize = 512;
+    ExportSourceEntry source;
+    source.id = "gis.building";
+    source.kind = ExportSourceKind::Gis;
+    source.gisCategory = DownTool::AmapVectorRenderCategory::Building;
+    building.sources.push_back(source);
+    group.components = {terrain, building};
+    configuration.groups.push_back(group);
+    if (!postprocess_test::Require(GroupedExportError(configuration).empty(),
+            "独立 Cesium 组件不能通过配置校验"))
+    {
+        return false;
+    }
+    configuration.groups[0].components[0].elevationSampleMeters =
+        std::numeric_limits<double>::infinity();
+    if (!postprocess_test::Require(!GroupedExportError(configuration).empty(),
+            "Cesium 地形接受了无限采样间距"))
+    {
+        return false;
+    }
+    configuration.groups[0].components[0] = terrain;
+    configuration.groups[0].components[1].SetCesiumLodLevels(1);
+    if (!postprocess_test::Require(!GroupedExportError(configuration).empty(),
+            "Cesium 建筑接受了单层伪金字塔"))
+    {
+        return false;
+    }
+    const auto recordsPath = testRoot / "cesium-records.json";
+    {
+        ExportTaskManager manager({}, recordsPath);
+        const auto id = manager.Enqueue(configuration);
+        if (!postprocess_test::Require(waitForFinished(manager, id),
+                "无效 Cesium 参数没有在下载前结束"))
+        {
+            return false;
+        }
+    }
+    ExportTaskManager restored({}, recordsPath);
+    const auto records = restored.GetRecords();
+    if (!postprocess_test::Require(records.size() == 1 &&
+            records[0].configuration.has_value(), "Cesium 配置没有持久化"))
+    {
+        return false;
+    }
+    const auto& components = records[0].configuration->groups[0].components;
+    if (!postprocess_test::Require(components.size() == 2 &&
+        components[0].kind == ExportComponentKind::CesiumTerrain &&
+        components[1].kind == ExportComponentKind::CesiumBuildings &&
+        components[0].GetCesiumErrorMeters() == 2. &&
+        components[0].GetCesiumHeightOffsetMeters() == 12. &&
+        components[0].GetCesiumGeoidPath() == terrain.GetCesiumGeoidPath() &&
+        components[1].GetBuildingChunkSizeMeters() == 250. &&
+        components[1].GetCesiumLodLevels() == 1 && components[1].textureSize == 512 &&
+        components[1].GetCesiumTextureMipmaps(),
+        "Cesium 地形/建筑组件重启后参数不一致"))
+    {
+        return false;
+    }
+    Json legacy = loadJsonFile(recordsPath);
+    for (auto& component : legacy["tasks"][0]["configuration"]["groups"][0]["components"])
+    {
+        component.erase("cesiumTextureMipmaps");
+    }
+    const auto legacyPath = testRoot / "legacy-cesium-records.json";
+    {
+        std::ofstream output(legacyPath, std::ios::binary);
+        output << legacy.dump(2);
+    }
+    ExportTaskManager legacyManager({}, legacyPath);
+    const auto legacyRecords = legacyManager.GetRecords();
+    return postprocess_test::Require(legacyRecords.size() == 1 &&
+        legacyRecords[0].configuration.has_value() &&
+        !legacyRecords[0].configuration->groups[0].components[1].GetCesiumTextureMipmaps(),
+        "旧配置缺少 Mipmap 字段时没有默认关闭");
+}
+
 bool runTest()
 {
     const std::filesystem::path testRoot =
@@ -342,6 +447,10 @@ bool runTest()
     std::filesystem::remove_all(testRoot, fileError);
     std::filesystem::create_directories(testRoot, fileError);
     if (!postprocess_test::Require(!fileError, "无法准备导出任务测试目录"))
+    {
+        return false;
+    }
+    if (!verifyCesiumConfiguration(testRoot))
     {
         return false;
     }
@@ -1552,7 +1661,64 @@ bool runTest()
 }
 } // namespace
 
-int main()
+namespace
 {
-    return postprocess_test::RunGuarded(runTest);
+bool runRealCesiumTask()
+{
+    using namespace DomDownToolPreview;
+    const auto root = postprocess_test::MakeTestRoot("cesium-task-real");
+    ExportConfiguration configuration;
+    configuration.centerWgs84 = {116.4, 39.9};
+    configuration.radiusMeters = 400.;
+    configuration.zoom = 17;
+    configuration.outputRoot = root;
+    ExportContentGroup group;
+    group.id = "real-cesium";
+    group.name = "Cesium";
+    ExportComponent terrain;
+    terrain.id = "terrain";
+    terrain.kind = ExportComponentKind::CesiumTerrain;
+    ExportComponent building;
+    building.id = "building";
+    building.kind = ExportComponentKind::CesiumBuildings;
+    building.textureSize = 512;
+    building.followBaseElevation = true;
+    building.SetBuildingChunkSizeMeters(200.);
+    building.SetCesiumLodLevels(3);
+    ExportSourceEntry source;
+    source.id = "gis.building";
+    source.name = "建筑";
+    source.kind = ExportSourceKind::Gis;
+    source.gisCategory = DownTool::AmapVectorRenderCategory::Building;
+    building.sources.push_back(source);
+    group.components = {terrain, building};
+    configuration.groups.push_back(group);
+    ExportTaskManager manager({}, root / "records.json");
+    const auto id = manager.Enqueue(configuration);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        const auto records = manager.GetRecords();
+        const auto* record = findRecord(records, id);
+        if (record && record->state != ExportTaskState::Queued &&
+            record->state != ExportTaskState::Running)
+        {
+            const auto output = ExportTaskOutputRoot(configuration, id) / "Cesium";
+            return postprocess_test::Require(record->state == ExportTaskState::Succeeded &&
+                std::filesystem::exists(output / std::filesystem::u8path("Cesium 地形") /
+                    "layer.json") &&
+                std::filesystem::exists(output / std::filesystem::u8path("3D Tiles 建筑") /
+                    "tileset.json"), "真实 Cesium 导出任务失败：" + record->error);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    manager.Cancel(id);
+    return postprocess_test::Require(false, "真实 Cesium 导出任务超时");
+}
+} // namespace
+
+int main(int argc, char** argv)
+{
+    return postprocess_test::RunGuarded(
+        argc > 1 && std::string(argv[1]) == "--real-cesium-task" ? runRealCesiumTask : runTest);
 }

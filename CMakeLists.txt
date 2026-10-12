@@ -128,6 +128,7 @@ find_package(CURL REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(assimp CONFIG REQUIRED)
+find_package(Ktx CONFIG REQUIRED)
 find_package(Protobuf CONFIG REQUIRED)
 find_package(TIFF REQUIRED)
 find_package(ZLIB REQUIRED)
@@ -141,6 +142,7 @@ set(DOMDOWNTOOL_LIBRARIES
     ${OpenCV_LIBS}
     OpenSSL::Crypto
     assimp::assimp
+    KTX::ktx
     protobuf::libprotobuf
     TIFF::TIFF
     ZLIB::ZLIB)
@@ -262,6 +264,24 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
   endif()
 endif()
 
+# KTX 静态库也需要随发行文件保留其第三方许可证。
+if(EXISTS "${Ktx_DIR}/copyright")
+  foreach(target_name DomDownTool AmapGisDownload DomDownToolPreview)
+    if(TARGET ${target_name})
+      add_custom_command(TARGET ${target_name} POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+          "$<TARGET_FILE_DIR:${target_name}>/licenses/ktx"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+          "${Ktx_DIR}/copyright"
+          "$<TARGET_FILE_DIR:${target_name}>/licenses/ktx/copyright"
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+          "${Ktx_DIR}/LICENSES"
+          "$<TARGET_FILE_DIR:${target_name}>/licenses/ktx/LICENSES"
+        VERBATIM)
+    endif()
+  endforeach()
+endif()
+
 enable_testing()
 
 if(MSVC)
@@ -340,6 +360,8 @@ add_domdown_test(FbxTerrainTriangulatorTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/FbxTerrainTriangulatorTest.cpp)
 add_domdown_test(CopernicusDemTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/CopernicusDemTest.cpp)
+add_domdown_test(CesiumExportTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/CesiumExportTest.cpp)
 add_domdown_test(GeoTiffExporterTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/GeoTiffExporterTest.cpp)
 add_domdown_test(BaiduProjectionTest
