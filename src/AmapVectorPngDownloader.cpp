@@ -654,6 +654,19 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
     const AmapVectorRenderOptions& renderOptions)
 {
     AmapVectorPngRenderResult result;
+    if (!vectorOptions.GetGisSpatialRange().IsEmpty())
+    {
+        AmapVectorDecodedData filtered = decodedData;
+        if (!ApplyGisSpatialFilter(
+                filtered, vectorOptions.GetGisSpatialRange(), result.error,
+                renderOptions.cancellationRequested))
+        {
+            return result;
+        }
+        AmapVectorDownloadOptions unfilteredOptions = vectorOptions;
+        unfilteredOptions.SetGisSpatialRange({});
+        return Render(filtered, unfilteredOptions, renderOptions);
+    }
     const auto isCancellationRequested = [&renderOptions]
     {
         return renderOptions.cancellationRequested &&
@@ -1089,9 +1102,11 @@ DownTool::AmapVectorPngDownloadResult DownTool::AmapVectorPngDownloader::Downloa
         return result;
     }
 
+    AmapVectorDownloadOptions renderVectorOptions = options.vectorDownload;
+    renderVectorOptions.SetGisSpatialRange({});
     result.render = Render(
         result.vectorDownload.decodedData,
-        options.vectorDownload,
+        renderVectorOptions,
         options.render);
     if (!result.render.success)
     {

@@ -203,6 +203,8 @@ namespace DownTool
 
 		void BuildRequestedTiles(std::vector<Tile>& targetTiles) const;
 
+        [[nodiscard]] std::vector<TileRange> BuildCandidateTileRanges(uint32_t zoom) const;
+
 		[[nodiscard]] bool TargetTileIntersectsDownloadRange(const Tile& tile) const;
 
 		virtual std::filesystem::path GetTileFilePath(const Tile& tile) const;

@@ -21,6 +21,7 @@
 #include "DataType.h"
 #include "FbxDistanceLod.h"
 #include "GeographicPolygon.h"
+#include "DownloadRegion.h"
 
 namespace DownTool
 {
@@ -49,7 +50,8 @@ enum class GisExportMode
 enum class ExportRangeMode
 {
     CenterRadius,
-    KmlPolygon
+    CustomPolygon,
+    KmlPolygon = CustomPolygon
 };
 
 struct SatelliteExportSource
@@ -219,6 +221,8 @@ struct ExportConfiguration
     uint32_t executionFbxSubdivision = 0;
     std::optional<DownTool::FbxPlanetShape> executionFbxShape;
 
+    const DownTool::DownloadRegions& GetDownloadRegions() const { return downloadRegions_; }
+    void SetDownloadRegions(const DownTool::DownloadRegions& value) { downloadRegions_ = value; }
     uint32_t GetTerrainMaximumTriangles() const { return terrainMaximumTriangles_; }
     void SetTerrainMaximumTriangles(uint32_t value) { terrainMaximumTriangles_ = value; }
     const DownTool::FbxDistanceLod& GetDistanceLod() const { return distanceLod_; }
@@ -227,10 +231,14 @@ struct ExportConfiguration
     void SetBuildingChunkSizeMeters(double value) { buildingChunkSizeMeters_ = value; }
 
 protected:
+    DownTool::DownloadRegions downloadRegions_;
     uint32_t terrainMaximumTriangles_ = 0;
     DownTool::FbxDistanceLod distanceLod_;
     double buildingChunkSizeMeters_ = 2200.;
 };
+
+[[nodiscard]] DownTool::GisSpatialRange ExportGisSpatialRange(
+    const ExportConfiguration& configuration);
 
 struct ExportTaskRecord
 {

@@ -1818,16 +1818,20 @@ bool DomDownToolPreview::PreviewController::LoadKmlRange(
 void DomDownToolPreview::PreviewController::ApplyKmlRange(
     const DownTool::KmlDownloadRange& range, skui::Runtime& runtime)
 {
-    previewRangeMode_ = ExportRangeMode::KmlPolygon;
-    previewPolygonsWgs84_ = range.polygonsWgs84;
-    previewKmlFileName_ = range.fileName;
-    renderer_.SetExportPolygonsWgs84(previewPolygonsWgs84_);
-    renderer_.setView(range.centerWgs84, KmlPreviewZoom(range.bounds));
-
     if (page_ == Page::Export)
     {
+        DownloadRangeEditor editor;
+        editor.SetRegions(exportDownloadRegions_);
+        if (!editor.AppendPolygons(range.polygonsWgs84, range.fileName, rangeEditorMessage_))
+        {
+            exportValidationMessage_ = rangeEditorMessage_;
+            updateUi(runtime);
+            return;
+        }
+        exportDownloadRegions_ = editor.GetRegions();
         exportRangeMode_ = ExportRangeMode::KmlPolygon;
-        exportPolygonsWgs84_ = range.polygonsWgs84;
+        exportPolygonsWgs84_ = DownTool::GetRegionPolygons(
+            exportDownloadRegions_, DownTool::DownloadRegionRole::Include);
         exportKmlFileName_ = range.fileName;
         exportLongitudeValue_ = fmt::format("{:.6f}", range.centerWgs84.lon);
         exportLatitudeValue_ = fmt::format("{:.6f}", range.centerWgs84.lat);
@@ -1835,6 +1839,21 @@ void DomDownToolPreview::PreviewController::ApplyKmlRange(
         runtime.setValueById("export-lon", exportLongitudeValue_);
         runtime.setValueById("export-lat", exportLatitudeValue_);
         runtime.setValueById("export-config-radius", exportRadiusValue_);
+    }
+    else
+    {
+        if (!rangeEditor_.AppendPolygons(range.polygonsWgs84, range.fileName, rangeEditorMessage_))
+        {
+            UpdateRangeEditorUi(runtime);
+            return;
+        }
+        previewRangeMode_ = ExportRangeMode::CustomPolygon;
+        previewKmlFileName_ = range.fileName;
+        rangeDraft_.clear();
+        rangeRectangleAnchor_.reset();
+        rangeDrawShape_ = RangeDrawShape::Select;
+        renderer_.setView(range.centerWgs84, KmlPreviewZoom(range.bounds));
+        SyncRangeEditor(runtime);
     }
     updateUi(runtime);
     requestRedraw();
@@ -1844,13 +1863,19 @@ void DomDownToolPreview::PreviewController::ClearKmlRange(
     skui::Runtime& runtime)
 {
     previewRangeMode_ = ExportRangeMode::CenterRadius;
+    rangeEditor_.SetRegions({});
+    rangeDraft_.clear();
+    renderer_.SetDownloadRegions({});
+    renderer_.SetDraftRegion({}, false, false);
     previewPolygonsWgs84_.clear();
     previewKmlFileName_.clear();
     renderer_.SetExportPolygonsWgs84({});
+    renderer_.SetExportRadiusMeters(parseFiniteDouble(previewRadiusValue_).value_or(0.));
     if (page_ == Page::Export)
     {
         exportRangeMode_ = ExportRangeMode::CenterRadius;
         exportPolygonsWgs84_.clear();
+        exportDownloadRegions_.clear();
         exportKmlFileName_.clear();
     }
     updateUi(runtime);
@@ -1883,12 +1908,15 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
     runtime.setElementEventCallback(
         [this, &runtime](const skui::ElementEvent& event)
         {
+            if (HandleRangeEditorEvent(runtime, event))
+            {
+                return;
+            }
             if (event.id == "export-radius" &&
                 event.type == skui::ElementEventType::Input)
             {
                 previewRadiusValue_ = event.value;
                 previewRangeMode_ = ExportRangeMode::CenterRadius;
-                previewPolygonsWgs84_.clear();
                 previewKmlFileName_.clear();
                 renderer_.SetExportPolygonsWgs84({});
                 const std::optional<double> radius = parseFiniteDouble(event.value);
@@ -2441,6 +2469,7 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                     !previewPolygonsWgs84_.empty())
                 {
                     exportPolygonsWgs84_ = previewPolygonsWgs84_;
+                    exportDownloadRegions_ = rangeEditor_.GetRegions();
                     exportKmlFileName_ = previewKmlFileName_;
                 }
                 UpdateExportUi(runtime);
@@ -3323,6 +3352,11 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
         }
     }
 
+    if (HandleRangeEditorMessage(window, message, wParam, lParam, runtime))
+    {
+        return true;
+    }
+
     if (message == WM_MOUSEMOVE)
     {
         updateTileDebugCursor(window, clientPoint(lParam));
@@ -3447,6 +3481,24 @@ bool DomDownToolPreview::PreviewController::isMapPoint(HWND window, int x, int y
     }
     RECT client{};
     GetClientRect(window, &client);
+    if (runtime_)
+    {
+        const double scale = std::max(0.1F, runtime_->effectiveScale());
+        const double logicalX = x / scale;
+        const double logicalY = y / scale;
+        const double logicalWidth = client.right / scale;
+        if (logicalX >= logicalWidth - 50. && logicalX < logicalWidth - 16. &&
+            logicalY >= 64. && logicalY < 98.)
+        {
+            return false;
+        }
+        const double panelRight = std::min(284., client.right / scale - 12.);
+        if (rangePanelOpen_ && logicalX >= 12. && logicalX < panelRight &&
+            logicalY >= 64. && logicalY < client.bottom / scale - 44.)
+        {
+            return false;
+        }
+    }
     return x >= 0 && x < client.right && static_cast<double>(y) >= renderer_.toolbarHeight() &&
            static_cast<double>(y) <
                static_cast<double>(client.bottom) - renderer_.statusBarHeight();
@@ -4359,9 +4411,7 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
         previewRangeMode_ == ExportRangeMode::KmlPolygon;
     runtime.setVisibleById("preview-radius-control", !previewKmlMode);
     runtime.setVisibleById("preview-kml-control", previewKmlMode);
-    runtime.setTextById(
-        "preview-kml-name",
-        previewKmlFileName_.empty() ? "KML 范围" : previewKmlFileName_);
+    UpdateRangeEditorUi(runtime);
     runtime.setTextsById(
         {{"active-provider", source.name},
          {"coordinate-system", source.coordinateSystem},
@@ -4503,6 +4553,19 @@ void DomDownToolPreview::PreviewController::schedulePageChange(Page page,
 
 void DomDownToolPreview::PreviewController::OpenExportPage(skui::Runtime& runtime)
 {
+    if (editingExportRange_)
+    {
+        FinishExportRangeEditing(runtime, true);
+        return;
+    }
+    if (!rangeDraft_.empty())
+    {
+        rangeEditorMessage_ = "请先完成或取消正在绘制的区域。";
+        rangePanelOpen_ = true;
+        UpdateRangeEditorUi(runtime);
+        requestRedraw();
+        return;
+    }
     if (page_ == Page::FbxPreview)
     {
         restoreFbxInputMethod();
@@ -4530,6 +4593,10 @@ void DomDownToolPreview::PreviewController::OpenExportPage(skui::Runtime& runtim
 
 void DomDownToolPreview::PreviewController::OpenTaskPage(skui::Runtime& runtime)
 {
+    if (editingExportRange_)
+    {
+        FinishExportRangeEditing(runtime, false);
+    }
     if (page_ == Page::FbxPreview)
     {
         restoreFbxInputMethod();
@@ -4606,6 +4673,13 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
         configuration->rangeMode : previewRangeMode_;
     exportPolygonsWgs84_ = configuration ?
         configuration->polygonsWgs84 : previewPolygonsWgs84_;
+    exportDownloadRegions_ = configuration ?
+        configuration->GetDownloadRegions() : rangeEditor_.GetRegions();
+    if (exportDownloadRegions_.empty() && !exportPolygonsWgs84_.empty())
+    {
+        exportDownloadRegions_ = DownTool::MakeDownloadRegions(
+            exportPolygonsWgs84_, configuration ? configuration->kmlFileName : previewKmlFileName_);
+    }
     exportKmlFileName_ = configuration ?
         configuration->kmlFileName : previewKmlFileName_;
     exportLongitudeValue_ = fmt::format("{:.6f}", configuration ?
@@ -4785,16 +4859,19 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
     runtime.setVisibleById("export-kml-field", kmlMode);
     runtime.setTextById(
         "export-kml-name",
-        exportKmlFileName_.empty() ? "未加载 KML" : exportKmlFileName_);
+        fmt::format("下载区 {} · GIS 排除区 {}",
+            exportPolygonsWgs84_.size(),
+            DownTool::GetRegionPolygons(exportDownloadRegions_,
+                DownTool::DownloadRegionRole::ExcludeGis).size()));
     if (kmlMode)
     {
         runtime.setTextById(
             "export-config-summary",
             fmt::format(
-                "{} · {} 个多边形 · z{}",
-                exportKmlFileName_.empty() ? "KML 范围" :
-                    exportKmlFileName_,
+                "自定义范围 · 下载区 {} · GIS 排除区 {} · z{}",
                 exportPolygonsWgs84_.size(),
+                DownTool::GetRegionPolygons(exportDownloadRegions_,
+                    DownTool::DownloadRegionRole::ExcludeGis).size(),
                 exportZoomValue_));
     }
     else
@@ -5056,6 +5133,11 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
     }
     if (exportRangeMode_ == ExportRangeMode::KmlPolygon)
     {
+        if (exportPolygonsWgs84_.empty())
+        {
+            error = "请至少绘制或启用一个下载区域。";
+            return std::nullopt;
+        }
         if (!DownTool::ValidateWgs84Polygons(exportPolygonsWgs84_, error))
         {
             return std::nullopt;
@@ -5069,6 +5151,11 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
 
     ExportConfiguration configuration;
     configuration.rangeMode = exportRangeMode_;
+    if (!DownTool::ValidateDownloadRegions(exportDownloadRegions_, error))
+    {
+        return std::nullopt;
+    }
+    configuration.SetDownloadRegions(exportDownloadRegions_);
     configuration.centerWgs84 = {*lon, *lat};
     configuration.radiusMeters = radius.value_or(0.);
     configuration.polygonsWgs84 =

@@ -3,10 +3,12 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "GeographicPolygon.h"
+#include "AmapVectorTileGrid.h"
 #include "GoogleDownBase.h"
 #include "KmlDownloadRange.h"
 
@@ -213,6 +215,37 @@ bool TestTileSelectionFollowsPolygon()
         "选择结果中包含与 KML 多边形不相交的 XYZ 瓦片");
 }
 
+bool TestSeparatedAndOverlappingRegions()
+{
+    constexpr uint32_t kZoom = 20;
+    const DownTool::Wgs84Ring west = {
+        {116.1, 39.9}, {116.1001, 39.9}, {116.1001, 39.9001}, {116.1, 39.9001}};
+    const DownTool::Wgs84Ring east = {
+        {120.1, 30.9}, {120.1001, 30.9}, {120.1001, 30.9001}, {120.1, 30.9001}};
+    const DownTool::Wgs84Polygons polygons = {west, east, west};
+    InspectableGoogleDown downloader;
+    downloader.SetTileSize(256);
+    downloader.SetZoom(kZoom);
+    downloader.SetDownloadPolygonsWgs84(polygons);
+    const auto tiles = downloader.BuildSelectedTiles();
+    std::set<std::pair<int32_t, int32_t>> uniqueTiles;
+    for (const auto& tile : tiles)
+    {
+        uniqueTiles.emplace(tile.X, tile.Y);
+    }
+    const auto gisTiles = DownTool::AmapVectorTileGrid::SelectTilesForWgs84Polygons(
+        polygons, kZoom);
+    std::set<std::pair<uint32_t, uint32_t>> uniqueGisTiles;
+    for (const auto& tile : gisTiles)
+    {
+        uniqueGisTiles.emplace(tile.x, tile.y);
+    }
+    return Require(tiles.size() >= 2 && tiles.size() < 20 &&
+            uniqueTiles.size() == tiles.size(), "独立下载区间仍整块枚举，或重叠区域重复下载") &&
+        Require(gisTiles.size() >= 2 && gisTiles.size() < 20 &&
+            uniqueGisTiles.size() == gisTiles.size(), "GIS 多区域选片未保持稀疏或出现重复");
+}
+
 bool RunTest()
 {
     const std::filesystem::path testRoot =
@@ -229,7 +262,8 @@ bool RunTest()
 
     const bool result = TestKmlParsing(testRoot) &&
         TestPolygonIntersection() &&
-        TestTileSelectionFollowsPolygon();
+        TestTileSelectionFollowsPolygon() &&
+        TestSeparatedAndOverlappingRegions();
     std::filesystem::remove_all(testRoot, error);
     if (result)
     {

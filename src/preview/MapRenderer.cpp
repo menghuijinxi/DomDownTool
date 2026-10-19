@@ -31,6 +31,7 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkSamplingOptions.h"
 #include "include/core/SkTypeface.h"
+#include "include/effects/SkDashPathEffect.h"
 #include "include/ports/SkTypeface_win.h"
 
 namespace
@@ -591,6 +592,7 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
 
     drawTileDebugOverlay(canvas);
     drawExportBounds(canvas);
+    drawRangeEditor(canvas);
     drawCenterMarker(canvas, width, height);
     drawLocationMarker(canvas, width, height);
     renderStats_.cache = imageCache_.stats();
@@ -820,6 +822,30 @@ void DomDownToolPreview::MapRenderer::SetExportPolygonsWgs84(
     const DownTool::Wgs84Polygons& polygons)
 {
     exportPolygonsWgs84_ = polygons;
+}
+
+void DomDownToolPreview::MapRenderer::SetDownloadRegions(
+    const DownTool::DownloadRegions& regions, const std::string& selectedId)
+{
+    downloadRegions_ = regions;
+    selectedRegionId_ = selectedId;
+}
+
+void DomDownToolPreview::MapRenderer::SetDraftRegion(
+    const DownTool::Wgs84Ring& vertices, bool excluded, bool closed)
+{
+    draftRegion_ = vertices;
+    draftRegionExcluded_ = excluded;
+    draftRegionClosed_ = closed;
+}
+
+std::optional<DomDownToolPreview::ViewportPoint>
+DomDownToolPreview::MapRenderer::ScreenPointForLonLat(
+    const DownTool::LonLat& coordinate) const
+{
+    const auto& source = currentSource();
+    return viewport_.screenPointForLonLat(
+        coordinate, *source.projection, source.yDirection, kTileSize);
 }
 
 std::vector<DomDownToolPreview::MapSourceSummary> DomDownToolPreview::MapRenderer::sources() const
@@ -1085,6 +1111,43 @@ void DomDownToolPreview::MapRenderer::drawExportBounds(SkCanvas& canvas) const
     strokePaint.setStyle(SkPaint::kStroke_Style);
     strokePaint.setStrokeWidth(2.F);
 
+    const auto drawRangePath = [&](const SkPath& path)
+    {
+        canvas.save();
+        for (const auto& region : downloadRegions_)
+        {
+            if (!region.GetEnabled() ||
+                region.GetRole() != DownTool::DownloadRegionRole::ExcludeGis)
+            {
+                continue;
+            }
+            SkPathBuilder excluded;
+            bool started = false;
+            for (const auto& vertex : region.GetVertices())
+            {
+                if (const auto point = ScreenPointForLonLat(vertex))
+                {
+                    if (!started)
+                    {
+                        excluded.moveTo(static_cast<float>(point->x),
+                            static_cast<float>(point->y));
+                        started = true;
+                    }
+                    else
+                    {
+                        excluded.lineTo(static_cast<float>(point->x),
+                            static_cast<float>(point->y));
+                    }
+                }
+            }
+            excluded.close();
+            canvas.clipPath(excluded.detach(), SkClipOp::kDifference, true);
+        }
+        canvas.drawPath(path, fillPaint);
+        canvas.restore();
+        canvas.drawPath(path, strokePaint);
+    };
+
     const MapSource& source = currentSource();
     if (!exportPolygonsWgs84_.empty())
     {
@@ -1130,8 +1193,7 @@ void DomDownToolPreview::MapRenderer::drawExportBounds(SkCanvas& canvas) const
             }
             builder.close();
             const SkPath path = builder.detach();
-            canvas.drawPath(path, fillPaint);
-            canvas.drawPath(path, strokePaint);
+            drawRangePath(path);
         }
         return;
     }
@@ -1169,7 +1231,89 @@ void DomDownToolPreview::MapRenderer::drawExportBounds(SkCanvas& canvas) const
     builder.close();
     const SkPath path = builder.detach();
 
-    canvas.drawPath(path, fillPaint);
+    drawRangePath(path);
+}
 
-    canvas.drawPath(path, strokePaint);
+void DomDownToolPreview::MapRenderer::drawRangeEditor(SkCanvas& canvas) const
+{
+    const auto drawRegion = [&](const DownTool::Wgs84Ring& vertices,
+                               bool excluded, bool selected, bool closed)
+    {
+        SkPathBuilder builder;
+        std::vector<ViewportPoint> points;
+        for (const auto& vertex : vertices)
+        {
+            if (const auto point = ScreenPointForLonLat(vertex))
+            {
+                if (points.empty())
+                {
+                    builder.moveTo(static_cast<float>(point->x), static_cast<float>(point->y));
+                }
+                else
+                {
+                    builder.lineTo(static_cast<float>(point->x), static_cast<float>(point->y));
+                }
+                points.push_back(*point);
+            }
+        }
+        if (closed)
+        {
+            builder.close();
+        }
+        const SkPath path = builder.detach();
+        SkPaint stroke;
+        stroke.setAntiAlias(true);
+        stroke.setStyle(SkPaint::kStroke_Style);
+        stroke.setColor(excluded ? SkColorSetRGB(243, 112, 112) :
+            SkColorSetRGB(255, 204, 74));
+        stroke.setStrokeWidth(selected ? 3.F : 2.F);
+        if (excluded)
+        {
+            const float intervals[] = {7.F, 5.F};
+            stroke.setPathEffect(SkDashPathEffect::Make(intervals, 0.F));
+            if (closed)
+            {
+                canvas.save();
+                canvas.clipPath(path, true);
+                SkPaint hatch;
+                hatch.setColor(SkColorSetARGB(72, 243, 112, 112));
+                hatch.setStrokeWidth(1.F);
+                const SkRect bounds = canvas.getLocalClipBounds();
+                for (float x = bounds.left() - bounds.height(); x < bounds.right(); x += 12.F)
+                {
+                    canvas.drawLine(x, bounds.bottom(), x + bounds.height(),
+                        bounds.top(), hatch);
+                }
+                canvas.restore();
+            }
+        }
+        canvas.drawPath(path, stroke);
+        if (selected)
+        {
+            SkPaint handle;
+            handle.setAntiAlias(true);
+            handle.setColor(SkColorSetRGB(245, 247, 246));
+            for (const auto& point : points)
+            {
+                canvas.drawCircle(static_cast<float>(point.x),
+                    static_cast<float>(point.y), 4.F, handle);
+            }
+        }
+    };
+    for (const auto& region : downloadRegions_)
+    {
+        if (region.GetEnabled())
+        {
+            const bool selected = region.GetId() == selectedRegionId_;
+            const bool excluded = region.GetRole() == DownTool::DownloadRegionRole::ExcludeGis;
+            if (excluded || selected)
+            {
+                drawRegion(region.GetVertices(), excluded, selected, true);
+            }
+        }
+    }
+    if (!draftRegion_.empty())
+    {
+        drawRegion(draftRegion_, draftRegionExcluded_, true, draftRegionClosed_);
+    }
 }

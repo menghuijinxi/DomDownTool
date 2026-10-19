@@ -12,6 +12,7 @@
 #include "AmapVectorTileGrid.h"
 #include "DataType.h"
 #include "GeographicPolygon.h"
+#include "GisSpatialFilter.h"
 
 namespace DownTool
 {
@@ -52,6 +53,12 @@ namespace DownTool
         // 返回 true 时尽快停止领取新任务。
         std::function<bool()> cancellationRequested;
         std::filesystem::path geoJsonOutputPath;
+
+        const GisSpatialRange& GetGisSpatialRange() const { return gisSpatialRange_; }
+        void SetGisSpatialRange(const GisSpatialRange& value) { gisSpatialRange_ = value; }
+
+    protected:
+        GisSpatialRange gisSpatialRange_;
     };
 
     struct AmapVectorDownloadResult

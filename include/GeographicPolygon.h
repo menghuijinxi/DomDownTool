@@ -23,6 +23,9 @@ struct GeographicBounds
 [[nodiscard]] bool ValidateWgs84Polygons(
     const Wgs84Polygons& polygons, std::string& error);
 
+[[nodiscard]] bool IsSimpleWgs84Ring(const Wgs84Ring& ring);
+[[nodiscard]] bool GeographicRingContainsPoint(const Wgs84Ring& ring, const LonLat& point);
+
 [[nodiscard]] std::optional<GeographicBounds> CalculateGeographicBounds(
     const Wgs84Polygons& polygons);
 

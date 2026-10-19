@@ -1416,6 +1416,27 @@
             background: #191d1d;
         }
 
+        .export-range-mode-heading {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 20px;
+        }
+
+        #export-edit-range {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 24px;
+            width: 24px;
+            height: 20px;
+            padding: 0;
+            border: 0;
+            border-radius: 3px;
+            background: transparent;
+            color: #50b5a6;
+        }
+
         .export-range-segmented button {
             flex: 1 1 0;
             min-width: 0;
@@ -2696,6 +2717,192 @@
                 min-width: 0;
             }
         }
+        #preview-edit-range {
+            position: absolute;
+            z-index: 32;
+            top: 64px;
+            right: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 34px;
+            width: 34px;
+            min-width: 34px;
+            height: 34px;
+            padding: 0;
+            border: 1px solid #454b48;
+            border-radius: 4px;
+            background: #252c29;
+            color: #cbd4d0;
+        }
+
+        .range-editor-panel {
+            position: absolute;
+            z-index: 22;
+            top: 64px;
+            bottom: 44px;
+            left: 12px;
+            display: flex;
+            flex-direction: column;
+            width: 272px;
+            max-width: calc(100% - 24px);
+            min-height: 0;
+            padding: 12px;
+            border: 1px solid #454b48;
+            border-radius: 5px;
+            background: #252729;
+            color: #edf1ef;
+        }
+
+        .range-editor-header,
+        .range-tools,
+        .range-mode-controls,
+        .range-region-row,
+        .range-editor-footer {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex: 0 0 auto;
+        }
+
+        .range-editor-header {
+            justify-content: space-between;
+            margin-bottom: 12px;
+            font-weight: 700;
+        }
+
+        .range-editor-panel button,
+        .range-editor-panel input[type="text"] {
+            min-width: 0;
+            height: 30px;
+            padding: 0 8px;
+            border: 1px solid #454b48;
+            border-radius: 4px;
+            background: #1f2224;
+            color: #edf1ef;
+            font: inherit;
+        }
+
+        .range-editor-panel button:hover {
+            background: #333b38;
+        }
+
+        .range-editor-panel button[aria-pressed="true"],
+        #preview-edit-range[aria-pressed="true"] {
+            border-color: #39aa98;
+            background: #237f77;
+        }
+
+        .range-editor-panel button:disabled {
+            opacity: 0.4;
+        }
+
+        .range-mode-controls {
+            margin-bottom: 10px;
+        }
+
+        .range-mode-controls button {
+            flex: 1 1 0;
+        }
+
+        .range-tools {
+            margin-bottom: 10px;
+        }
+
+        .range-editor-panel .range-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 30px;
+            width: 30px;
+            padding: 0;
+            font-size: 18px;
+        }
+
+        .range-icon svg,
+        #preview-edit-range svg {
+            width: 18px;
+            height: 18px;
+            pointer-events: none;
+        }
+
+        #range-summary {
+            margin: 2px 0 8px;
+            color: #bdc8c3;
+            font-size: 12px;
+        }
+
+        .range-region-scroll {
+            flex: 1 1 auto;
+            min-height: 60px;
+            overflow-y: auto;
+        }
+
+        .range-section-label {
+            padding: 12px 0 6px;
+            color: #aeb8b3;
+            font-size: 12px;
+        }
+
+        .range-region-row {
+            min-height: 36px;
+            border-bottom: 1px solid #373d3a;
+        }
+
+        .range-region-row.is-selected {
+            background: #30433e;
+        }
+
+        .range-region-row input[type="checkbox"] {
+            flex: 0 0 16px;
+            width: 16px;
+            height: 16px;
+            margin: 0 2px;
+            accent-color: #39aa98;
+        }
+
+        .range-editor-panel .range-region-name {
+            flex: 1 1 0;
+            overflow: hidden;
+            border-color: transparent;
+            background: transparent;
+            text-align: left;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        #range-selected-fields {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 10px;
+        }
+
+        #range-region-name {
+            flex: 1 1 0;
+            width: 100%;
+        }
+
+        #range-editor-message {
+            flex: 0 0 auto;
+            margin: 8px 0;
+            color: #f0bc8c;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+        }
+
+        .range-editor-footer {
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+
+        .range-editor-footer button {
+            flex: 1 1 auto;
+        }
+
+        .range-editor-panel #range-return-export {
+            background: #237f77;
+        }
     </style>
 </head>
 <body>
@@ -2761,7 +2968,7 @@
                     <span id="preview-kml-name">KML 范围</span>
                     <button id="preview-clear-kml" type="button"
                             data-action="clear-preview-kml"
-                            title="清除 KML 范围" aria-label="清除 KML 范围">
+                            title="清除自定义范围" aria-label="清除自定义范围">
                         <svg viewBox="0 0 24 24" width="16" height="16"
                              pointer-events="none" aria-hidden="true">
                             <path d="M7 7l10 10M17 7L7 17"
@@ -2793,6 +3000,84 @@
                     aria-pressed="false" title="显示鼠标所在瓦块请求">诊断</button>
             <div class="toolbar-spacer"></div>
         </header>
+
+        <button id="preview-edit-range" type="button" data-action="edit-preview-range"
+                title="编辑下载范围" aria-label="编辑下载范围" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 5l13-2 3 13-10 5-8-9z" fill="none"
+                      stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+                <circle cx="5" cy="5" r="2" fill="currentColor"/>
+                <circle cx="21" cy="16" r="2" fill="currentColor"/>
+            </svg>
+        </button>
+
+        <aside id="range-editor-panel" class="range-editor-panel" style="display: none">
+            <div class="range-editor-header">
+                <span>范围编辑</span>
+                <button id="range-close" class="range-icon" type="button"
+                        data-action="edit-download-range"
+                        title="关闭范围编辑" aria-label="关闭范围编辑">&times;</button>
+            </div>
+            <div class="range-mode-controls">
+                <button id="range-mode-radius" type="button" data-action="edit-download-range"
+                        aria-pressed="true">中心 + 半径</button>
+                <button id="range-mode-custom" type="button" data-action="edit-download-range"
+                        aria-pressed="false">自定义范围</button>
+            </div>
+            <div class="range-mode-controls">
+                <button id="range-role-include" type="button" data-action="edit-download-range"
+                        aria-pressed="true">下载区域</button>
+                <button id="range-role-exclude" type="button" data-action="edit-download-range"
+                        aria-pressed="false">GIS 排除区域</button>
+            </div>
+            <div class="range-tools">
+                <button id="range-tool-select" class="range-icon" type="button"
+                        data-action="edit-download-range"
+                        title="选择及编辑顶点" aria-label="选择及编辑顶点" aria-pressed="true">&#8598;</button>
+                <button id="range-tool-polygon" class="range-icon" type="button"
+                        data-action="edit-download-range"
+                        title="绘制多边形" aria-label="绘制多边形" aria-pressed="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l13-2 3 13-10 5-8-9z"
+                        fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+                </button>
+                <button id="range-tool-rectangle" class="range-icon" type="button"
+                        data-action="edit-download-range"
+                        title="绘制矩形" aria-label="绘制矩形" aria-pressed="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16"
+                        height="14" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+                </button>
+                <button id="range-undo" class="range-icon" type="button"
+                        data-action="edit-download-range"
+                        title="撤销" aria-label="撤销" disabled>&#8630;</button>
+                <button id="range-redo" class="range-icon" type="button"
+                        data-action="edit-download-range"
+                        title="重做" aria-label="重做" disabled>&#8631;</button>
+                <button id="range-complete" class="range-icon" type="button"
+                        data-action="edit-download-range"
+                        title="完成当前区域" aria-label="完成当前区域" disabled>&#10003;</button>
+            </div>
+            <div id="range-summary">下载区 0 · GIS 排除区 0</div>
+            <div class="range-region-scroll">
+                <div id="range-region-list"></div>
+            </div>
+            <div id="range-selected-fields" style="display: none">
+                <input id="range-region-name" type="text" aria-label="区域名称">
+                <button id="range-delete" class="range-icon" type="button"
+                        data-action="edit-download-range"
+                        title="删除所选区域" aria-label="删除所选区域" disabled>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13"
+                        fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+                </button>
+            </div>
+            <div id="range-editor-message" role="alert"></div>
+            <div class="range-editor-footer">
+                <button id="range-import-kml" type="button" data-action="edit-download-range">导入 KML</button>
+                <button id="range-cancel-export" type="button" data-action="edit-download-range"
+                        style="display: none">取消</button>
+                <button id="range-return-export" type="button" data-action="edit-download-range"
+                        style="display: none">应用并返回</button>
+            </div>
+        </aside>
 
         <section id="tianditu-multidate-panel" class="multidate-panel" style="display: none">
             <button id="tianditu-multidate-login" type="button"
@@ -3030,14 +3315,22 @@
         <div class="page-content export-composer">
             <div class="export-range-bar">
                 <div class="export-range-mode-field">
-                    <span>下载范围</span>
+                    <div class="export-range-mode-heading">
+                        <span>下载范围</span>
+                        <button id="export-edit-range" type="button" data-action="edit-export-range"
+                                title="在地图中编辑范围" aria-label="在地图中编辑范围">
+                            <svg viewBox="0 0 24 24" width="18" height="18" pointer-events="none"
+                                 aria-hidden="true"><path d="M4 17v3h3L20 7l-3-3zM14 7l3 3"
+                                 fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+                        </button>
+                    </div>
                     <div class="export-range-segmented">
                         <button id="export-range-mode-center" type="button"
                                 data-action="use-center-radius-range"
                                 aria-pressed="true">中心 + 半径</button>
                         <button id="export-range-mode-kml" type="button"
                                 data-action="use-kml-range"
-                                aria-pressed="false">KML 范围</button>
+                                aria-pressed="false">自定义范围</button>
                     </div>
                 </div>
                 <label id="export-lon-field" class="export-range-field">
@@ -3053,7 +3346,7 @@
                     <input id="export-config-radius" type="number" min="0" step="100" value="0">
                 </label>
                 <div id="export-kml-field" class="export-range-field" style="display: none">
-                    <span>KML 文件</span>
+                    <span>区域</span>
                     <div class="export-kml-row">
                         <span id="export-kml-name">未加载 KML</span>
                         <button id="export-browse-kml" type="button"

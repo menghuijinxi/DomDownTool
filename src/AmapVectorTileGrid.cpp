@@ -4,8 +4,10 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "GeographicLib/Geodesic.hpp"
 
@@ -277,10 +279,21 @@ DownTool::AmapVectorTileGrid::SelectTilesForWgs84Polygons(
         throw std::invalid_argument("无法计算高德矢量多边形范围。");
     }
 
-    const std::vector<AmapVectorTile> candidates = SelectTilesForWgs84Bounds(
-        {polygonBounds->west, polygonBounds->north},
-        {polygonBounds->east, polygonBounds->south},
-        zoom);
+    std::vector<AmapVectorTile> candidates;
+    std::set<std::pair<uint32_t, uint32_t>> uniqueCandidates;
+    for (const Wgs84Ring& ring : polygonsWgs84)
+    {
+        const auto bounds = CalculateGeographicBounds({ring});
+        const auto ringCandidates = SelectTilesForWgs84Bounds(
+            {bounds->west, bounds->north}, {bounds->east, bounds->south}, zoom);
+        for (const AmapVectorTile& tile : ringCandidates)
+        {
+            if (uniqueCandidates.emplace(tile.x, tile.y).second)
+            {
+                candidates.push_back(tile);
+            }
+        }
+    }
     std::vector<AmapVectorTile> selected;
     selected.reserve(candidates.size());
     for (const AmapVectorTile& tile : candidates)

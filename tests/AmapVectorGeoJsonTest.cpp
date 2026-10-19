@@ -444,6 +444,34 @@ namespace
             return false;
         }
 
+        DownTool::GisSpatialRange excludedRange;
+        excludedRange.SetExcludedPolygons({{
+            {centerWgs84.lon - 1., centerWgs84.lat - 1.},
+            {centerWgs84.lon + 1., centerWgs84.lat - 1.},
+            {centerWgs84.lon + 1., centerWgs84.lat + 1.},
+            {centerWgs84.lon - 1., centerWgs84.lat + 1.}}});
+        downloadOptions.SetGisSpatialRange(excludedRange);
+        downloadOptions.geoJsonOutputPath = outputRoot / "excluded.geojson";
+        const auto excludedDownload =
+            DownTool::AmapVectorDownloader().DownloadGeoJson(downloadOptions);
+        std::ifstream excludedInput(downloadOptions.geoJsonOutputPath, std::ios::binary);
+        const Json excludedGeoJson = Json::parse(excludedInput, nullptr, false);
+        if (!Require(excludedDownload.success && excludedDownload.cachedTaskCount == 2 &&
+                excludedDownload.featureCount == 0 &&
+                !excludedGeoJson.is_discarded() && excludedGeoJson["features"].empty(),
+                "GIS 排除区没有作用于缓存解码和 GeoJSON 输出"))
+        {
+            return false;
+        }
+        downloadOptions.SetGisSpatialRange({});
+        const auto reusedDownload = DownTool::AmapVectorDownloader().Download(downloadOptions);
+        if (!Require(reusedDownload.success && reusedDownload.cachedTaskCount == 2 &&
+                reusedDownload.featureCount == 6,
+                "GIS 排除处理污染了可复用的原始 PBF 缓存"))
+        {
+            return false;
+        }
+
         DownTool::AmapVectorDecodedData invalidData;
         if (!Require(
             !DownTool::AmapVectorDecoder::DecodeEnvelope("\x00\x00\x00\x00", invalidData, error),

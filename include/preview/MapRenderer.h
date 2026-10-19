@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "DownToolBase.h"
+#include "DownloadRegion.h"
 #include "TianDiTuMultidateDown.h"
 #include "preview/GisOverlayRenderer.h"
 #include "preview/MapViewport.h"
@@ -134,6 +135,11 @@ class MapRenderer
     void SetExportRadiusMeters(double radiusMeters);
 
     void SetExportPolygonsWgs84(const DownTool::Wgs84Polygons& polygons);
+    void SetDownloadRegions(
+        const DownTool::DownloadRegions& regions, const std::string& selectedId = {});
+    void SetDraftRegion(const DownTool::Wgs84Ring& vertices, bool excluded, bool closed);
+    [[nodiscard]] std::optional<ViewportPoint> ScreenPointForLonLat(
+        const DownTool::LonLat& coordinate) const;
 
     [[nodiscard]] double GetExportRadiusMeters() const
     {
@@ -212,6 +218,7 @@ class MapRenderer
     void drawLocationMarker(SkCanvas& canvas, int width, int height) const;
 
     void drawExportBounds(SkCanvas& canvas) const;
+    void drawRangeEditor(SkCanvas& canvas) const;
 
     std::vector<MapSource> sources_;
     std::unique_ptr<DownTool::TianDiTuMultidateDown> tianDiTuMultidateLatestProjection_;
@@ -230,5 +237,12 @@ class MapRenderer
     double statusBarHeight_ = 28.;
     bool tileDebugEnabled_ = false;
     bool forceRetryKnownTileFailures_ = false;
+
+protected:
+    DownTool::DownloadRegions downloadRegions_;
+    std::string selectedRegionId_;
+    DownTool::Wgs84Ring draftRegion_;
+    bool draftRegionExcluded_ = false;
+    bool draftRegionClosed_ = false;
 };
 } // namespace DomDownToolPreview

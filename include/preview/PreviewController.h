@@ -24,6 +24,7 @@
 #include "preview/ExportTaskManager.h"
 #include "preview/MapHoverRefreshThrottle.h"
 #include "preview/MapRenderer.h"
+#include "preview/DownloadRangeEditor.h"
 #include "preview/TianDiTuMultidateWebViewSession.h"
 
 class SkCanvas;
@@ -31,6 +32,7 @@ class SkCanvas;
 namespace skui
 {
 class Runtime;
+struct ElementEvent;
 }
 
 namespace DomDownToolPreview
@@ -257,6 +259,19 @@ class PreviewController
 
     void requestRedraw() const;
 
+protected:
+    bool HandleRangeEditorEvent(skui::Runtime& runtime, const skui::ElementEvent& event);
+    bool HandleRangeEditorMessage(
+        HWND window, UINT message, WPARAM wParam, LPARAM lParam, skui::Runtime& runtime);
+    void UpdateRangeEditorUi(skui::Runtime& runtime);
+    void SyncRangeEditor(skui::Runtime& runtime);
+    void BeginExportRangeEditing(skui::Runtime& runtime);
+    void FinishExportRangeEditing(skui::Runtime& runtime, bool apply);
+    void CompleteRangeDrawing(skui::Runtime& runtime);
+    void FocusDownloadRegion(const DownTool::DownloadRegion& region);
+    bool ConvertRadiusToRegion(skui::Runtime& runtime);
+
+private:
     std::atomic<HWND> window_{nullptr};
     skui::Runtime* runtime_ = nullptr;
     TianDiTuMultidateWebViewSession tianDiTuMultidateSession_;
@@ -396,5 +411,35 @@ class PreviewController
     Dx12FbxRenderer dx12FbxRenderer_;
     std::string fbxPreviewTitle_;
     std::filesystem::path fbxPreviewTaskRoot_;
+
+protected:
+    enum class RangeDrawShape
+    {
+        Select,
+        Polygon,
+        Rectangle
+    };
+    DownloadRangeEditor rangeEditor_;
+    DownTool::DownloadRegions exportDownloadRegions_;
+    bool rangePanelOpen_ = false;
+    bool editingExportRange_ = false;
+    bool rangeMapKeyboardActive_ = false;
+    RangeDrawShape rangeDrawShape_ = RangeDrawShape::Select;
+    DownTool::DownloadRegionRole rangeDrawRole_ = DownTool::DownloadRegionRole::Include;
+    DownTool::Wgs84Ring rangeDraft_;
+    DownTool::Wgs84Ring rangeDragVertices_;
+    std::optional<DownTool::LonLat> rangeRectangleAnchor_;
+    std::optional<size_t> rangeDraggingVertex_;
+    std::optional<size_t> rangeSelectedVertex_;
+    bool rangePanning_ = false;
+    POINT rangePanPoint_{};
+    std::string rangeEditorMessage_;
+    std::string lastRangeListHtml_;
+    DownTool::DownloadRegions rangePreviewBackup_;
+    ExportRangeMode rangePreviewModeBackup_ = ExportRangeMode::CenterRadius;
+    std::string rangePreviewRadiusBackup_;
+    std::string rangePreviewKmlBackup_;
+    DownTool::LonLat rangePreviewCenterBackup_;
+    double rangePreviewZoomBackup_ = 15.;
 };
 } // namespace DomDownToolPreview

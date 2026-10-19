@@ -704,6 +704,12 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadTiles
         MergeDecodedData(taskResult.decodedData, decodedData);
     }
 
+    if (!ApplyGisSpatialFilter(
+            decodedData, options.GetGisSpatialRange(), result.error,
+            options.cancellationRequested))
+    {
+        return result;
+    }
     result.downloadedPacketCount = decodedData.packetCount;
     result.featureCount = static_cast<uint32_t>(decodedData.features.size());
     result.decodedData = std::move(decodedData);

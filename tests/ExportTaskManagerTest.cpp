@@ -1346,6 +1346,20 @@ bool runTest()
             {116.1, 40.0}
         }};
         configuration.kmlFileName = "persisted-range.kml";
+        auto regions = DownTool::MakeDownloadRegions(
+            configuration.polygonsWgs84, configuration.kmlFileName);
+        DownTool::DownloadRegion excluded;
+        excluded.SetId("exclusion-1");
+        excluded.SetName("可重新编辑的 GIS 排除区");
+        excluded.SetRole(DownTool::DownloadRegionRole::ExcludeGis);
+        excluded.SetVertices({
+            {116.13, 39.93}, {116.17, 39.93}, {116.17, 39.97}, {116.13, 39.97}});
+        regions.push_back(excluded);
+        auto disabled = excluded;
+        disabled.SetId("exclusion-disabled");
+        disabled.SetEnabled(false);
+        regions.push_back(disabled);
+        configuration.SetDownloadRegions(regions);
         const std::string taskId = manager.Enqueue(configuration);
         const bool finished = waitForFinished(manager, taskId);
         const std::vector<DomDownToolPreview::ExportTaskRecord> records =
@@ -1378,6 +1392,9 @@ bool runTest()
                         configuration.polygonsWgs84) &&
                     record->configuration->kmlFileName ==
                         configuration.kmlFileName &&
+                    DownTool::DownloadRegionsToJson(
+                        record->configuration->GetDownloadRegions()) ==
+                        DownTool::DownloadRegionsToJson(configuration.GetDownloadRegions()) &&
                     !record->configuration->exportBuildingFbx &&
                     record->configuration->fbxTextureFormat == "jpg" &&
                     record->configuration->fbxTerrainSampleRateMeters == 60. &&
@@ -1403,6 +1420,14 @@ bool runTest()
                     configuration->polygonsWgs84.size() == 1 &&
                     configuration->polygonsWgs84.front().size() == 4 &&
                     configuration->kmlFileName == "persisted-range.kml" &&
+                    configuration->GetDownloadRegions().size() == 3 &&
+                    configuration->GetDownloadRegions()[1].GetRole() ==
+                        DownTool::DownloadRegionRole::ExcludeGis &&
+                    configuration->GetDownloadRegions()[1].GetName() ==
+                        "可重新编辑的 GIS 排除区" &&
+                    !configuration->GetDownloadRegions()[2].GetEnabled() &&
+                    DomDownToolPreview::ExportGisSpatialRange(
+                        *configuration).GetExcludedPolygons().size() == 1 &&
                     configuration->zoom == 15 && configuration->exportTiles &&
                     !configuration->exportBuildingFbx &&
                     configuration->fbxTextureFormat == "jpg" &&

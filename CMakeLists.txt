@@ -128,6 +128,7 @@ find_package(CURL REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(assimp CONFIG REQUIRED)
+find_package(polyclipping CONFIG REQUIRED)
 find_package(Ktx CONFIG REQUIRED)
 find_package(Protobuf CONFIG REQUIRED)
 find_package(TIFF REQUIRED)
@@ -142,6 +143,7 @@ set(DOMDOWNTOOL_LIBRARIES
     ${OpenCV_LIBS}
     OpenSSL::Crypto
     assimp::assimp
+    polyclipping::polyclipping
     KTX::ktx
     protobuf::libprotobuf
     TIFF::TIFF
@@ -235,6 +237,7 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GisMeshBuilder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/MapRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewController.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewRangeEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SearchTrace.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SkiaImageCodecs.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TianDiTuMultidateWebViewSession.cpp
@@ -277,6 +280,20 @@ if(EXISTS "${Ktx_DIR}/copyright")
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
           "${Ktx_DIR}/LICENSES"
           "$<TARGET_FILE_DIR:${target_name}>/licenses/ktx/LICENSES"
+        VERBATIM)
+    endif()
+  endforeach()
+endif()
+
+if(EXISTS "${polyclipping_DIR}/copyright")
+  foreach(target_name IN ITEMS DomDownTool AmapGisDownload DomDownToolPreview)
+    if(TARGET ${target_name})
+      add_custom_command(TARGET ${target_name} POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+          "$<TARGET_FILE_DIR:${target_name}>/licenses/polyclipping"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+          "${polyclipping_DIR}/copyright"
+          "$<TARGET_FILE_DIR:${target_name}>/licenses/polyclipping/copyright"
         VERBATIM)
     endif()
   endforeach()
@@ -388,8 +405,29 @@ add_domdown_test(AmapPlaceSearchTest
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SearchTrace.cpp)
 add_domdown_test(KmlDownloadRangeTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/KmlDownloadRangeTest.cpp)
+add_domdown_test(DownloadRegionTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/DownloadRegionTest.cpp)
 
 if(DOMDOWNTOOL_BUILD_PREVIEW)
+  get_target_property(DOMDOWNTOOL_PREVIEW_TEST_SOURCES DomDownToolPreview SOURCES)
+  list(FILTER DOMDOWNTOOL_PREVIEW_TEST_SOURCES INCLUDE REGEX "/src/preview/.*\\.cpp$")
+  list(FILTER DOMDOWNTOOL_PREVIEW_TEST_SOURCES EXCLUDE
+    REGEX "/(AmapWebViewSearch|TianDiTuMultidateWebViewSession)\\.cpp$")
+  get_target_property(DOMDOWNTOOL_PREVIEW_TEST_LIBRARIES DomDownToolPreview LINK_LIBRARIES)
+  add_executable(PreviewRangeEditorTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/PreviewRangeEditorTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/PreviewOfflineWebView.cpp
+    ${DOMDOWNTOOL_PREVIEW_TEST_SOURCES})
+  target_link_libraries(PreviewRangeEditorTest PRIVATE ${DOMDOWNTOOL_PREVIEW_TEST_LIBRARIES})
+  target_compile_definitions(PreviewRangeEditorTest PRIVATE
+    DOMDOWNTOOL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}" NOMINMAX WIN32_LEAN_AND_MEAN)
+  set_property(TARGET PreviewRangeEditorTest PROPERTY CXX_STANDARD 23)
+  set_property(TARGET PreviewRangeEditorTest PROPERTY CXX_STANDARD_REQUIRED ON)
+  if(MSVC)
+    target_compile_options(PreviewRangeEditorTest PRIVATE /EHsc /permissive-)
+  endif()
+  add_test(NAME PreviewRangeEditorTest COMMAND PreviewRangeEditorTest)
+
   add_executable(TileDownloadQueueTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/TileDownloadQueueTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SkiaImageCodecs.cpp

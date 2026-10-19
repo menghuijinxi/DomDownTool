@@ -24,6 +24,18 @@
 
 namespace DomDownToolPreview
 {
+DownTool::GisSpatialRange ExportGisSpatialRange(const ExportConfiguration& configuration)
+{
+    DownTool::GisSpatialRange range;
+    if (configuration.rangeMode == ExportRangeMode::CustomPolygon)
+    {
+        range.SetIncludedPolygons(configuration.polygonsWgs84);
+    }
+    range.SetExcludedPolygons(DownTool::GetRegionPolygons(
+        configuration.GetDownloadRegions(), DownTool::DownloadRegionRole::ExcludeGis));
+    return range;
+}
+
 namespace
 {
 using Json = nlohmann::json;
@@ -715,6 +727,11 @@ bool ReadExportGroups(const nlohmann::json& value, std::vector<ExportContentGrou
 
 std::string GroupedExportError(const ExportConfiguration& configuration)
 {
+    std::string regionError;
+    if (!DownTool::ValidateDownloadRegions(configuration.GetDownloadRegions(), regionError))
+    {
+        return regionError;
+    }
     if (configuration.groups.empty())
     {
         return {};
@@ -1401,6 +1418,8 @@ bool ExportGroupedRunner::Run(
                 options.vectorDownload.radiusMeters = queuedExport.configuration.radiusMeters;
                 options.vectorDownload.polygonsWgs84 =
                     queuedExport.configuration.polygonsWgs84;
+                options.vectorDownload.SetGisSpatialRange(
+                    ExportGisSpatialRange(queuedExport.configuration));
                 options.vectorDownload.zoom = queuedExport.configuration.zoom;
                 options.vectorDownload.includeBaseLayers = true;
                 options.vectorDownload.includeLabels = GisCategories(component).contains(
@@ -1618,6 +1637,7 @@ bool ExportGroupedRunner::Run(
                 download.centerWgs84 = queuedExport.configuration.centerWgs84;
                 download.radiusMeters = queuedExport.configuration.radiusMeters;
                 download.polygonsWgs84 = queuedExport.configuration.polygonsWgs84;
+                download.SetGisSpatialRange(ExportGisSpatialRange(queuedExport.configuration));
                 download.zoom = queuedExport.configuration.zoom;
                 download.includeBaseLayers = true;
                 download.cancellationRequested = options.GetCancellation();

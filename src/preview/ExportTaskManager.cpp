@@ -302,11 +302,12 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
 
     Json json = {
         {"rangeMode", configuration.rangeMode == ExportRangeMode::KmlPolygon ?
-            "kml-polygon" : "center-radius"},
+            "custom-polygon" : "center-radius"},
         {"centerWgs84", {{"lon", configuration.centerWgs84.lon},
                           {"lat", configuration.centerWgs84.lat}}},
         {"radiusMeters", configuration.radiusMeters},
         {"polygonsWgs84", std::move(polygonsWgs84)},
+        {"downloadRegions", DownTool::DownloadRegionsToJson(configuration.GetDownloadRegions())},
         {"kmlFileName", configuration.kmlFileName},
         {"zoom", configuration.zoom},
         {"satelliteSources", std::move(satelliteSources)},
@@ -363,7 +364,8 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
 
     ExportConfiguration configuration;
     configuration.rangeMode =
-        GetJsonString(value, "rangeMode") == "kml-polygon" ?
+        (GetJsonString(value, "rangeMode") == "kml-polygon" ||
+         GetJsonString(value, "rangeMode") == "custom-polygon") ?
             ExportRangeMode::KmlPolygon : ExportRangeMode::CenterRadius;
     configuration.centerWgs84.lon = center->at("lon").get<double>();
     configuration.centerWgs84.lat = center->at("lat").get<double>();
@@ -398,6 +400,26 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
             }
             configuration.polygonsWgs84.push_back(std::move(ring));
         }
+    }
+    if (const auto regions = value.find("downloadRegions"); regions != value.end())
+    {
+        DownTool::DownloadRegions parsed;
+        std::string regionError;
+        if (!DownTool::ReadDownloadRegions(*regions, parsed, regionError))
+        {
+            return std::nullopt;
+        }
+        configuration.SetDownloadRegions(parsed);
+        if (!parsed.empty() && configuration.rangeMode == ExportRangeMode::CustomPolygon)
+        {
+            configuration.polygonsWgs84 = DownTool::GetRegionPolygons(
+                parsed, DownTool::DownloadRegionRole::Include);
+        }
+    }
+    if (configuration.GetDownloadRegions().empty() && !configuration.polygonsWgs84.empty())
+    {
+        configuration.SetDownloadRegions(DownTool::MakeDownloadRegions(
+            configuration.polygonsWgs84, configuration.kmlFileName));
     }
     if (configuration.rangeMode == ExportRangeMode::KmlPolygon)
     {
@@ -1256,7 +1278,7 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
            << std::setprecision(0)
            << "范围模式: "
            << (configuration.rangeMode == ExportRangeMode::KmlPolygon ?
-               "KML 多边形" : "中心点 + 半径") << "\n";
+               "自定义多边形" : "中心点 + 半径") << "\n";
     if (configuration.rangeMode == ExportRangeMode::KmlPolygon)
     {
         output << "KML 文件: "
@@ -1268,6 +1290,9 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
     {
         output << "半径 (米): " << configuration.radiusMeters << "\n";
     }
+    output << "GIS 排除区数量: " << DownTool::GetRegionPolygons(
+        configuration.GetDownloadRegions(), DownTool::DownloadRegionRole::ExcludeGis).size()
+           << "\n";
     output
            << "层级: " << configuration.zoom << "\n"
            << "卫星图来源: " << FormatSourceNames(configuration) << "\n"
@@ -1557,7 +1582,7 @@ std::string BuildTaskTitle(const ExportConfiguration& configuration)
     const std::string rangeText =
         configuration.rangeMode == ExportRangeMode::KmlPolygon ?
             (configuration.kmlFileName.empty() ?
-                "KML 范围" : "KML " + configuration.kmlFileName) :
+                "自定义范围" : "KML " + configuration.kmlFileName) :
             fmt::format("{:.0f} 米", configuration.radiusMeters);
     if (!configuration.groups.empty())
     {
@@ -2605,6 +2630,7 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
     options.vectorDownload.centerWgs84 = configuration.centerWgs84;
     options.vectorDownload.radiusMeters = configuration.radiusMeters;
     options.vectorDownload.polygonsWgs84 = configuration.polygonsWgs84;
+    options.vectorDownload.SetGisSpatialRange(ExportGisSpatialRange(configuration));
     options.vectorDownload.zoom = configuration.zoom;
     options.vectorDownload.includeBaseLayers = true;
     options.vectorDownload.includeLabels =
@@ -2879,6 +2905,7 @@ bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
     options.centerWgs84 = configuration.centerWgs84;
     options.radiusMeters = configuration.radiusMeters;
     options.polygonsWgs84 = configuration.polygonsWgs84;
+    options.SetGisSpatialRange(ExportGisSpatialRange(configuration));
     options.zoom = configuration.zoom;
     options.includeBaseLayers = true;
     options.includeLabels = false;
@@ -2991,6 +3018,7 @@ bool DomDownToolPreview::ExportTaskManager::RunGeoJsonExport(
     options.centerWgs84 = configuration.centerWgs84;
     options.radiusMeters = configuration.radiusMeters;
     options.polygonsWgs84 = configuration.polygonsWgs84;
+    options.SetGisSpatialRange(ExportGisSpatialRange(configuration));
     options.zoom = configuration.zoom;
     options.includeBaseLayers = configuration.includeBaseLayersOverride.value_or(true);
     options.includeLabels = configuration.includeLabelsOverride.value_or(

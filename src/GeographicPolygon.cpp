@@ -198,6 +198,45 @@ bool RingIntersectsBounds(
 }
 } // namespace
 
+bool DownTool::IsSimpleWgs84Ring(const Wgs84Ring& ring)
+{
+    size_t count = ring.size();
+    if (count > 1 && SamePoint(ring.front(), ring.back()))
+    {
+        --count;
+    }
+    if (count < 3)
+    {
+        return false;
+    }
+    double doubledArea = 0.;
+    const LonLat& origin = ring.front();
+    for (size_t index = 0; index < count; ++index)
+    {
+        const size_t next = (index + 1) % count;
+        if (SamePoint(ring[index], ring[next]))
+        {
+            return false;
+        }
+        doubledArea += Cross(origin, ring[index], ring[next]);
+        for (size_t other = index + 1; other < count; ++other)
+        {
+            const size_t otherNext = (other + 1) % count;
+            if (next != other && otherNext != index &&
+                SegmentsIntersect(ring[index], ring[next], ring[other], ring[otherNext]))
+            {
+                return false;
+            }
+        }
+    }
+    return std::abs(doubledArea) > kGeometryEpsilon;
+}
+
+bool DownTool::GeographicRingContainsPoint(const Wgs84Ring& ring, const LonLat& point)
+{
+    return ring.size() >= 3 && PointInsideRing(point, ring);
+}
+
 bool DownTool::ValidateWgs84Polygons(
     const Wgs84Polygons& polygons, std::string& error)
 {

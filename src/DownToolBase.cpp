@@ -2729,103 +2729,77 @@ void DownTool::DownToolBase::ReportProgress(
 
 void DownTool::DownToolBase::BuildTargetTiles(std::vector<Tile>& targetTiles)
 {
-	targetTiles.clear();
-	if (IsStopRequested())
-	{
-		return;
-	}
-	const uint64_t xCount = TileRangeCount(MinTile.X, MaxTile.X);
-	const uint64_t yCount = TileRangeCount(MinTile.Y, MaxTile.Y);
-	const uint64_t estimatedTileCount = xCount * yCount * (IsTileOffset() ? 4 : 1);
-	targetTiles.reserve(static_cast<size_t>(estimatedTileCount));
-
-	std::unordered_set<Tile, TileHash, TileEqual> uniqueTiles;
-	uniqueTiles.reserve(static_cast<size_t>(estimatedTileCount));
-
-	auto addTile = [&](const Tile& tile)
-	{
-		if (uniqueTiles.insert(tile).second)
-		{
-			targetTiles.push_back(tile);
-		}
-	};
-
-	for (int32_t xBase = MinTile.X; xBase <= MaxTile.X; xBase++)
-	{
-		if (IsStopRequested())
-		{
-			break;
-		}
-		for (int32_t yBase = MinTile.Y; yBase <= MaxTile.Y; yBase++)
-		{
-			if (IsStopRequested())
-			{
-				break;
-			}
-
-			const Tile targetTile(xBase, yBase, Zoom);
-			if (!TargetTileIntersectsDownloadRange(targetTile))
-			{
-				continue;
-			}
-
-			if (IsTileOffset())
-			{
-				const TileRange offsetTiles = GetOffsetTiles(targetTile);
-				for (int32_t x = offsetTiles.MinTile.X; x <= offsetTiles.MaxTile.X; x++)
-				{
-					if (IsStopRequested())
-					{
-						break;
-					}
-					for (int32_t y = offsetTiles.MinTile.Y; y <= offsetTiles.MaxTile.Y; y++)
-					{
-						if (IsStopRequested())
-						{
-							break;
-						}
-						addTile(Tile(x, y, Zoom));
-					}
-				}
-			}
-			else
-			{
-				addTile(targetTile);
-			}
-		}
-	}
+    std::vector<Tile> requested;
+    BuildRequestedTiles(requested);
+    if (!IsTileOffset())
+    {
+        targetTiles = std::move(requested);
+        return;
+    }
+    targetTiles.clear();
+    std::unordered_set<Tile, TileHash, TileEqual> uniqueTiles;
+    for (const Tile& target : requested)
+    {
+        if (IsStopRequested())
+        {
+            break;
+        }
+        const TileRange offset = GetOffsetTiles(target);
+        for (int32_t x = offset.MinTile.X; x <= offset.MaxTile.X; ++x)
+        {
+            for (int32_t y = offset.MinTile.Y; y <= offset.MaxTile.Y; ++y)
+            {
+                const Tile tile(x, y, Zoom);
+                if (uniqueTiles.insert(tile).second)
+                {
+                    targetTiles.push_back(tile);
+                }
+            }
+        }
+    }
 }
 
 void DownTool::DownToolBase::BuildRequestedTiles(std::vector<Tile>& targetTiles) const
 {
-	targetTiles.clear();
-	if (IsStopRequested())
-	{
-		return;
-	}
-	const uint64_t xCount = TileRangeCount(MinTile.X, MaxTile.X);
-	const uint64_t yCount = TileRangeCount(MinTile.Y, MaxTile.Y);
-	targetTiles.reserve(static_cast<size_t>(xCount * yCount));
+    BuildRequestedTilesAtZoom(Zoom, targetTiles);
+}
 
-	for (int32_t x = MinTile.X; x <= MaxTile.X; x++)
-	{
-		if (IsStopRequested())
-		{
-			break;
-		}
-		for (int32_t y = MinTile.Y; y <= MaxTile.Y; y++)
-		{
-			if (IsStopRequested())
-			{
-				break;
-			}
-			const Tile tile(x, y, Zoom);
-			if (TargetTileIntersectsDownloadRange(tile))
-			{
-				targetTiles.push_back(tile);
-			}
-		}
-	}
+std::vector<DownTool::TileRange>
+DownTool::DownToolBase::BuildCandidateTileRanges(uint32_t zoom) const
+{
+    const int32_t scale = static_cast<int32_t>(uint64_t{1} << (Zoom - zoom));
+    const Tile minimum(FloorDiv(MinTile.X, scale), FloorDiv(MinTile.Y, scale), zoom);
+    const Tile maximum(FloorDiv(MaxTile.X, scale), FloorDiv(MaxTile.Y, scale), zoom);
+    if (DownloadPolygonsWgs84.empty())
+    {
+        return {{minimum, maximum}};
+    }
+    std::vector<TileRange> ranges;
+    for (const Wgs84Ring& ring : DownloadPolygonsWgs84)
+    {
+        const auto bounds = CalculateGeographicBounds({ring});
+        if (!bounds)
+        {
+            continue;
+        }
+        Tile first;
+        Tile last;
+        double pixelX = 0.;
+        double pixelY = 0.;
+        if (!TryGetTilePixelForLonLat({bounds->west, bounds->north},
+                zoom, first, pixelX, pixelY) ||
+            !TryGetTilePixelForLonLat({bounds->east, bounds->south},
+                zoom, last, pixelX, pixelY))
+        {
+            return {{minimum, maximum}};
+        }
+        ranges.emplace_back(
+            Tile(std::max(minimum.X, std::min(first.X, last.X) - 1),
+                std::max(minimum.Y, std::min(first.Y, last.Y) - 1), zoom),
+            Tile(std::min(maximum.X, std::max(first.X, last.X) + 1),
+                std::min(maximum.Y, std::max(first.Y, last.Y) + 1), zoom));
+    }
+    return ranges;
 }
 
 bool DownTool::DownToolBase::TargetTileIntersectsDownloadRange(
@@ -2872,35 +2846,29 @@ void DownTool::DownToolBase::BuildRequestedTilesAtZoom(
 		return;
 	}
 
-	const uint64_t scale = uint64_t{ 1 } << zoomOffset;
-	const int32_t scaleInt = static_cast<int32_t>(scale);
-	const int32_t minX = FloorDiv(MinTile.X, scaleInt);
-	const int32_t maxX = FloorDiv(MaxTile.X, scaleInt);
-	const int32_t minY = FloorDiv(MinTile.Y, scaleInt);
-	const int32_t maxY = FloorDiv(MaxTile.Y, scaleInt);
-	const uint64_t xCount = TileRangeCount(minX, maxX);
-	const uint64_t yCount = TileRangeCount(minY, maxY);
-	targetTiles.reserve(static_cast<size_t>(xCount * yCount));
-
-	for (int32_t x = minX; x <= maxX; x++)
-	{
-		if (IsStopRequested())
-		{
-			break;
-		}
-		for (int32_t y = minY; y <= maxY; y++)
-		{
-			if (IsStopRequested())
-			{
-				break;
-			}
-			const Tile tile(x, y, zoom);
-			if (TargetTileIntersectsDownloadRange(tile))
-			{
-				targetTiles.push_back(tile);
-			}
-		}
-	}
+    std::unordered_set<Tile, TileHash, TileEqual> selected;
+    for (const TileRange& range : BuildCandidateTileRanges(zoom))
+    {
+        for (int32_t x = range.MinTile.X; x <= range.MaxTile.X; ++x)
+        {
+            if (IsStopRequested())
+            {
+                return;
+            }
+            for (int32_t y = range.MinTile.Y; y <= range.MaxTile.Y; ++y)
+            {
+                if (IsStopRequested())
+                {
+                    return;
+                }
+                const Tile tile(x, y, zoom);
+                if (TargetTileIntersectsDownloadRange(tile) && selected.insert(tile).second)
+                {
+                    targetTiles.push_back(tile);
+                }
+            }
+        }
+    }
 }
 
 DownTool::TileCacheState DownTool::DownToolBase::GetTileCacheState(
