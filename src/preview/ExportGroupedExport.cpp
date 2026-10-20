@@ -1031,11 +1031,8 @@ bool ExportGroupedRunner::Run(
         }
     }
 
-    ExportConfiguration cleanConfiguration = queuedExport.configuration;
-    cleanConfiguration.executionRootOverride.clear();
-    cleanConfiguration.flatSourceOutput = false;
-    const std::filesystem::path taskRoot = ExportTaskOutputRoot(
-        cleanConfiguration, queuedExport.taskId);
+    const std::filesystem::path taskRoot =
+        ExportTaskOutputRoot(queuedExport.configuration, queuedExport.taskId);
     const size_t stepCount = std::max<size_t>(1, jobs.size() + (needsElevation ? 1u : 0u));
     size_t stepIndex = 0;
     std::shared_ptr<DownTool::CopernicusDemData> elevationData;
@@ -1781,10 +1778,14 @@ bool ExportGroupedRunner::Run(
                 for (const SatelliteExportSource& source :
                      step.configuration.satelliteSources)
                 {
-                    referenceOutputs.push_back(PathToUtf8(
+                    ExportConfiguration finalConfiguration = queuedExport.configuration;
+                    finalConfiguration.executionRootOverride.clear();
+                    const std::filesystem::path referencedFile =
                         step.configuration.executionRootOverride /
-                        std::filesystem::u8path(source.name) /
-                        "FBX" / "buildings.fbx"));
+                        std::filesystem::u8path(source.name) / "FBX" / "buildings.fbx";
+                    referenceOutputs.push_back(
+                        PathToUtf8(ExportTaskOutputRoot(finalConfiguration, queuedExport.taskId) /
+                                   referencedFile.lexically_relative(taskRoot)));
                 }
                 reference = {
                     {"basePlateComponentId", component.basePlateComponentId},

@@ -1,11 +1,17 @@
 #include "PostProcessTestSupport.h"
 
+#include <algorithm>
+#include <array>
 #include <filesystem>
+#include <fstream>
 #include <cmath>
+#include <chrono>
 #include <iostream>
 #include <numbers>
 #include <optional>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
 #include <objbase.h>
@@ -664,6 +670,394 @@ bool RunTest(HWND window, const std::filesystem::path& testRoot)
     return TestSquareRadiusInput(controller, runtime, adapter, window, testRoot) &&
         TestCopyTerrainExclusion(controller, runtime, adapter, window, testRoot);
 }
+
+bool WriteTaskScreenshot(skui::Runtime& runtime, const std::filesystem::path& path)
+{
+    std::vector<uint32_t> pixels(static_cast<size_t>(runtime.width()) * runtime.height());
+    return runtime.renderToBgraPixels(pixels.data(), runtime.width(), runtime.height(),
+                                      runtime.width() * sizeof(uint32_t), runtime.dpiScale()) &&
+           cv::imwrite(path.string(),
+                       cv::Mat(runtime.height(), runtime.width(), CV_8UC4, pixels.data()));
+}
+
+std::optional<POINT> FindElementCenter(skui::Runtime& runtime, const std::string& id)
+{
+    // 以渲染后的按钮色块定位，保留生产布局并同时验证按钮在当前窗口中可见。
+    if (!runtime.setStyleById(id, "background-color: #fd02ab; border-color: #fd02ab;"))
+    {
+        return std::nullopt;
+    }
+    std::vector<uint32_t> pixels(static_cast<size_t>(runtime.width()) * runtime.height());
+    runtime.renderToBgraPixels(pixels.data(), runtime.width(), runtime.height(),
+                               runtime.width() * sizeof(uint32_t), runtime.dpiScale());
+    int left = runtime.width();
+    int right = -1;
+    int top = runtime.height();
+    int bottom = -1;
+    for (int y = 0; y < runtime.height(); ++y)
+    {
+        for (int x = 0; x < runtime.width(); ++x)
+        {
+            if ((pixels[static_cast<size_t>(y) * runtime.width() + x] & 0xffffff) == 0xfd02ab)
+            {
+                left = std::min(left, x);
+                right = std::max(right, x);
+                top = std::min(top, y);
+                bottom = std::max(bottom, y);
+            }
+        }
+    }
+    runtime.setStyleById(id, "");
+    if (!postprocess_test::Require(right >= left && bottom >= top, "控件不可见：" + id))
+    {
+        return std::nullopt;
+    }
+    return POINT{(left + right) / 2, (top + bottom) / 2};
+}
+
+bool ClickElement(RangeController& controller, skui::Runtime& runtime,
+                  skui::win32::Win32EventAdapter& adapter, HWND window, const std::string& id)
+{
+    const auto center = FindElementCenter(runtime, id);
+    if (!center)
+    {
+        return false;
+    }
+    MapClick(controller, adapter, window, runtime, *center);
+    MSG message{};
+    while (PeekMessageW(&message, window, WM_APP, 0xbfff, PM_REMOVE))
+    {
+        controller.handleWindowMessage(window, message.message, message.wParam, message.lParam,
+                                       runtime);
+    }
+    return true;
+}
+
+bool TestTaskActions(HWND window, const std::filesystem::path& testRoot)
+{
+    using postprocess_test::Require;
+    using Json = nlohmann::json;
+    const auto recordsPath = testRoot / std::filesystem::u8path("cache/导出任务.json");
+    const auto outputRoot = testRoot / "blocked-task-output";
+    std::filesystem::create_directories(recordsPath.parent_path());
+    std::filesystem::create_directories(outputRoot);
+    // 用非目录阻止实际下载，在生产控制器中验证提交和失败返回，测试不访问网络。
+    std::ofstream(outputRoot / std::filesystem::u8path("导出任务")) << "blocked";
+    const auto outputPath = outputRoot / std::filesystem::u8path("导出任务/task-ui");
+    const Json source = {{"id", "google.satellite"}, {"name", "Google 卫星"}, {"kind", "imagery"}};
+    const Json component = {
+        {"id", "image"}, {"kind", "merged-image"}, {"sources", Json::array({source})}};
+    const Json group = {{"id", "g1"},
+                        {"name", "卫星底图"},
+                        {"enabled", true},
+                        {"components", Json::array({component})}};
+    const Json configuration = {
+        {"centerWgs84", {{"lon", 116.41822112345678}, {"lat", 39.88901312345678}}},
+        {"radiusMeters", 20000.},
+        {"zoom", 18},
+        {"rangeMode", "center-radius"},
+        {"outputRoot", postprocess_test::PathToUtf8String(outputRoot)},
+        {"groups", Json::array({group})}};
+    const Json task = {{"id", "task-ui"},
+                       {"title", "北京高精度地形"},
+                       {"state", "succeeded"},
+                       {"stage", "已完成"},
+                       {"detail", "合并大图 · 底板 FBX"},
+                       {"createdAt", "2026-10-20 12:00:00"},
+                       {"outputPath", postprocess_test::PathToUtf8String(outputPath)},
+                       {"configuration", configuration}};
+    std::ofstream(recordsPath) << Json({{"version", 1}, {"tasks", Json::array({task})}}).dump(2);
+
+    skui::Runtime runtime;
+    if (!Require(runtime.loadDocument((std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) /
+                                       "resources/preview/index.html")
+                                          .string()),
+                 "任务测试文档加载失败"))
+    {
+        return false;
+    }
+    runtime.resize(1440, 900, 1.F);
+    RangeController controller;
+    controller.attachRuntime(runtime);
+    controller.handleWindowMessage(window, WM_NULL, 0, 0, runtime);
+    skui::win32::Win32EventAdapter adapter(runtime);
+    const auto click = [&](const std::string& id) {
+        return ClickElement(controller, runtime, adapter, window, id);
+    };
+    const auto typeText = [&](const std::wstring& value) {
+        skui::Event selectAll;
+        selectAll.type = skui::EventType::KeyDown;
+        selectAll.key = 'A';
+        selectAll.ctrlKey = true;
+        runtime.handleEvent(selectAll);
+        for (const wchar_t character : value)
+        {
+            WindowMessage(controller, adapter, window, runtime, WM_CHAR, character, 0);
+        }
+    };
+    const auto verifyTooltip = [&](const std::string& buttonId, const std::string& tooltipId,
+                                   const std::string& text, const std::string& screenshot) {
+        const auto center = FindElementCenter(runtime, buttonId);
+        if (!center || !Require(runtime.textContentById(tooltipId) == text,
+                                "任务按钮缺少悬停说明：" + buttonId))
+        {
+            return false;
+        }
+        const auto tooltipPixels = [&] {
+            std::vector<uint32_t> pixels(static_cast<size_t>(runtime.width()) * runtime.height());
+            runtime.renderToBgraPixels(pixels.data(), runtime.width(), runtime.height(),
+                                       runtime.width() * sizeof(uint32_t), runtime.dpiScale());
+            return std::count_if(pixels.begin(), pixels.end(),
+                                 [](uint32_t pixel) { return (pixel & 0xffffff) == 0xfd02ab; });
+        };
+        runtime.setStyleById(tooltipId, "background-color: #fd02ab;");
+        WindowMessage(controller, adapter, window, runtime, WM_MOUSEMOVE, 0, MAKELPARAM(4, 70));
+        const bool hidden = tooltipPixels() == 0;
+        WindowMessage(controller, adapter, window, runtime, WM_MOUSEMOVE, 0,
+                      MAKELPARAM(center->x, center->y));
+        const bool visible =
+            tooltipPixels() > 4000 * runtime.effectiveScale() * runtime.effectiveScale();
+        runtime.setStyleById(tooltipId, "");
+        const bool written = WriteTaskScreenshot(runtime, testRoot / screenshot);
+        WindowMessage(controller, adapter, window, runtime, WM_MOUSEMOVE, 0, MAKELPARAM(4, 70));
+        return Require(hidden && visible && written, "悬停说明没有按鼠标位置显示：" + buttonId);
+    };
+    const auto verifyTaskTooltips = [&](const std::string& suffix) {
+        const std::array<std::pair<const char*, const char*>, 6> tooltips = {{
+            {"open", "打开导出目录"},
+            {"config", "复制参数新建任务"},
+            {"edit", "修改参数并重新下载此任务"},
+            {"rename", "重命名任务"},
+            {"remove", "移除任务记录（保留导出文件）"},
+            {"delete", "永久删除任务记录和导出文件"},
+        }};
+        for (const auto& [action, text] : tooltips)
+        {
+            const std::string prefix = std::string("task-") + action;
+            if (!verifyTooltip(prefix + "-task-ui", prefix + "-tip-task-ui", text,
+                               prefix + "-tooltip" + suffix + ".png"))
+            {
+                return false;
+            }
+        }
+        return verifyTooltip("tasks-clear-finished", "tasks-clear-finished-tip",
+                             "移除已结束记录，保留文件", "tasks-clear-tooltip" + suffix + ".png") &&
+               verifyTooltip("tasks-new-export", "tasks-new-export-tip", "新建导出任务",
+                             "tasks-new-tooltip" + suffix + ".png") &&
+               verifyTooltip("tasks-back-preview", "tasks-back-preview-tip", "返回地图预览",
+                             "tasks-back-tooltip" + suffix + ".png");
+    };
+    if (!click("open-task-page") ||
+        !verifyTooltip("task-preview-task-ui", "task-preview-tip-task-ui", "预览 FBX 网格",
+                       "task-preview-tooltip.png") ||
+        !click("task-rename-task-ui") ||
+        !verifyTooltip("task-rename-cancel", "task-rename-cancel-tip", "取消修改任务名称",
+                       "task-rename-cancel-tooltip.png") ||
+        !verifyTooltip("task-rename-save", "task-rename-save-tip", "保存任务名称",
+                       "task-rename-save-tooltip.png"))
+    {
+        return false;
+    }
+    typeText(L" ");
+    WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_RETURN, 0);
+    if (!Require(runtime.textContentById("task-rename-error") == "任务名称不能为空。",
+                 "空任务名称没有显示错误"))
+    {
+        return false;
+    }
+    typeText(L"北京外围地形 <低精度>");
+    if (!WriteTaskScreenshot(runtime, testRoot / "task-rename.png") || !click("task-rename-save") ||
+        !Require(runtime.textContentById("export-task-list-items")->find("北京外围地形 <低精度>") !=
+                     std::string::npos,
+                 "任务名称没有更新到列表") ||
+        !verifyTaskTooltips("") || !click("tasks-clear-finished") ||
+        !verifyTooltip("tasks-cancel-clear", "tasks-cancel-clear-tip", "取消移除，保留任务记录",
+                       "tasks-cancel-clear-tooltip.png") ||
+        !verifyTooltip("tasks-confirm-clear", "tasks-confirm-clear-tip", "移除已结束记录，保留文件",
+                       "tasks-confirm-clear-tooltip.png") ||
+        !click("tasks-cancel-clear") || !click("task-delete-task-ui") ||
+        !verifyTooltip("task-delete-cancel", "task-delete-cancel-tip", "取消删除，保留任务和文件",
+                       "task-delete-cancel-tooltip.png") ||
+        !verifyTooltip("task-delete-accept", "task-delete-accept-tip", "永久删除任务记录和导出文件",
+                       "task-delete-accept-tooltip.png") ||
+        !click("task-delete-cancel") ||
+        !WriteTaskScreenshot(runtime, testRoot / "task-actions-desktop.png") ||
+        !click("task-config-task-ui") ||
+        !Require(runtime.textContentById("export-submit") == "加入导出队列" &&
+                     runtime.textContentById("export-page-title") == "导出配置",
+                 "原有复制配置入口错误地进入了重新下载模式") ||
+        !click("export-act-close-panel") ||
+        !WriteTaskScreenshot(runtime, testRoot / "task-copy-config.png") ||
+        !click("export-open-tasks") || !click("task-edit-task-ui") ||
+        !Require(runtime.textContentById("export-submit") == "重新下载",
+                 "修改参数按钮没有打开原任务编辑状态") ||
+        !click("export-task-name"))
+    {
+        return false;
+    }
+    typeText(L"取消的任务名");
+    if (!click("export-config-radius"))
+    {
+        return false;
+    }
+    typeText(L"40000");
+    std::string error;
+    auto edited = controller.ReadExport(error);
+    if (!Require(edited && edited->radiusMeters == 40000. &&
+                     edited->centerWgs84.lon == 116.41822112345678 &&
+                     edited->centerWgs84.lat == 39.88901312345678,
+                 "修改参数丢失半径或中心点精度：" + error) ||
+        !click("export-act-close-panel") ||
+        !WriteTaskScreenshot(runtime, testRoot / "task-edit-config.png") ||
+        !click("export-cancel") ||
+        !Require(runtime.textContentById("export-task-list-items")->find("北京外围地形 <低精度>") !=
+                     std::string::npos,
+                 "取消修改没有返回任务列表") ||
+        !click("task-edit-task-ui") || !click("export-task-name"))
+    {
+        return false;
+    }
+    typeText(L"北京外围地形 <修改后>");
+    if (!WriteTaskScreenshot(runtime, testRoot / "task-edit-name.png") ||
+        !click("export-edit-range") ||
+        !Require(runtime.textContentById("open-export-page") == "导出",
+                 "地图返回配置入口不应替代配置页的重新下载按钮") ||
+        !WriteTaskScreenshot(runtime, testRoot / "task-redownload-range.png") ||
+        !click("open-export-page") ||
+        !Require(runtime.textContentById("export-submit") == "重新下载",
+                 "编辑范围返回配置时丢失了原任务修改状态") ||
+        !click("export-config-radius"))
+    {
+        return false;
+    }
+    typeText(L"40000");
+    if (!click("export-act-close-panel") || !click("export-submit"))
+    {
+        return false;
+    }
+    Json persisted;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    do
+    {
+        std::ifstream input(recordsPath);
+        persisted = Json::parse(input, nullptr, false);
+        if (persisted.is_object() && persisted["tasks"].size() == 1 &&
+            persisted["tasks"][0]["state"] == "failed" &&
+            persisted["tasks"][0]["configuration"]["radiusMeters"] == 40000.)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    } while (std::chrono::steady_clock::now() < deadline);
+    if (!Require(persisted.is_object() && persisted["tasks"].size() == 1 &&
+                     persisted["tasks"][0]["id"] == "task-ui" &&
+                     persisted["tasks"][0]["title"] == "北京外围地形 <修改后>" &&
+                     persisted["tasks"][0]["outputPath"] == task["outputPath"] &&
+                     persisted["tasks"][0]["configuration"]["radiusMeters"] == 40000.,
+                 "提交修改新增了任务或改变了输出目录"))
+    {
+        return false;
+    }
+    controller.resizeRuntime(runtime);
+    runtime.resize(700, 600, 1.F);
+    controller.resizeRuntime(runtime);
+    if (!verifyTaskTooltips("-narrow") ||
+        !verifyTooltip("task-resume-task-ui", "task-resume-tip-task-ui", "继续任务（复用下载缓存）",
+                       "task-resume-tooltip-narrow.png") ||
+        !WriteTaskScreenshot(runtime, testRoot / "task-actions-narrow.png") ||
+        !click("tasks-back-preview"))
+    {
+        return false;
+    }
+    runtime.resize(1440, 900, 1.F);
+    controller.resizeRuntime(runtime);
+    if (!click("open-task-page"))
+    {
+        return false;
+    }
+    runtime.resize(700, 600, 1.F);
+    controller.resizeRuntime(runtime);
+    if (!click("task-rename-task-ui"))
+    {
+        return false;
+    }
+    typeText(L"取消的名称");
+    WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_ESCAPE, 0);
+    if (!click("task-config-task-ui") ||
+        !Require(runtime.textContentById("export-submit") == "加入导出队列" &&
+                     runtime.textContentById("open-export-page") == "导出",
+                 "复制配置没有保留新建任务的行为") ||
+        !click("export-task-name"))
+    {
+        return false;
+    }
+    typeText(L"  北京外围地形 <副本>  ");
+    if (!click("export-act-close-panel") ||
+        !WriteTaskScreenshot(runtime, testRoot / "task-create-name-narrow.png") ||
+        !click("export-submit"))
+    {
+        return false;
+    }
+    const auto readRecords = [&] {
+        std::ifstream input(recordsPath);
+        return Json::parse(input, nullptr, false);
+    };
+    persisted = readRecords();
+    if (!Require(persisted["tasks"].size() == 2 &&
+                     persisted["tasks"][0]["title"] == "北京外围地形 <副本>" &&
+                     persisted["tasks"][0]["id"] != "task-ui" &&
+                     persisted["tasks"][1]["title"] == "北京外围地形 <修改后>",
+                 "新建副本没有保存自定义名称或修改了原任务") ||
+        !click("tasks-new-export") || !click("export-task-name"))
+    {
+        return false;
+    }
+    typeText(L"新建地形与建筑");
+    if (!click("export-output"))
+    {
+        return false;
+    }
+    typeText(outputRoot.wstring());
+    if (!click("export-config-radius"))
+    {
+        return false;
+    }
+    typeText(L"20000");
+    if (!click("export-act-close-panel") ||
+        !WriteTaskScreenshot(runtime, testRoot / "task-new-name-narrow.png") ||
+        !click("export-submit"))
+    {
+        return false;
+    }
+    persisted = readRecords();
+    if (!Require(persisted["tasks"].size() == 3 &&
+                     persisted["tasks"][0]["title"] == "新建地形与建筑",
+                 "正常创建导出任务没有保存输入的名称") ||
+        !click("tasks-new-export") || !click("export-output"))
+    {
+        return false;
+    }
+    typeText(outputRoot.wstring());
+    if (!click("export-config-radius"))
+    {
+        return false;
+    }
+    typeText(L"20000");
+    if (!click("export-act-close-panel") || !click("export-submit"))
+    {
+        return false;
+    }
+    persisted = readRecords();
+    if (!Require(persisted["tasks"].size() == 4 &&
+                     persisted["tasks"][0]["title"].get<std::string>().starts_with("z") &&
+                     persisted["tasks"][0]["title"].get<std::string>().find("20000 米") !=
+                         std::string::npos,
+                 "新建任务没有清除上次名称或留空时没有自动命名"))
+    {
+        return false;
+    }
+    return true;
+}
 } // namespace
 
 int main()
@@ -683,7 +1077,7 @@ int main()
     {
         return 1;
     }
-    const bool passed = RunTest(window, testRoot);
+    const bool passed = RunTest(window, testRoot) && TestTaskActions(window, testRoot);
     DestroyWindow(window);
     CoUninitialize();
     if (!passed)

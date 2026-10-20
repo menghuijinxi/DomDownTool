@@ -1335,7 +1335,7 @@
 
         #export-page-header {
             display: flex;
-            gap: 0;
+            gap: 16px;
             flex: 0 0 68px;
             height: 68px;
             padding: 0 28px;
@@ -2427,7 +2427,7 @@
 
         .task-row {
             display: grid;
-            grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 150px 200px;
+            grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 125px 240px;
             gap: 18px;
             align-items: center;
             min-height: 96px;
@@ -2436,18 +2436,72 @@
             background: #1E2121;
         }
 
+        #task-page-header {
+            position: relative;
+            z-index: 2;
+            overflow: visible;
+        }
+
         .task-row > div {
             min-width: 0;
         }
 
+        .task-row > div:first-child {
+            position: relative;
+            z-index: 1;
+        }
+
         .task-row:hover {
+            position: relative;
+            z-index: 1;
             background: #1d2321;
         }
 
         .task-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
             margin-bottom: 5px;
             color: #eef3f0;
             font-weight: 600;
+        }
+
+        .task-title > span {
+            min-width: 0;
+            overflow-wrap: anywhere;
+        }
+
+        .task-title .task-rename {
+            flex: 0 0 24px;
+            width: 24px;
+            min-width: 24px;
+            height: 24px;
+            border-color: transparent;
+        }
+
+        #export-task-name-field {
+            display: flex;
+            flex: 0 1 280px;
+            min-width: 180px;
+            align-items: center;
+            gap: 10px;
+            margin-right: 8px;
+            color: #aeb7b2;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+
+        #export-task-name {
+            flex: 1;
+            min-width: 0;
+            width: 100%;
+            height: 38px;
+            padding: 0 10px;
+            border: 1px solid #454b48;
+            border-radius: 4px;
+            background: #1e2121;
+            color: #88d9be;
+            font-size: 14px;
         }
 
         .task-detail,
@@ -2530,11 +2584,13 @@
             align-items: center;
             justify-content: flex-end;
             gap: 8px;
-            min-width: 200px;
+            flex-wrap: wrap;
+            min-width: 0;
         }
 
         .task-open-output,
         .task-icon-button {
+            position: relative;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -2544,6 +2600,41 @@
             border: 1px solid #454b48;
             border-radius: 4px;
             color: #cbd4d0;
+        }
+
+        .task-tooltip-trigger {
+            position: relative;
+        }
+
+        .task-action-tooltip {
+            position: absolute;
+            z-index: 40;
+            top: 35px;
+            right: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            width: 192px;
+            height: 32px;
+            padding: 0 8px;
+            border: 1px solid #5e756c;
+            border-radius: 4px;
+            background: #141a18;
+            color: #edf3f0;
+            font-size: 12px;
+            font-weight: 400;
+            white-space: nowrap;
+            pointer-events: none;
+        }
+
+        .task-tooltip-trigger:hover .task-action-tooltip {
+            display: flex;
+        }
+
+        .task-rename .task-action-tooltip {
+            top: 29px;
+            left: 0;
+            right: auto;
         }
 
         .task-open-output svg,
@@ -2590,6 +2681,7 @@
 
         .task-clear-dialog {
             width: 420px;
+            max-width: calc(100% - 32px);
             padding: 24px;
             border: 1px solid #4b5550;
             border-radius: 5px;
@@ -2601,6 +2693,23 @@
             margin: 0 0 12px;
             color: #f3f6f5;
             font-size: 16px;
+        }
+
+        #task-rename-input {
+            width: 100%;
+            height: 36px;
+            padding: 6px 10px;
+            border: 1px solid #56635d;
+            border-radius: 4px;
+            background: #1e2121;
+            color: #eef3f0;
+        }
+
+        #task-rename-error {
+            min-height: 18px;
+            margin-top: 6px;
+            color: #ffaaa2;
+            font-size: 12px;
         }
 
         .task-clear-dialog p {
@@ -2651,6 +2760,40 @@
         }
 
         @media (max-width: 1100px) {
+            #export-page-header {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) 240px;
+                grid-template-rows: 38px 38px;
+                flex: 0 0 108px;
+                height: 108px;
+                padding: 12px 20px;
+                gap: 8px 16px;
+            }
+
+            #export-page-header h1 {
+                grid-column: 1;
+                grid-row: 1;
+            }
+
+            #export-task-name-field {
+                grid-column: 1;
+                grid-row: 2;
+                min-width: 0;
+                margin-right: 0;
+            }
+
+            #export-header-actions {
+                grid-column: 2;
+                grid-row: 1;
+            }
+
+            #export-page-header .page-header-summary {
+                grid-column: 2;
+                grid-row: 2;
+                font-size: 12px;
+                text-align: right;
+            }
+
             .multidate-panel {
                 left: 12px;
                 max-width: calc(100% - 24px);
@@ -2658,6 +2801,8 @@
 
             .export-range-bar {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 10px;
+                padding: 12px 8px;
             }
 
             .export-range-mode-field,
@@ -2667,6 +2812,20 @@
 
             .page-header-spacer {
                 display: none;
+            }
+
+            #task-page-header h1 {
+                flex: 0 0 auto;
+                white-space: nowrap;
+            }
+
+            #task-page-header .page-header-summary {
+                flex: 1 1 auto;
+                width: auto;
+            }
+
+            #task-page-header button {
+                flex-shrink: 0;
             }
 
             .form-section {
@@ -3339,7 +3498,12 @@
 
     <section id="export-page" class="workspace-page" style="display: none">
         <header id="export-page-header" class="page-header">
-            <h1>导出配置</h1>
+            <h1 id="export-page-title">导出配置</h1>
+            <label id="export-task-name-field">
+                <span>任务名称</span>
+                <input id="export-task-name" type="text" aria-label="任务名称"
+                       placeholder="留空自动命名">
+            </label>
             <span id="export-config-summary" class="page-header-summary">中心 116.92721, 36.70522 · z14 · 半径 0 米</span>
             <div id="export-header-actions" class="export-header-actions">
                 <button id="export-open-tasks" class="primary-command" type="button"
@@ -3435,13 +3599,19 @@
             <h1>导出任务</h1>
             <span class="page-header-summary">所有导出记录与实时进度</span>
             <div class="page-header-spacer"></div>
-            <button id="tasks-clear-finished" class="secondary-command" type="button"
+            <button id="tasks-clear-finished" class="secondary-command task-tooltip-trigger" type="button"
                     data-action="clear-finished-export-tasks"
-                    title="移除成功、失败和已取消的任务记录">移除已结束任务</button>
-            <button id="tasks-new-export" class="primary-command" type="button"
-                    data-action="open-export-config">新建导出</button>
-            <button id="tasks-back-preview" class="secondary-command" type="button"
-                    data-action="back-to-preview">返回</button>
+                    title="移除成功、失败和已取消的任务记录">移除已结束任务
+                <span id="tasks-clear-finished-tip" class="task-action-tooltip" role="tooltip">移除已结束记录，保留文件</span>
+            </button>
+            <button id="tasks-new-export" class="primary-command task-tooltip-trigger" type="button"
+                    data-action="open-export-config">新建导出
+                <span id="tasks-new-export-tip" class="task-action-tooltip" role="tooltip">新建导出任务</span>
+            </button>
+            <button id="tasks-back-preview" class="secondary-command task-tooltip-trigger" type="button"
+                    data-action="back-to-preview">返回
+                <span id="tasks-back-preview-tip" class="task-action-tooltip" role="tooltip">返回地图预览</span>
+            </button>
         </header>
         <div class="task-summary-band">
             <span>排队 <strong id="task-count-queued">0</strong></span>
@@ -3463,10 +3633,14 @@
                 <h2 id="task-clear-title">确认移除已结束任务？</h2>
                 <p id="task-clear-message">这将移除 <strong id="task-clear-count">0</strong> 条已完成、失败和已取消的任务记录，操作无法撤销。</p>
                 <div id="task-clear-actions" class="task-clear-actions">
-                    <button id="tasks-cancel-clear" type="button"
-                            data-action="cancel-clear-finished-export-tasks">取消</button>
-                    <button id="tasks-confirm-clear" class="danger-command" type="button"
-                            data-action="confirm-clear-finished-export-tasks">确认移除</button>
+                    <button id="tasks-cancel-clear" class="task-tooltip-trigger" type="button"
+                            data-action="cancel-clear-finished-export-tasks">取消
+                        <span id="tasks-cancel-clear-tip" class="task-action-tooltip" role="tooltip">取消移除，保留任务记录</span>
+                    </button>
+                    <button id="tasks-confirm-clear" class="danger-command task-tooltip-trigger" type="button"
+                            data-action="confirm-clear-finished-export-tasks">确认移除
+                        <span id="tasks-confirm-clear-tip" class="task-action-tooltip" role="tooltip">移除已结束记录，保留文件</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -3481,10 +3655,32 @@
                     <span id="task-delete-path-value"></span>
                 </div>
                 <div id="task-delete-actions" class="task-clear-actions">
-                    <button id="task-delete-cancel" type="button"
-                            data-action="cancel-delete-export-task">取消</button>
-                    <button id="task-delete-accept" class="danger-command" type="button"
-                            data-action="confirm-delete-export-task">永久删除</button>
+                    <button id="task-delete-cancel" class="task-tooltip-trigger" type="button"
+                            data-action="cancel-delete-export-task">取消
+                        <span id="task-delete-cancel-tip" class="task-action-tooltip" role="tooltip">取消删除，保留任务和文件</span>
+                    </button>
+                    <button id="task-delete-accept" class="danger-command task-tooltip-trigger" type="button"
+                            data-action="confirm-delete-export-task">永久删除
+                        <span id="task-delete-accept-tip" class="task-action-tooltip" role="tooltip">永久删除任务记录和导出文件</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div id="task-rename-dialog-overlay" class="task-clear-confirm" style="display: none">
+            <div id="task-rename-dialog" class="task-clear-dialog" role="dialog"
+                 aria-modal="true" aria-labelledby="task-rename-title">
+                <h2 id="task-rename-title">重命名任务</h2>
+                <input id="task-rename-input" type="text" aria-label="任务名称">
+                <div id="task-rename-error"></div>
+                <div class="task-clear-actions">
+                    <button id="task-rename-cancel" class="task-tooltip-trigger" type="button"
+                            data-action="cancel-rename-export-task">取消
+                        <span id="task-rename-cancel-tip" class="task-action-tooltip" role="tooltip">取消修改任务名称</span>
+                    </button>
+                    <button id="task-rename-save" class="primary-command task-tooltip-trigger" type="button"
+                            data-action="save-export-task-name">保存
+                        <span id="task-rename-save-tip" class="task-action-tooltip" role="tooltip">保存任务名称</span>
+                    </button>
                 </div>
             </div>
         </div>

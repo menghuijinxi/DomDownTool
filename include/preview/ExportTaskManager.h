@@ -292,6 +292,14 @@ class ExportTaskManager
 
     [[nodiscard]] std::string Enqueue(const ExportConfiguration& configuration);
 
+    [[nodiscard]] std::string Enqueue(const ExportConfiguration& configuration,
+                                      std::string_view title, std::string& error);
+
+    bool Restart(std::string_view taskId, const ExportConfiguration& configuration,
+                 std::string& error, std::optional<std::string_view> title = std::nullopt);
+
+    bool Rename(std::string_view taskId, std::string_view title, std::string& error);
+
     bool Cancel(std::string_view taskId);
 
     bool RemoveFinished(std::string_view taskId);
@@ -307,6 +315,7 @@ class ExportTaskManager
     {
         std::string taskId;
         ExportConfiguration configuration;
+        bool replaceOutput = false;
     };
 
     struct SatelliteDownloadOptions
@@ -338,6 +347,8 @@ class ExportTaskManager
     void WorkerLoop();
 
     bool RunExport(const QueuedExport& queuedExport, std::string& error);
+
+    bool RunReplacementExport(const QueuedExport& queuedExport, std::string& error);
 
     bool RunGroupedExport(const QueuedExport& queuedExport, std::string& error);
 
@@ -411,6 +422,7 @@ class ExportTaskManager
     DownTool::DownToolBase* activeDownloader_ = nullptr;
     std::atomic_bool cancelActive_{false};
     bool stopping_ = false;
+    bool publishingOutput_ = false;
     std::chrono::steady_clock::time_point lastSaveTime_{};
     std::chrono::steady_clock::time_point lastProgressNotificationTime_{};
 };

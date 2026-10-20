@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -29,6 +30,12 @@ Json loadJsonFile(const std::filesystem::path& path)
     std::ifstream input(path, std::ios::binary);
     return input.is_open() ? Json::parse(input, nullptr, false)
                            : Json::parse(std::string{}, nullptr, false);
+}
+
+std::string readTextFile(const std::filesystem::path& path)
+{
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
 const DomDownToolPreview::ExportTaskRecord* findRecord(
@@ -263,6 +270,12 @@ class ImageOutputDownloader final : public DownTool::DownToolBase
 
     cv::Scalar color_;
     std::shared_ptr<std::atomic<double>> elevationReference_;
+};
+
+class FailingDownloader final : public DownTool::DownToolBase
+{
+  public:
+    void StartDown() override { throw std::runtime_error("模拟重新下载失败"); }
 };
 
 DomDownToolPreview::ExportConfiguration makeCancelableConfiguration(
@@ -550,6 +563,208 @@ bool verifySeaLevelExports(const std::filesystem::path& testRoot)
     return true;
 }
 
+bool verifyRestartAndRename(const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    using postprocess_test::Require;
+    const auto recordsPath = testRoot / "restart-records.json";
+    std::string taskId;
+    std::string outputPath;
+    std::string createdAt;
+    {
+        unsigned downloaderMode = 0;
+        const auto control = std::make_shared<BlockingDownloaderControl>();
+        ExportTaskManager manager(
+            {}, recordsPath, [&](std::string_view) -> std::unique_ptr<DownTool::DownToolBase> {
+                if (downloaderMode == 1)
+                {
+                    return std::make_unique<FailingDownloader>();
+                }
+                if (downloaderMode == 2)
+                {
+                    return std::make_unique<BlockingDownloader>(control);
+                }
+                return std::make_unique<ImageOutputDownloader>(cv::Scalar(10, 20, 30, 255));
+            });
+        ExportConfiguration configuration = makeCancelableConfiguration(testRoot / "restart");
+        configuration.exportMergedImage = true;
+        std::string error;
+        taskId = manager.Enqueue(configuration, "  新建地形 <高精度>  ", error);
+        if (!Require(!taskId.empty() && waitForFinished(manager, taskId), "初始任务未结束"))
+        {
+            return false;
+        }
+        auto records = manager.GetRecords();
+        outputPath = records.front().outputPath;
+        createdAt = records.front().createdAt;
+        const auto taskRoot = ExportTaskOutputRoot(configuration, taskId);
+        const auto imageRoot = taskRoot / std::filesystem::u8path("卫星图/测试卫星");
+        const auto oldRecordFile =
+            taskRoot / std::filesystem::u8path("转换记录-" + taskId + ".txt");
+        const auto oldRecordText = readTextFile(oldRecordFile);
+        if (!Require(records.front().state == ExportTaskState::Succeeded &&
+                         records.front().title == "新建地形 <高精度>" &&
+                         std::filesystem::exists(imageRoot / "merged.png"),
+                     "初始导出没有生成测试图片或保存自定义名称") ||
+            !Require(manager.Enqueue(configuration, std::string(513, 'x'), error).empty() &&
+                         manager.Enqueue(configuration, "含\n换行", error).empty() &&
+                         !manager.Restart(taskId, configuration, error, " \t") &&
+                         manager.GetRecords().size() == 1 &&
+                         manager.GetRecords().front().title == "新建地形 <高精度>",
+                     "无效名称创建了任务或修改了原任务") ||
+            !Require(manager.Rename(taskId, "  北京中心高精度 <A>  ", error) &&
+                         manager.GetRecords().front().title == "北京中心高精度 <A>",
+                     "重命名失败或没有去掉名称两端的空白：" + error) ||
+            !Require(!manager.Rename(taskId, " \t", error) &&
+                         !manager.Rename(taskId, "含\n换行", error) &&
+                         !manager.Rename("missing", "名称", error),
+                     "重命名没有拒绝空名称、控制字符或不存在的任务"))
+        {
+            return false;
+        }
+
+        downloaderMode = 1;
+        configuration.radiusMeters = 2000.;
+        if (!Require(manager.Restart(taskId, configuration, error, "  重新下载 <测试>  ") &&
+                         waitForFinished(manager, taskId),
+                     "失败任务重新下载未结束：" + error))
+        {
+            return false;
+        }
+        records = manager.GetRecords();
+        if (!Require(records.size() == 1 && records.front().state == ExportTaskState::Failed &&
+                         records.front().title == "重新下载 <测试>" &&
+                         std::filesystem::exists(imageRoot / "merged.png") &&
+                         readTextFile(oldRecordFile) == oldRecordText,
+                     "重新下载失败时改动了旧文件或新建了任务"))
+        {
+            return false;
+        }
+
+        downloaderMode = 2;
+        if (!Require(manager.Restart(taskId, configuration, error) &&
+                         waitForCondition([&] { return control->started.load(); }),
+                     "可取消的重新下载没有启动：" + error))
+        {
+            control->allowFinish.store(true);
+            return false;
+        }
+        const bool rejectedRunning = !manager.Restart(taskId, configuration, error);
+        const bool renamedRunning = manager.Rename(taskId, "北京地形与建筑", error);
+        const bool canceled = manager.Cancel(taskId);
+        control->allowFinish.store(true);
+        if (!Require(rejectedRunning && renamedRunning && canceled &&
+                         waitForFinished(manager, taskId) &&
+                         manager.GetRecords().front().state == ExportTaskState::Canceled &&
+                         std::filesystem::exists(imageRoot / "merged.png"),
+                     "运行中状态校验、重命名或取消后保留旧结果失败"))
+        {
+            return false;
+        }
+
+        control->started.store(false);
+        control->allowFinish.store(false);
+        const auto blockerId =
+            manager.Enqueue(makeCancelableConfiguration(testRoot / "restart-blocker"));
+        if (!Require(waitForCondition([&] { return control->started.load(); }),
+                     "排队取消测试的阻塞任务未启动"))
+        {
+            control->allowFinish.store(true);
+            return false;
+        }
+        const bool canceledQueued =
+            manager.Restart(taskId, configuration, error) && manager.Cancel(taskId);
+        const auto queuedRecords = manager.GetRecords();
+        const auto* queuedRecord = findRecord(queuedRecords, taskId);
+        manager.Cancel(blockerId);
+        control->allowFinish.store(true);
+        if (!Require(canceledQueued && queuedRecord &&
+                         queuedRecord->state == ExportTaskState::Canceled &&
+                         readTextFile(oldRecordFile) == oldRecordText &&
+                         waitForFinished(manager, blockerId) && manager.RemoveFinished(blockerId),
+                     "排队取消重新下载时改动了原转换记录"))
+        {
+            return false;
+        }
+
+        // 用新分组配置替换旧版导出，验证所有输出都写入暂存目录，且成功后清理旧文件。
+        downloaderMode = 0;
+        configuration.outputRoot = testRoot / "ignored-output";
+        configuration.zoom = 16;
+        ExportContentGroup group;
+        group.id = "terrain";
+        group.name = "外围影像";
+        ExportComponent component;
+        component.id = "image";
+        component.kind = ExportComponentKind::MergedImage;
+        component.imageFormat = "jpg";
+        component.sources.push_back(
+            {"test.satellite", "测试卫星", ExportSourceKind::Imagery, testRoot / "restart-cache"});
+        group.components.push_back(component);
+        configuration.groups.push_back(group);
+        if (!Require(manager.Restart(taskId, configuration, error) &&
+                         waitForFinished(manager, taskId),
+                     "修改参数后重新下载未结束：" + error))
+        {
+            return false;
+        }
+        records = manager.GetRecords();
+        const auto newImage = taskRoot / std::filesystem::u8path("外围影像/大图/测试卫星.jpg");
+        if (!Require(records.size() == 1 && records.front().id == taskId &&
+                         records.front().state == ExportTaskState::Succeeded &&
+                         records.front().title == "北京地形与建筑" &&
+                         records.front().createdAt == createdAt &&
+                         records.front().outputPath == outputPath &&
+                         records.front().configuration->zoom == 16 &&
+                         records.front().configuration->radiusMeters == 2000. &&
+                         std::filesystem::exists(newImage) && !std::filesystem::exists(imageRoot) &&
+                         !std::filesystem::exists(configuration.outputRoot),
+                     "重新下载未保留原任务身份和目录，或旧文件没有完整替换：" +
+                         records.front().error) ||
+            !postprocess_test::RequireJpegEncoding(newImage) ||
+            !Require(!manager.Restart("missing", configuration, error), "不存在的任务不应重新下载"))
+        {
+            return false;
+        }
+        const HANDLE directoryHandle =
+            CreateFileW(taskRoot.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (!Require(directoryHandle != INVALID_HANDLE_VALUE, "无法锁定测试输出目录"))
+        {
+            return false;
+        }
+        const bool lockedRestartFinished =
+            manager.Restart(taskId, configuration, error) && waitForFinished(manager, taskId);
+        CloseHandle(directoryHandle);
+        if (!Require(lockedRestartFinished &&
+                         manager.GetRecords().front().state == ExportTaskState::Failed &&
+                         std::filesystem::exists(newImage),
+                     "输出目录被占用时没有报告失败并保留旧结果") ||
+            !Require(manager.Restart(taskId, configuration, error) &&
+                         waitForFinished(manager, taskId) &&
+                         manager.GetRecords().front().state == ExportTaskState::Succeeded,
+                     "解除目录占用后无法在原任务重新下载"))
+        {
+            return false;
+        }
+        for (const auto& entry : std::filesystem::directory_iterator(taskRoot.parent_path()))
+        {
+            if (!Require(entry.path().filename() == taskRoot.filename(),
+                         "重新下载留下暂存目录或备份"))
+            {
+                return false;
+            }
+        }
+    }
+    ExportTaskManager restored({}, recordsPath);
+    const auto records = restored.GetRecords();
+    return Require(records.size() == 1 && records.front().id == taskId &&
+                       records.front().title == "北京地形与建筑" &&
+                       records.front().outputPath == outputPath &&
+                       records.front().configuration->zoom == 16,
+                   "重启程序后没有保留重命名和修改后的参数");
+}
+
 bool runTest()
 {
     const std::filesystem::path testRoot =
@@ -562,7 +777,7 @@ bool runTest()
     {
         return false;
     }
-    if (!verifyCesiumConfiguration(testRoot))
+    if (!verifyCesiumConfiguration(testRoot) || !verifyRestartAndRename(testRoot))
     {
         return false;
     }

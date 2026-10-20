@@ -183,6 +183,8 @@ class PreviewController
 
     void UpdateTaskUi(skui::Runtime& runtime);
 
+    void SaveTaskName(skui::Runtime& runtime);
+
     void setExportGisGroupSelected(uint64_t groupId, bool selected);
 
     [[nodiscard]] bool hasSelectedBuildingExportGroup() const;
@@ -364,6 +366,11 @@ private:
     bool tileDebugEnabled_ = false;
     bool taskClearConfirmOpen_ = false;
     std::optional<ExportConfiguration> pendingExportConfiguration_;
+    std::optional<std::string> editingTaskId_;
+    std::string exportTaskTitleValue_;
+    std::optional<std::string> taskRenameTargetId_;
+    std::string taskRenameValue_;
+    std::string taskRenameError_;
     std::optional<std::string> taskDeleteTargetId_;
     std::string taskDeleteTargetTitle_;
     std::string taskDeleteTargetPath_;

@@ -1586,10 +1586,10 @@ bool ExportSatelliteRoofBuildingFbxToRoot(
 std::string BuildTaskTitle(const ExportConfiguration& configuration)
 {
     const std::string rangeText =
-        configuration.rangeMode == ExportRangeMode::KmlPolygon ?
-            (configuration.kmlFileName.empty() ?
-                "自定义范围" : "KML " + configuration.kmlFileName) :
-            fmt::format("{:.0f} 米", configuration.radiusMeters);
+        configuration.rangeMode == ExportRangeMode::KmlPolygon
+            ? (configuration.kmlFileName.empty() ? "自定义范围"
+                                                 : "KML " + configuration.kmlFileName)
+            : fmt::format("{:.0f} 米", configuration.radiusMeters);
     if (!configuration.groups.empty())
     {
         std::string contents;
@@ -1605,9 +1605,8 @@ std::string BuildTaskTitle(const ExportConfiguration& configuration)
             }
             contents += group.name.empty() ? "未命名" : group.name;
         }
-        return fmt::format(
-            "z{} {} {}", configuration.zoom, rangeText,
-            contents.empty() ? "未选择内容组" : contents);
+        return fmt::format("z{} {} {}", configuration.zoom, rangeText,
+                           contents.empty() ? "未选择内容组" : contents);
     }
     std::string contents = FormatSourceNames(configuration);
     if (!configuration.gisCategories.empty())
@@ -1618,8 +1617,25 @@ std::string BuildTaskTitle(const ExportConfiguration& configuration)
         }
         contents += "高德 GIS";
     }
-    return fmt::format(
-        "z{} {} {}", configuration.zoom, rangeText, contents);
+    return fmt::format("z{} {} {}", configuration.zoom, rangeText, contents);
+}
+
+std::optional<std::string> NormalizeTaskTitle(std::string_view title, std::string& error)
+{
+    const size_t first = title.find_first_not_of(" \t\r\n");
+    if (first == std::string_view::npos)
+    {
+        error = "任务名称不能为空。";
+        return std::nullopt;
+    }
+    title = title.substr(first, title.find_last_not_of(" \t\r\n") - first + 1);
+    if (title.size() > 512 || std::any_of(title.begin(), title.end(),
+                                          [](unsigned char character) { return character < 32; }))
+    {
+        error = "任务名称过长或包含换行等控制字符。";
+        return std::nullopt;
+    }
+    return std::string(title);
 }
 
 std::string BuildTaskDetail(const ExportConfiguration& configuration)
@@ -1629,8 +1645,7 @@ std::string BuildTaskDetail(const ExportConfiguration& configuration)
     return modes.empty() ? outputs : outputs + " · " + modes;
 }
 
-std::string BuildTaskOutputPath(const ExportConfiguration& configuration,
-                                const std::string& taskId)
+std::string BuildTaskOutputPath(const ExportConfiguration& configuration, const std::string& taskId)
 {
     std::string paths;
     for (const std::filesystem::path& root : TaskRecordRoots(configuration, taskId))
@@ -1724,6 +1739,50 @@ std::optional<std::vector<std::filesystem::path>> ValidatedTaskOutputPaths(
     }
     return paths;
 }
+
+bool PublishTaskOutput(const std::filesystem::path& taskRoot,
+                       const std::filesystem::path& stagingRoot, std::string& error)
+{
+    const std::filesystem::path backupRoot = stagingRoot.wstring() + L".previous";
+    std::error_code pathError;
+    const bool hadOutput = std::filesystem::exists(taskRoot, pathError);
+    if (!pathError && hadOutput)
+    {
+        std::filesystem::rename(taskRoot, backupRoot, pathError);
+    }
+    if (pathError)
+    {
+        error = "无法更新原任务目录，请关闭占用导出文件的程序后重试：" + pathError.message();
+        return false;
+    }
+
+    std::filesystem::rename(stagingRoot, taskRoot, pathError);
+    if (pathError)
+    {
+        error = "无法将新结果写回原任务目录：" + pathError.message();
+        if (hadOutput)
+        {
+            std::error_code restoreError;
+            std::filesystem::rename(backupRoot, taskRoot, restoreError);
+            if (restoreError)
+            {
+                error += "；旧结果保留在 " + PathToUtf8(backupRoot) + "，恢复失败：" +
+                         restoreError.message();
+            }
+        }
+        return false;
+    }
+    if (hadOutput)
+    {
+        std::filesystem::remove_all(backupRoot, pathError);
+        if (pathError)
+        {
+            error = "新结果已更新，旧结果备份未能清理：" + PathToUtf8(backupRoot) + "（" +
+                    pathError.message() + "）";
+        }
+    }
+    return true;
+}
 } // namespace
 
 std::string DomDownToolPreview::ExportTaskStateName(ExportTaskState state)
@@ -1795,20 +1854,34 @@ DomDownToolPreview::ExportTaskManager::~ExportTaskManager()
     SaveRecords(true);
 }
 
-std::string DomDownToolPreview::ExportTaskManager::Enqueue(
-    const ExportConfiguration& configuration)
+std::string DomDownToolPreview::ExportTaskManager::Enqueue(const ExportConfiguration& configuration)
 {
+    std::string error;
+    return Enqueue(configuration, {}, error);
+}
+
+std::string DomDownToolPreview::ExportTaskManager::Enqueue(const ExportConfiguration& configuration,
+                                                           std::string_view title,
+                                                           std::string& error)
+{
+    error.clear();
+    const auto taskTitle = title.empty() ? std::make_optional(BuildTaskTitle(configuration))
+                                         : NormalizeTaskTitle(title, error);
+    if (!taskTitle)
+    {
+        return {};
+    }
     ExportTaskRecord record;
     record.id = MakeTaskId();
-    record.title = BuildTaskTitle(configuration);
+    record.title = *taskTitle;
     record.detail = BuildTaskDetail(configuration);
     record.outputPath = BuildTaskOutputPath(configuration, record.id);
     record.createdAt = CurrentTimeText();
     record.configuration = configuration;
     const std::string taskId = record.id;
     std::string recordError;
-    const bool recordWritten = WriteTaskRecordFiles(
-        configuration, taskId, "排队中", "等待执行", recordError);
+    const bool recordWritten =
+        WriteTaskRecordFiles(configuration, taskId, "排队中", "等待执行", recordError);
     if (!recordWritten)
     {
         record.state = ExportTaskState::Failed;
@@ -1830,31 +1903,115 @@ std::string DomDownToolPreview::ExportTaskManager::Enqueue(
     return taskId;
 }
 
+bool DomDownToolPreview::ExportTaskManager::Restart(std::string_view taskId,
+                                                    const ExportConfiguration& configuration,
+                                                    std::string& error,
+                                                    std::optional<std::string_view> title)
+{
+    error.clear();
+    std::optional<std::string> taskTitle;
+    if (title)
+    {
+        taskTitle = title->empty() ? std::make_optional(BuildTaskTitle(configuration))
+                                   : NormalizeTaskTitle(*title, error);
+        if (!taskTitle)
+        {
+            return false;
+        }
+    }
+    {
+        const std::lock_guard lock(mutex_);
+        const auto record =
+            std::find_if(records_.begin(), records_.end(),
+                         [taskId](const ExportTaskRecord& item) { return item.id == taskId; });
+        if (record == records_.end() || !IsFinishedState(record->state))
+        {
+            error = "只能修改并重新下载已完成、失败或已取消的任务。";
+            return false;
+        }
+        const auto paths = ValidatedTaskOutputPaths(*record, error);
+        if (!paths || paths->size() != 1)
+        {
+            error = "原任务没有唯一的有效输出目录，无法在原任务中重新下载。";
+            return false;
+        }
+        ExportConfiguration updated = configuration;
+        updated.outputRoot = paths->front().parent_path().parent_path();
+        updated.executionRootOverride.clear();
+        updated.geoJsonOutputFileOverride.clear();
+        updated.buildingFbxOutputOverride.clear();
+        if (taskTitle)
+        {
+            record->title = *taskTitle;
+        }
+        record->configuration = updated;
+        record->detail = BuildTaskDetail(updated);
+        record->state = ExportTaskState::Queued;
+        record->stage = "等待重新下载";
+        record->progress = 0.;
+        record->completed = 0;
+        record->total = 0;
+        record->finishedAt.clear();
+        record->error.clear();
+        queue_.push_back(QueuedExport{record->id, std::move(updated), true});
+    }
+    SaveRecords(true);
+    condition_.notify_one();
+    NotifyChanged();
+    return true;
+}
+
+bool DomDownToolPreview::ExportTaskManager::Rename(std::string_view taskId, std::string_view title,
+                                                   std::string& error)
+{
+    error.clear();
+    const auto taskTitle = NormalizeTaskTitle(title, error);
+    if (!taskTitle)
+    {
+        return false;
+    }
+    {
+        const std::lock_guard lock(mutex_);
+        const auto record =
+            std::find_if(records_.begin(), records_.end(),
+                         [taskId](const ExportTaskRecord& item) { return item.id == taskId; });
+        if (record == records_.end())
+        {
+            error = "任务不存在，无法重命名。";
+            return false;
+        }
+        record->title = *taskTitle;
+    }
+    SaveRecords(true);
+    NotifyChanged();
+    return true;
+}
+
 bool DomDownToolPreview::ExportTaskManager::Cancel(std::string_view taskId)
 {
     bool changed = false;
     std::optional<ExportConfiguration> queuedConfiguration;
     {
         const std::lock_guard lock(mutex_);
-        const auto record = std::find_if(
-            records_.begin(), records_.end(),
-            [taskId](const ExportTaskRecord& item) { return item.id == taskId; });
+        const auto record =
+            std::find_if(records_.begin(), records_.end(),
+                         [taskId](const ExportTaskRecord& item) { return item.id == taskId; });
         if (record == records_.end())
         {
             return false;
         }
         if (record->state == ExportTaskState::Queued)
         {
-            const auto queued = std::find_if(
-                queue_.begin(), queue_.end(),
-                [taskId](const QueuedExport& item) { return item.taskId == taskId; });
-            if (queued != queue_.end())
+            const auto queued =
+                std::find_if(queue_.begin(), queue_.end(),
+                             [taskId](const QueuedExport& item) { return item.taskId == taskId; });
+            if (queued != queue_.end() && !queued->replaceOutput)
             {
                 queuedConfiguration = queued->configuration;
             }
-            queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
-                                       [taskId](const QueuedExport& item)
-                                       { return item.taskId == taskId; }),
+            queue_.erase(std::remove_if(
+                             queue_.begin(), queue_.end(),
+                             [taskId](const QueuedExport& item) { return item.taskId == taskId; }),
                          queue_.end());
             record->state = ExportTaskState::Canceled;
             record->stage = "已取消";
@@ -1863,6 +2020,10 @@ bool DomDownToolPreview::ExportTaskManager::Cancel(std::string_view taskId)
         }
         else if (record->state == ExportTaskState::Running)
         {
+            if (publishingOutput_)
+            {
+                return false;
+            }
             cancelActive_.store(true, std::memory_order_relaxed);
             if (activeDownloader_)
             {
@@ -1984,6 +2145,7 @@ void DomDownToolPreview::ExportTaskManager::WorkerLoop()
             queuedExport = std::move(queue_.front());
             queue_.pop_front();
             cancelActive_.store(false, std::memory_order_relaxed);
+            publishingOutput_ = false;
             lastProgressNotificationTime_ = {};
             const auto record = std::find_if(
                 records_.begin(), records_.end(),
@@ -2003,7 +2165,8 @@ void DomDownToolPreview::ExportTaskManager::WorkerLoop()
         bool succeeded = false;
         try
         {
-            succeeded = RunExport(queuedExport, error);
+            succeeded = queuedExport.replaceOutput ? RunReplacementExport(queuedExport, error)
+                                                   : RunExport(queuedExport, error);
         }
         catch (const std::exception& exception)
         {
@@ -2015,7 +2178,11 @@ void DomDownToolPreview::ExportTaskManager::WorkerLoop()
         }
 
         ExportTaskState finalState = ExportTaskState::Failed;
-        if (IsCancellationRequested())
+        if (succeeded && queuedExport.replaceOutput)
+        {
+            finalState = ExportTaskState::Succeeded;
+        }
+        else if (IsCancellationRequested())
         {
             finalState = ExportTaskState::Canceled;
         }
@@ -2027,7 +2194,8 @@ void DomDownToolPreview::ExportTaskManager::WorkerLoop()
             "导出完成" : finalState == ExportTaskState::Canceled ?
             "任务已取消" : error;
         std::string recordError;
-        if (!WriteTaskRecordFiles(queuedExport.configuration, queuedExport.taskId,
+        if (!queuedExport.replaceOutput &&
+            !WriteTaskRecordFiles(queuedExport.configuration, queuedExport.taskId,
                                   ExportTaskStateName(finalState), result, recordError))
         {
             finalState = ExportTaskState::Failed;
@@ -2035,6 +2203,68 @@ void DomDownToolPreview::ExportTaskManager::WorkerLoop()
         }
         FinishTask(queuedExport.taskId, finalState, std::move(error));
     }
+}
+
+bool DomDownToolPreview::ExportTaskManager::RunReplacementExport(const QueuedExport& queuedExport,
+                                                                 std::string& error)
+{
+    const std::filesystem::path taskRoot =
+        ExportTaskOutputRoot(queuedExport.configuration, queuedExport.taskId);
+    const std::filesystem::path stagingRoot =
+        taskRoot.parent_path() /
+        std::filesystem::u8path(queuedExport.taskId + ".rebuild-" + MakeTaskId());
+    std::error_code directoryError;
+    std::filesystem::create_directories(taskRoot.parent_path(), directoryError);
+    if (directoryError || !std::filesystem::create_directory(stagingRoot, directoryError))
+    {
+        error = "无法创建任务重新下载的临时目录：" + directoryError.message();
+        return false;
+    }
+
+    // 新结果完整生成后才替换原目录，取消或失败不会破坏三维软件引用的旧文件。
+    bool succeeded = false;
+    try
+    {
+        QueuedExport staged = queuedExport;
+        staged.configuration.executionRootOverride = stagingRoot;
+        succeeded = RunExport(staged, error) && !IsCancellationRequested();
+        if (succeeded)
+        {
+            succeeded =
+                WriteTaskRecordFile(stagingRoot, queuedExport.taskId, queuedExport.configuration,
+                                    "已完成", "导出完成", error);
+        }
+        if (succeeded)
+        {
+            {
+                const std::lock_guard lock(mutex_);
+                succeeded = !cancelActive_.load(std::memory_order_relaxed) && !stopping_;
+                publishingOutput_ = succeeded;
+            }
+            if (succeeded)
+            {
+                UpdateProgress(queuedExport.taskId, "正在更新导出文件", 0.99, 0, 0);
+                succeeded = PublishTaskOutput(taskRoot, stagingRoot, error);
+            }
+        }
+    }
+    catch (const std::exception& exception)
+    {
+        succeeded = false;
+        error = exception.what();
+    }
+    catch (...)
+    {
+        succeeded = false;
+        error = "重新下载任务发生未知异常。";
+    }
+    std::filesystem::remove_all(stagingRoot, directoryError);
+    if (directoryError)
+    {
+        error += "；临时目录清理失败：" + PathToUtf8(stagingRoot) + "（" +
+                 directoryError.message() + "）";
+    }
+    return succeeded;
 }
 
 bool DomDownToolPreview::ExportTaskManager::RunGroupedExport(
