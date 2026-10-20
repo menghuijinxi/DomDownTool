@@ -716,7 +716,7 @@ namespace
                 }
 
                 const double relativeCentimeters =
-                    std::max(0., *elevationMeters - options.elevationReferenceMeters) * 100.;
+                    (*elevationMeters - options.elevationReferenceMeters) * 100.;
                 minimumCentimeters = std::min(minimumCentimeters, relativeCentimeters);
                 maximumCentimeters = std::max(maximumCentimeters, relativeCentimeters);
                 hasSample = true;

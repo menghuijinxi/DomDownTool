@@ -16,6 +16,7 @@
 #include "nlohmann/json.hpp"
 
 #include "DownToolBase.h"
+#include "CopernicusDem.h"
 #include "preview/ExportTaskManager.h"
 #include "preview/ExportImageComposer.h"
 
@@ -185,12 +186,18 @@ class ProgressBurstDownloader final : public DownTool::DownToolBase
 class ImageOutputDownloader final : public DownTool::DownToolBase
 {
   public:
-    explicit ImageOutputDownloader(cv::Scalar color) : color_(color)
+    explicit ImageOutputDownloader(cv::Scalar color,
+                                   std::shared_ptr<std::atomic<double>> elevationReference = {})
+        : color_(color), elevationReference_(std::move(elevationReference))
     {
     }
 
     void StartDown() override
     {
+        if (elevationReference_)
+        {
+            elevationReference_->store(GetFbxElevationReferenceMeters());
+        }
         ReportProgress("下载瓦片", 1, 2);
         if (GetPostProcessEnabled())
         {
@@ -255,6 +262,7 @@ class ImageOutputDownloader final : public DownTool::DownToolBase
     }
 
     cv::Scalar color_;
+    std::shared_ptr<std::atomic<double>> elevationReference_;
 };
 
 DomDownToolPreview::ExportConfiguration makeCancelableConfiguration(
@@ -436,6 +444,110 @@ bool verifyCesiumConfiguration(const std::filesystem::path& testRoot)
         legacyRecords[0].configuration.has_value() &&
         !legacyRecords[0].configuration->groups[0].components[1].GetCesiumTextureMipmaps(),
         "旧配置缺少 Mipmap 字段时没有默认关闭");
+}
+
+bool verifySeaLevelExports(const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    const auto root = testRoot / "sea-level";
+    std::filesystem::create_directories(root);
+    // 该检查放在进程末尾，将默认 DEM 缓存隔离到 tmp，避免读取或修改真实缓存。
+    std::filesystem::current_path(root);
+    DownTool::CopernicusDemOptions demOptions;
+    const std::string tileId = "Copernicus_DSM_COG_10_N39_00_E116_00_DEM";
+    const auto demPath = demOptions.cachePath / tileId / (tileId + ".tif");
+    std::filesystem::create_directories(demPath.parent_path());
+    cv::Mat image(4, 4, CV_32FC1, cv::Scalar(150.F));
+    image.at<float>(3, 3) = 25.F;
+    std::vector<unsigned char> encoded;
+    if (!cv::imencode(".tif", image, encoded))
+    {
+        return false;
+    }
+    {
+        std::ofstream output(demPath, std::ios::binary | std::ios::trunc);
+        output.write(reinterpret_cast<const char*>(encoded.data()),
+                     static_cast<std::streamsize>(encoded.size()));
+        if (!output.good())
+        {
+            return false;
+        }
+    }
+
+    for (bool grouped : {false, true})
+    {
+        for (bool outer : {false, true})
+        {
+            ExportConfiguration configuration;
+            configuration.centerWgs84 = {116.5, 39.5};
+            configuration.radiusMeters = outer ? 40000. : 20000.;
+            configuration.zoom = outer ? 15 : 18;
+            configuration.outputRoot = root / "output";
+            configuration.exportFbx = true;
+            configuration.exportTerrainHeight = true;
+            ExportSourceEntry source;
+            source.id = "test.satellite";
+            source.name = "测试卫星";
+            source.kind = ExportSourceKind::Imagery;
+            source.cachePath = root / "imagery-cache";
+            if (grouped)
+            {
+                ExportContentGroup group;
+                group.id = "terrain-group";
+                group.name = "地形";
+                ExportComponent component;
+                component.id = "terrain";
+                component.kind = ExportComponentKind::BasePlate;
+                component.exportElevation = true;
+                component.sources.push_back(source);
+                group.components.push_back(component);
+                configuration.groups.push_back(group);
+            }
+            else
+            {
+                configuration.satelliteSources.push_back(
+                    {source.id, source.name, source.cachePath});
+            }
+            demOptions.centerWgs84 = configuration.centerWgs84;
+            demOptions.radiusMeters = configuration.radiusMeters;
+            std::string error;
+            const auto dem = DownTool::CopernicusDemData::Prepare(demOptions, error);
+            if (!postprocess_test::Require(dem && dem->GetMinimumElevationMeters() ==
+                                                      (outer ? 25. : 150.),
+                                           "高程回归样例没有覆盖范围变化导致最低点变化：" + error))
+            {
+                return false;
+            }
+
+            const auto reference =
+                std::make_shared<std::atomic<double>>(std::numeric_limits<double>::quiet_NaN());
+            ExportTaskManager manager({}, root / "records.json", [reference](std::string_view) {
+                return std::make_unique<ImageOutputDownloader>(cv::Scalar(10, 20, 30, 255),
+                                                               reference);
+            });
+            const auto taskId = manager.Enqueue(configuration);
+            const bool finished = waitForFinished(manager, taskId);
+            const auto records = manager.GetRecords();
+            const auto* record = findRecord(records, taskId);
+            if (!postprocess_test::Require(
+                    finished && record && record->state == ExportTaskState::Succeeded,
+                    "海拔零面导出任务失败：" + (record ? record->error : taskId)))
+            {
+                return false;
+            }
+            const auto metadata = loadJsonFile(ExportTaskOutputRoot(configuration, taskId) /
+                                               std::filesystem::u8path("高度") / "meta.json");
+            if (!postprocess_test::Require(reference->load() == 0. && metadata.is_object() &&
+                                               metadata.value("referenceMode", "") == "sea-level" &&
+                                               metadata.value("referenceElevationMeters", -1.) ==
+                                                   0.,
+                                           "不同范围或分组方式的导出没有统一使用海拔 0"))
+            {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 bool runTest()
@@ -1689,7 +1801,8 @@ bool runTest()
 
     return postprocess_test::Require(
         changeCount.load(std::memory_order_relaxed) >= 3,
-        "导出任务状态变化没有通知界面");
+        "导出任务状态变化没有通知界面") &&
+        verifySeaLevelExports(testRoot);
 }
 } // namespace
 

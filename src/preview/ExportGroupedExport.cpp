@@ -1083,8 +1083,8 @@ bool ExportGroupedRunner::Run(
             {"provider", "Copernicus DEM GLO-30"},
             {"resolutionMeters", 30},
             {"verticalDatum", "EGM2008"},
-            {"referenceMode", "minimum"},
-            {"referenceElevationMeters", elevationData->GetMinimumElevationMeters()},
+            {"referenceMode", "sea-level"},
+            {"referenceElevationMeters", 0.},
             {"bounds", {{"west", bounds.west}, {"east", bounds.east},
                         {"south", bounds.south}, {"north", bounds.north}}},
             {"sourceFiles", std::move(sourceFiles)},
@@ -1466,8 +1466,7 @@ bool ExportGroupedRunner::Run(
                 if (componentElevation)
                 {
                     downloader.SetFbxTerrainHeightEnabled(true);
-                    downloader.SetFbxElevationReferenceMeters(
-                        componentElevation->GetMinimumElevationMeters());
+                    downloader.SetFbxElevationReferenceMeters(0.);
                     downloader.SetFbxElevationSampler(
                         [componentElevation](const DownTool::LonLat& lonLat)
                         {

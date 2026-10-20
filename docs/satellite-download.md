@@ -107,8 +107,11 @@ PNG 保留透明度；JPG 不支持透明度。`--merged-format` 只影响合并
 ```
 
 预览程序的导出配置勾选 `FBX 切片与网格` 后，可以继续勾选 `导出高度`。任务会按导出范围
-自动下载并缓存 Copernicus DEM GLO-30 高程分幅，使用范围最低高程作为 FBX 零面，把相对
-地形高差写入网格；原始高程缓存位于 `cache/Copernicus高程`，任务目录下会生成 `高度/meta.json`。
+自动下载并缓存 Copernicus DEM GLO-30 高程分幅，以中心经纬度、海拔 0 为模型原点，
+把 DEM 海拔写入网格，保留负海拔，不再减去当前范围的最低高程。
+原始高程缓存位于 `cache/Copernicus高程`，任务目录下会生成 `高度/meta.json`，
+记录 `verticalDatum: EGM2008`、`referenceMode: sea-level` 和 `referenceElevationMeters: 0`。
+使用相同中心和模型形态的不同范围任务共享同一高度基准；旧版按最低点归零的模型需要重新导出。
 不勾选 `导出高度` 时，FBX 仍保持原来的平面或球面网格行为。
 
 ## 缓存和输出目录

@@ -1037,8 +1037,8 @@ bool WriteElevationMetadata(
         {"provider", "Copernicus DEM GLO-30"},
         {"resolutionMeters", 30},
         {"verticalDatum", "EGM2008"},
-        {"referenceMode", "minimum"},
-        {"referenceElevationMeters", elevationData.GetMinimumElevationMeters()},
+        {"referenceMode", "sea-level"},
+        {"referenceElevationMeters", 0.},
         {"bounds", {{"west", bounds.west}, {"east", bounds.east},
                     {"south", bounds.south}, {"north", bounds.north}}},
         {"sourceFiles", std::move(sourceFiles)},
@@ -1068,8 +1068,8 @@ void ConfigureFbxElevation(
         return;
     }
     downloader.SetFbxTerrainHeightEnabled(true);
-    downloader.SetFbxElevationReferenceMeters(
-        elevationData->GetMinimumElevationMeters());
+    // 固定海拔零面，避免改变下载范围后模型出现整体高度偏移。
+    downloader.SetFbxElevationReferenceMeters(0.);
     downloader.SetFbxElevationSampler(
         [elevationData](const DownTool::LonLat& lonLat)
         {
@@ -1503,7 +1503,7 @@ void ApplyBuildingFbxElevation(
         return;
     }
     exportOptions.terrainHeightEnabled = true;
-    exportOptions.elevationReferenceMeters = elevationData->GetMinimumElevationMeters();
+    exportOptions.elevationReferenceMeters = 0.;
     exportOptions.elevationSampler =
         [elevationData](const DownTool::LonLat& lonLat)
         {

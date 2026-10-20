@@ -224,6 +224,64 @@ namespace
         return postprocess_test::RequireFbxAxisAndUnit(fine.outputPath);
     }
 
+    bool RequireSignedSeaLevelBuildings(const DownTool::AmapBuildingFbxExportOptions& baseOptions,
+                                        const std::filesystem::path& root)
+    {
+        DownTool::AmapVectorDecodedData data;
+        data.features = {MakeBuilding(50., 50., 5)};
+        for (const auto shape : {DownTool::FbxPlanetShape::Plane, DownTool::FbxPlanetShape::Sphere})
+        {
+            std::vector<aiVector3D> seaLevelVertices;
+            for (double elevation : {0., 150., -35.5})
+            {
+                auto options = baseOptions;
+                options.outputPath = root / "sea-level" / "buildings.fbx";
+                options.shape = shape;
+                options.terrainHeightEnabled = true;
+                options.elevationSampler = [elevation](const DownTool::LonLat&) {
+                    return std::optional<double>(elevation);
+                };
+                const auto result = DownTool::ExportAmapBuildingScene(
+                    data, options, [&](aiScene& scene, std::string&) {
+                        std::vector<aiVector3D> vertices;
+                        for (unsigned int index = 0; index < scene.mNumMeshes; ++index)
+                        {
+                            const aiMesh& mesh = *scene.mMeshes[index];
+                            vertices.insert(vertices.end(), mesh.mVertices,
+                                            mesh.mVertices + mesh.mNumVertices);
+                        }
+                        if (elevation == 0.)
+                        {
+                            seaLevelVertices = std::move(vertices);
+                            return !seaLevelVertices.empty();
+                        }
+                        if (vertices.size() != seaLevelVertices.size())
+                        {
+                            return false;
+                        }
+                        for (size_t index = 0; index < vertices.size(); ++index)
+                        {
+                            const aiVector3D& vertex = vertices[index];
+                            const aiVector3D& baseline = seaLevelVertices[index];
+                            if (std::abs(vertex.x - baseline.x) >= 0.1F ||
+                                std::abs(vertex.y - baseline.y) >= 0.1F ||
+                                std::abs(vertex.z - baseline.z - elevation * 100.) >= 0.1)
+                            {
+                                return false;
+                            }
+                        }
+                        return true;
+                    });
+                if (!postprocess_test::Require(
+                        result.success, "建筑未保留相对海拔 0 的有符号高程：" + result.error))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     bool RunTest()
     {
         const auto root = postprocess_test::MakeTestRoot("building-chunks");
@@ -246,7 +304,8 @@ namespace
                 options.wallTexturePath / "wall.png", 64, cv::Scalar(100, 150, 200, 255)) ||
             !postprocess_test::WriteSourceTile(
                 options.roofTexturePath / "roof.png", 64, cv::Scalar(200, 100, 150, 255)) ||
-            !CheckExportPair(data, options, root / "scattered"))
+            !CheckExportPair(data, options, root / "scattered") ||
+            !RequireSignedSeaLevelBuildings(options, root))
         {
             return false;
         }

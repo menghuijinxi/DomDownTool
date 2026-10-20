@@ -1443,7 +1443,7 @@ namespace
 					if (elevation)
 					{
 						elevationOffsetMeters =
-							std::max(0., *elevation - elevationReferenceMeters);
+							*elevation - elevationReferenceMeters;
 					}
 					// DEM 边缘缺失采样时保持在高程零面，避免让单个贴图块导出失败。
 				}
@@ -1580,7 +1580,7 @@ namespace
 				plan.heights[
 					static_cast<size_t>(y) * (plan.gridWidth + 1) + x] =
 					elevation ?
-					std::max(0., *elevation - elevationReferenceMeters) : 0.;
+					*elevation - elevationReferenceMeters : 0.;
 			}
 		}
 

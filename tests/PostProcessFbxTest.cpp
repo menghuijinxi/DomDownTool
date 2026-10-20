@@ -804,11 +804,82 @@ namespace
         return {};
     }
 
+    bool RequireSignedSeaLevelTerrain(const std::filesystem::path& testRoot)
+    {
+        const auto root = testRoot / "sea-level";
+        postprocess_test::TestPostProcessDown tool;
+        tool.Configure(root / "cache", root / "XYZ", 15, 32, DownTool::Tile(16384, 16384, 15),
+                       DownTool::Tile(16385, 16385, 15), {0.005, -0.005});
+        tool.SetPostProcessEnabled(true);
+        tool.SetPostProcessFbxEnabled(true);
+        tool.SetFbxOutputPath(postprocess_test::PathToUtf8String(root / "FBX"));
+        tool.SetFbxTextureSize(64);
+        tool.SetFbxShape(DownTool::FbxPlanetShape::Both);
+        tool.SetFbxTerrainHeightEnabled(true);
+        tool.SetFbxTerrainSampleRateMeters(100.);
+        if (!postprocess_test::WriteSourceTiles(tool))
+        {
+            return false;
+        }
+
+        std::map<std::string, std::vector<aiVector3D>> seaLevelVertices;
+        for (double elevation : {0., 150., -35.5})
+        {
+            tool.SetFbxElevationSampler(
+                [elevation](const DownTool::LonLat&) { return std::optional<double>(elevation); });
+            tool.RunPostProcessForTest();
+            for (const std::string shape : {"plane", "sphere"})
+            {
+                Assimp::Importer importer;
+                const aiScene* scene =
+                    postprocess_test::ReadFbxScene(importer, root / "FBX" / (shape + ".fbx"));
+                if (!postprocess_test::Require(scene && scene->mNumMeshes > 0,
+                                               "无法读取海拔零面地形"))
+                {
+                    return false;
+                }
+                std::vector<aiVector3D> vertices;
+                for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; ++meshIndex)
+                {
+                    const aiMesh& mesh = *scene->mMeshes[meshIndex];
+                    vertices.insert(vertices.end(), mesh.mVertices,
+                                    mesh.mVertices + mesh.mNumVertices);
+                }
+                if (elevation == 0.)
+                {
+                    seaLevelVertices[shape] = std::move(vertices);
+                    continue;
+                }
+                const auto& baseline = seaLevelVertices.at(shape);
+                if (!postprocess_test::Require(!vertices.empty() &&
+                                                   vertices.size() == baseline.size(),
+                                               "恒定高程改变了地形网格拓扑"))
+                {
+                    return false;
+                }
+                for (size_t index = 0; index < vertices.size(); ++index)
+                {
+                    const aiVector3D& vertex = vertices[index];
+                    if (!postprocess_test::Require(
+                            std::abs(vertex.x - baseline[index].x) < 0.1F &&
+                                std::abs(vertex.y - baseline[index].y) < 0.1F &&
+                                std::abs(vertex.z - baseline[index].z - elevation * 100.) < 0.1,
+                            "地形未保留相对海拔 0 的有符号高程：" + shape))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
     bool RunTest()
     {
         const std::filesystem::path testRoot =
             postprocess_test::MakeTestRoot("fbx");
-        if (!postprocess_test::ResetDirectory(testRoot))
+        if (!postprocess_test::ResetDirectory(testRoot) ||
+            !RequireSignedSeaLevelTerrain(testRoot))
         {
             return false;
         }
