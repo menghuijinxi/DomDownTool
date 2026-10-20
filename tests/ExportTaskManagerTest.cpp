@@ -1365,20 +1365,27 @@ bool runTest()
         const std::vector<DomDownToolPreview::ExportTaskRecord> records =
             manager.GetRecords();
         const DomDownToolPreview::ExportTaskRecord* record = findRecord(records, taskId);
-        const Json persisted = loadJsonFile(testRoot / "progress-burst-records.json");
-        bool persistedHasConfiguration = false;
-        if (persisted.is_object())
-        {
-            const auto persistedTasks = persisted.find("tasks");
-            if (persistedTasks != persisted.end() && persistedTasks->is_array())
+        // 完成状态先在内存中可见，随后才重写记录文件；等待完整落盘，避免读到半份 JSON。
+        const bool persistedHasConfiguration = waitForCondition(
+            [&]
             {
+                const Json persisted = loadJsonFile(testRoot / "progress-burst-records.json");
+                if (!persisted.is_object())
+                {
+                    return false;
+                }
+                const auto persistedTasks = persisted.find("tasks");
+                if (persistedTasks == persisted.end() || !persistedTasks->is_array())
+                {
+                    return false;
+                }
                 const auto persistedTask = std::find_if(
                     persistedTasks->begin(), persistedTasks->end(),
                     [&taskId](const Json& item) { return item.value("id", "") == taskId; });
-                persistedHasConfiguration = persistedTask != persistedTasks->end() &&
-                    persistedTask->contains("configuration");
-            }
-        }
+                return persistedTask != persistedTasks->end() &&
+                    persistedTask->contains("configuration") &&
+                    persistedTask->value("state", "") == "succeeded";
+            });
         if (!postprocess_test::Require(
                 finished && record &&
                     record->state == DomDownToolPreview::ExportTaskState::Succeeded &&

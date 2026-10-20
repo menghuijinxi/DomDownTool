@@ -51,6 +51,8 @@ namespace DownTool
     [[nodiscard]] AmapVectorRenderCategory ClassifyAmapVectorFeature(
         const AmapVectorFeature& feature);
 
+    [[nodiscard]] bool IsAmapVectorBuildingWithHeight(const AmapVectorFeature& feature);
+
     [[nodiscard]] AmapVectorColor GetDefaultAmapVectorRenderColor(
         AmapVectorRenderCategory category);
 

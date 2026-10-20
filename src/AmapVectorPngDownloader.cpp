@@ -619,6 +619,13 @@ DownTool::AmapVectorRenderCategory DownTool::ClassifyAmapVectorFeature(
     return AmapVectorRenderCategory::Other;
 }
 
+bool DownTool::IsAmapVectorBuildingWithHeight(const AmapVectorFeature& feature)
+{
+    return feature.geometryType == AmapVectorGeometryType::Polygon &&
+        feature.hasHeight && feature.height != 0 &&
+        ClassifyAmapVectorFeature(feature) == AmapVectorRenderCategory::Building;
+}
+
 DownTool::AmapVectorColor DownTool::GetDefaultAmapVectorRenderColor(
     AmapVectorRenderCategory category)
 {

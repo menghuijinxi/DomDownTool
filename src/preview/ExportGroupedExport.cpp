@@ -1640,7 +1640,18 @@ bool ExportGroupedRunner::Run(
                 download.SetGisSpatialRange(ExportGisSpatialRange(queuedExport.configuration));
                 download.zoom = queuedExport.configuration.zoom;
                 download.includeBaseLayers = true;
+                download.includeLabels = false;
+                download.SetFeatureFilter(DownTool::IsAmapVectorBuildingWithHeight);
                 download.cancellationRequested = options.GetCancellation();
+                download.SetProcessingProgressCallback(
+                    [&manager, taskId = queuedExport.taskId, stepIndex, stepCount](
+                        const DownTool::GisProcessingProgress& progress)
+                    {
+                        manager.UpdateProgress(taskId,
+                            DownTool::GisProcessingStageName(progress.GetStage()),
+                            double(stepIndex) / stepCount,
+                            progress.GetCompleted(), progress.GetTotal());
+                    });
                 download.progressCallback =
                     [&manager, taskId = queuedExport.taskId, stepIndex, stepCount](
                         const DownTool::AmapVectorDownloadProgress& progress)
@@ -1667,13 +1678,7 @@ bool ExportGroupedRunner::Run(
                 options.SetLodLevels(component.GetCesiumLodLevels());
                 options.SetAtlasSize(component.textureSize);
                 options.SetTextureMipmaps(component.GetCesiumTextureMipmaps());
-                auto buildings = data.decodedData;
-                std::erase_if(buildings.features, [](const DownTool::AmapVectorFeature& feature)
-                    {
-                        return DownTool::ClassifyAmapVectorFeature(feature) !=
-                            DownTool::AmapVectorRenderCategory::Building;
-                    });
-                succeeded = DownTool::ExportCesiumBuildings(buildings, options, error);
+                succeeded = DownTool::ExportCesiumBuildings(data.decodedData, options, error);
             }
         }
         else if (component.kind == ExportComponentKind::DemGeoTiff)

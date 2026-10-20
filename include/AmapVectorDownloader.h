@@ -50,15 +50,34 @@ namespace DownTool
         uint32_t maxConcurrency = std::thread::hardware_concurrency();
         // 回调由工作线程串行调用；Download 返回后不会再调用。
         AmapVectorDownloadProgressCallback progressCallback;
-        // 返回 true 时尽快停止领取新任务。
+        // 返回 true 时停止领取新任务，并在合并、索引及范围处理批次间退出。
         std::function<bool()> cancellationRequested;
         std::filesystem::path geoJsonOutputPath;
 
         const GisSpatialRange& GetGisSpatialRange() const { return gisSpatialRange_; }
         void SetGisSpatialRange(const GisSpatialRange& value) { gisSpatialRange_ = value; }
+        const std::function<bool(const AmapVectorFeature&)>& GetFeatureFilter() const
+        {
+            return featureFilter_;
+        }
+        // 在合并线程、空间过滤前调用；不改变可复用的原始 PBF。
+        void SetFeatureFilter(const std::function<bool(const AmapVectorFeature&)>& value)
+        {
+            featureFilter_ = value;
+        }
+        const GisProcessingProgressCallback& GetProcessingProgressCallback() const
+        {
+            return processingProgressCallback_;
+        }
+        void SetProcessingProgressCallback(const GisProcessingProgressCallback& value)
+        {
+            processingProgressCallback_ = value;
+        }
 
     protected:
         GisSpatialRange gisSpatialRange_;
+        std::function<bool(const AmapVectorFeature&)> featureFilter_;
+        GisProcessingProgressCallback processingProgressCallback_;
     };
 
     struct AmapVectorDownloadResult

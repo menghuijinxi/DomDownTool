@@ -351,9 +351,10 @@ namespace
         return true;
     }
 
-    void MergeDecodedData(
-        const DownTool::AmapVectorDecodedData& source,
-        DownTool::AmapVectorDecodedData& target)
+    bool MergeDecodedData(
+        DownTool::AmapVectorDecodedData& source,
+        DownTool::AmapVectorDecodedData& target,
+        const DownTool::AmapVectorDownloadOptions& options)
     {
         if (target.version.empty())
         {
@@ -361,10 +362,19 @@ namespace
         }
         target.status = target.status || source.status;
         target.packetCount += source.packetCount;
-        target.features.insert(
-            target.features.end(),
-            source.features.begin(),
-            source.features.end());
+        for (auto& feature : source.features)
+        {
+            if (options.cancellationRequested && options.cancellationRequested())
+            {
+                return false;
+            }
+            if (!options.GetFeatureFilter() || options.GetFeatureFilter()(feature))
+            {
+                target.features.push_back(std::move(feature));
+            }
+        }
+        source.features = std::vector<DownTool::AmapVectorFeature>{};
+        return true;
     }
 
     struct AmapVectorDownloadTask
@@ -679,34 +689,66 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadTiles
     }
 
     AmapVectorDecodedData decodedData;
-    for (const AmapVectorDownloadTaskResult& taskResult : taskResults)
+    try
     {
-        if (options.cancellationRequested && options.cancellationRequested())
+        if (!options.GetFeatureFilter())
         {
-            result.error = "高德 GIS 矢量任务已取消。";
-            return result;
+            size_t featureCount = 0;
+            for (const auto& taskResult : taskResults)
+            {
+                featureCount += taskResult.decodedData.features.size();
+            }
+            decodedData.features.reserve(featureCount);
         }
-        if (!taskResult.success)
+        for (size_t taskIndex = 0; taskIndex < taskResults.size(); ++taskIndex)
         {
-            result.error = taskResult.error.empty() ? "高德 GIS 矢量任务失败。" :
-                taskResult.error;
-            return result;
+            if (options.GetProcessingProgressCallback())
+            {
+                options.GetProcessingProgressCallback()(
+                    {GisProcessingStage::Merge, taskIndex, taskResults.size()});
+            }
+            auto& taskResult = taskResults[taskIndex];
+            if (!taskResult.success)
+            {
+                result.error = taskResult.error.empty() ? "高德 GIS 矢量任务失败。" :
+                    taskResult.error;
+                return result;
+            }
+            if (taskResult.cacheHit)
+            {
+                result.cachedPacketCount += taskResult.decodedData.packetCount;
+                ++result.cachedTaskCount;
+            }
+            else
+            {
+                ++result.downloadedTaskCount;
+            }
+            if (!MergeDecodedData(taskResult.decodedData, decodedData, options))
+            {
+                result.error = "高德 GIS 矢量任务已取消。";
+                return result;
+            }
         }
-        if (taskResult.cacheHit)
+        if (options.GetProcessingProgressCallback())
         {
-            result.cachedPacketCount += taskResult.decodedData.packetCount;
-            ++result.cachedTaskCount;
+            options.GetProcessingProgressCallback()(
+                {GisProcessingStage::Merge, taskResults.size(), taskResults.size()});
         }
-        else
-        {
-            ++result.downloadedTaskCount;
-        }
-        MergeDecodedData(taskResult.decodedData, decodedData);
+    }
+    catch (const std::exception& exception)
+    {
+        result.error = "高德 GIS 要素合并失败：" + std::string(exception.what());
+        return result;
+    }
+    catch (...)
+    {
+        result.error = "高德 GIS 要素合并发生未知异常。";
+        return result;
     }
 
     if (!ApplyGisSpatialFilter(
             decodedData, options.GetGisSpatialRange(), result.error,
-            options.cancellationRequested))
+            options.cancellationRequested, options.GetProcessingProgressCallback()))
     {
         return result;
     }

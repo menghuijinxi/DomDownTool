@@ -464,6 +464,61 @@ namespace
             return false;
         }
         downloadOptions.SetGisSpatialRange({});
+        DownTool::GisSpatialRange includedRange;
+        includedRange.SetIncludedPolygons({{
+            {centerWgs84.lon - 1., centerWgs84.lat - 1.},
+            {centerWgs84.lon + 1., centerWgs84.lat - 1.},
+            {centerWgs84.lon + 1., centerWgs84.lat + 1.},
+            {centerWgs84.lon - 1., centerWgs84.lat + 1.}}});
+        downloadOptions.SetGisSpatialRange(includedRange);
+        downloadOptions.SetFeatureFilter([](const DownTool::AmapVectorFeature& feature)
+        {
+            return feature.layerName == "building" && feature.hasHeight && feature.height != 0;
+        });
+        std::vector<DownTool::GisProcessingProgress> processingProgress;
+        downloadOptions.SetProcessingProgressCallback(
+            [&](const DownTool::GisProcessingProgress& progress)
+            {
+                processingProgress.push_back(progress);
+            });
+        const auto buildings = DownTool::AmapVectorDownloader().Download(downloadOptions);
+        if (!Require(buildings.success && buildings.cachedTaskCount == 2 &&
+                         buildings.featureCount == 2 &&
+                         buildings.decodedData.features.front().buildingIds == "unit-building",
+                     "空间处理前建筑筛选丢失要素或属性") ||
+            !Require(!processingProgress.empty() &&
+                         processingProgress.front().GetStage() ==
+                             DownTool::GisProcessingStage::Merge &&
+                         processingProgress.back().GetStage() ==
+                             DownTool::GisProcessingStage::Filter &&
+                         processingProgress.back().GetTotal() == 2,
+                     "下载后的处理进度未上报，或无关图层仍进入空间处理"))
+        {
+            return false;
+        }
+        for (const auto cancelStage : {
+                 DownTool::GisProcessingStage::Merge, DownTool::GisProcessingStage::BuildIndex,
+                 DownTool::GisProcessingStage::Query, DownTool::GisProcessingStage::Filter})
+        {
+            bool cancel = false;
+            downloadOptions.SetProcessingProgressCallback(
+                [&](const DownTool::GisProcessingProgress& progress)
+                {
+                    cancel = progress.GetStage() == cancelStage;
+                });
+            downloadOptions.cancellationRequested = [&] { return cancel; };
+            const auto canceled = DownTool::AmapVectorDownloader().Download(downloadOptions);
+            if (!Require(!canceled.success && !canceled.error.empty() &&
+                             canceled.decodedData.features.empty(),
+                         "PBF 完成后的合并、索引、查询或过滤阶段未响应取消"))
+            {
+                return false;
+            }
+            downloadOptions.cancellationRequested = {};
+        }
+        downloadOptions.SetProcessingProgressCallback({});
+        downloadOptions.SetFeatureFilter({});
+        downloadOptions.SetGisSpatialRange({});
         const auto reusedDownload = DownTool::AmapVectorDownloader().Download(downloadOptions);
         if (!Require(reusedDownload.success && reusedDownload.cachedTaskCount == 2 &&
                 reusedDownload.featureCount == 6,

@@ -407,6 +407,10 @@ add_domdown_test(KmlDownloadRangeTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/KmlDownloadRangeTest.cpp)
 add_domdown_test(DownloadRegionTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/DownloadRegionTest.cpp)
+add_domdown_test(GisSpatialFilterTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/GisSpatialFilterTest.cpp)
+add_domdown_test(GisSpatialIndexTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/GisSpatialIndexTest.cpp)
 
 if(DOMDOWNTOOL_BUILD_PREVIEW)
   get_target_property(DOMDOWNTOOL_PREVIEW_TEST_SOURCES DomDownToolPreview SOURCES)

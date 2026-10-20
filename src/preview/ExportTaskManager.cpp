@@ -843,6 +843,12 @@ double ProgressRatio(uint64_t completed, uint64_t total)
     return std::clamp(static_cast<double>(completed) / static_cast<double>(total), 0., 1.);
 }
 
+double GisProcessingRatio(const DownTool::GisProcessingProgress& progress)
+{
+    return (static_cast<int>(progress.GetStage()) +
+            ProgressRatio(progress.GetCompleted(), progress.GetTotal())) / 4.;
+}
+
 double DownToolPhaseProgress(const DownTool::DownToolProgress& progress)
 {
     const double phaseRatio = ProgressRatio(progress.completed, progress.total);
@@ -1480,10 +1486,7 @@ DownTool::AmapVectorDecodedData FilterBuildingFbxData(
         {
             break;
         }
-        if (feature.geometryType == DownTool::AmapVectorGeometryType::Polygon &&
-            feature.hasHeight && feature.height != 0 &&
-            DownTool::ClassifyAmapVectorFeature(feature) ==
-                DownTool::AmapVectorRenderCategory::Building)
+        if (DownTool::IsAmapVectorBuildingWithHeight(feature))
         {
             filteredData.features.push_back(feature);
         }
@@ -2636,6 +2639,18 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
     options.vectorDownload.includeLabels =
         categories.contains(DownTool::AmapVectorRenderCategory::Point);
     options.vectorDownload.maxConcurrency = 0;
+    options.vectorDownload.SetProcessingProgressCallback(
+        [this, taskId = queuedExport.taskId, stepIndex, stepCount, groupName](
+            const DownTool::GisProcessingProgress& progress)
+        {
+            const double processing = GisProcessingRatio(progress);
+            UpdateProgress(taskId,
+                std::string(DownTool::GisProcessingStageName(progress.GetStage())) + " · " +
+                    groupName,
+                (static_cast<double>(stepIndex) + 0.2 + processing * 0.1) /
+                    static_cast<double>(stepCount),
+                progress.GetCompleted(), progress.GetTotal());
+        });
     options.vectorDownload.cancellationRequested =
         [this] { return IsCancellationRequested(); };
     options.vectorDownload.progressCallback =
@@ -2643,7 +2658,7 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
             const DownTool::AmapVectorDownloadProgress& progress)
         {
             const double subProgress = ProgressRatio(
-                progress.completedTaskCount, progress.totalTaskCount) * 0.3;
+                progress.completedTaskCount, progress.totalTaskCount) * 0.2;
             UpdateProgress(taskId, "下载 GIS PBF · " + groupName,
                            (static_cast<double>(stepIndex) + subProgress) /
                                static_cast<double>(stepCount),
@@ -2910,6 +2925,23 @@ bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
     options.includeBaseLayers = true;
     options.includeLabels = false;
     options.maxConcurrency = 0;
+    options.SetFeatureFilter(
+        [selected = IsGisCategorySelected(
+             configuration.gisCategories, DownTool::AmapVectorRenderCategory::Building)](
+            const DownTool::AmapVectorFeature& feature)
+        {
+            return selected && DownTool::IsAmapVectorBuildingWithHeight(feature);
+        });
+    options.SetProcessingProgressCallback(
+        [this, taskId = queuedExport.taskId, stepIndex, stepCount](
+            const DownTool::GisProcessingProgress& progress)
+        {
+            const double processing = GisProcessingRatio(progress);
+            UpdateProgress(taskId, DownTool::GisProcessingStageName(progress.GetStage()),
+                (static_cast<double>(stepIndex) + 0.7 + processing * 0.12) /
+                    static_cast<double>(stepCount),
+                progress.GetCompleted(), progress.GetTotal());
+        });
     options.cancellationRequested = [this] { return IsCancellationRequested(); };
     options.progressCallback =
         [this, taskId = queuedExport.taskId, stepIndex, stepCount](
@@ -2938,8 +2970,7 @@ bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
 
     const std::function<bool()> cancellationRequested =
         [this] { return IsCancellationRequested(); };
-    const DownTool::AmapVectorDecodedData buildingData = FilterBuildingFbxData(
-        downloadResult.decodedData, configuration.gisCategories, cancellationRequested);
+    const DownTool::AmapVectorDecodedData& buildingData = downloadResult.decodedData;
     if (IsCancellationRequested())
     {
         return false;
@@ -3025,6 +3056,16 @@ bool DomDownToolPreview::ExportTaskManager::RunGeoJsonExport(
         configuration.gisCategories.contains(DownTool::AmapVectorRenderCategory::Point));
     options.maxConcurrency = 0;
     options.cancellationRequested = [this] { return IsCancellationRequested(); };
+    options.SetProcessingProgressCallback(
+        [this, taskId = queuedExport.taskId, stepIndex, stepCount](
+            const DownTool::GisProcessingProgress& progress)
+        {
+            const double processing = GisProcessingRatio(progress);
+            UpdateProgress(taskId, DownTool::GisProcessingStageName(progress.GetStage()),
+                (static_cast<double>(stepIndex) + 0.7 + processing * 0.25) /
+                    static_cast<double>(stepCount),
+                progress.GetCompleted(), progress.GetTotal());
+        });
     options.progressCallback =
         [this, taskId = queuedExport.taskId, stepIndex, stepCount](
             const DownTool::AmapVectorDownloadProgress& progress)
@@ -3032,7 +3073,7 @@ bool DomDownToolPreview::ExportTaskManager::RunGeoJsonExport(
             UpdateProgress(
                 taskId, "下载 GIS GeoJSON",
                 (static_cast<double>(stepIndex) +
-                 ProgressRatio(progress.completedTaskCount, progress.totalTaskCount)) /
+                 ProgressRatio(progress.completedTaskCount, progress.totalTaskCount) * 0.7) /
                     static_cast<double>(stepCount),
                 progress.completedTaskCount, progress.totalTaskCount);
         };
