@@ -12,8 +12,11 @@ namespace DownTool
 enum class DownloadRegionRole
 {
     Include,
-    ExcludeGis
+    ExcludeGis,
+    ExcludeTerrain
 };
+
+[[nodiscard]] const char* DownloadRegionRoleName(DownloadRegionRole role);
 
 class DownloadRegion
 {

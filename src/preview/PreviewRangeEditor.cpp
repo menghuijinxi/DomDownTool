@@ -1,6 +1,7 @@
 #include "preview/PreviewController.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdlib>
 #include <string>
@@ -93,7 +94,7 @@ void DomDownToolPreview::PreviewController::SyncRangeEditor(skui::Runtime& runti
     renderer_.SetDownloadRegions(rangeEditor_.GetRegions(),
                                  rangePanelOpen_ ? rangeEditor_.GetSelectedId() : std::string{});
     renderer_.SetDraftRegion(rangeDraft_,
-                             rangeDrawRole_ == DownTool::DownloadRegionRole::ExcludeGis,
+                             rangeDrawRole_ != DownTool::DownloadRegionRole::Include,
                              rangeDrawShape_ == RangeDrawShape::Rectangle);
     UpdateRangeEditorUi(runtime);
     requestRedraw();
@@ -152,6 +153,9 @@ void DomDownToolPreview::PreviewController::UpdateRangeEditorUi(skui::Runtime& r
     runtime.setAttributeById("range-role-exclude", "aria-pressed",
                              rangeDrawRole_ == DownTool::DownloadRegionRole::ExcludeGis ? "true"
                                                                                         : "false");
+    runtime.setAttributeById("range-role-terrain", "aria-pressed",
+                             rangeDrawRole_ == DownTool::DownloadRegionRole::ExcludeTerrain
+                                 ? "true" : "false");
     runtime.setAttributeById("range-tool-select", "aria-pressed",
                              rangeDrawShape_ == RangeDrawShape::Select ? "true" : "false");
     runtime.setAttributeById("range-tool-polygon", "aria-pressed",
@@ -166,25 +170,38 @@ void DomDownToolPreview::PreviewController::UpdateRangeEditorUi(skui::Runtime& r
                                                       DownTool::DownloadRegionRole::Include);
     const auto excludes = DownTool::GetRegionPolygons(rangeEditor_.GetRegions(),
                                                       DownTool::DownloadRegionRole::ExcludeGis);
+    const auto terrainExcludes = DownTool::GetRegionPolygons(
+        rangeEditor_.GetRegions(), DownTool::DownloadRegionRole::ExcludeTerrain);
     runtime.setTextById(
         "range-summary",
-        fmt::format("下载区 {} · GIS 排除区 {}", custom ? includes.size() : 0, excludes.size()));
+        fmt::format("下载区 {} · GIS 排除区 {} · 底板排除区 {}",
+                    custom ? includes.size() : 0, excludes.size(), terrainExcludes.size()));
     runtime.setTextById("preview-kml-name",
-                        fmt::format("下载区 {} · 排除区 {}", includes.size(), excludes.size()));
+                        fmt::format("下载区 {} · 排除区 {}", includes.size(),
+                                    excludes.size() + terrainExcludes.size()));
     runtime.setTextById("range-editor-message", rangeEditorMessage_);
     const auto* selected = rangeEditor_.GetSelectedRegion();
+    SetControlEnabled(runtime, "range-copy-terrain",
+                      selected && selected->GetRole() == DownTool::DownloadRegionRole::Include);
+    runtime.setVisibleById("range-copy-terrain", selected != nullptr);
     runtime.setVisibleById("range-selected-fields", selected != nullptr);
     if (selected)
     {
         runtime.setValueById("range-region-name", selected->GetName());
     }
+    const auto squareRadius = rangeEditor_.GetSelectedSquareRadiusMeters();
+    runtime.setVisibleById("range-radius-field", custom && squareRadius.has_value());
+    if (squareRadius && !rangeRadiusInput_)
+    {
+        runtime.setValueById("range-region-radius", fmt::format("{:.3f}", *squareRadius));
+    }
     std::string list = "<div id=\"range-region-list\">";
     for (const auto role :
-         {DownTool::DownloadRegionRole::Include, DownTool::DownloadRegionRole::ExcludeGis})
+         {DownTool::DownloadRegionRole::Include, DownTool::DownloadRegionRole::ExcludeGis,
+          DownTool::DownloadRegionRole::ExcludeTerrain})
     {
-        list += role == DownTool::DownloadRegionRole::Include
-                    ? "<div class=\"range-section-label\">下载区域</div>"
-                    : "<div class=\"range-section-label\">GIS 排除区域</div>";
+        list += fmt::format("<div class=\"range-section-label\">{}</div>",
+                            DownTool::DownloadRegionRoleName(role));
         for (const auto& region : rangeEditor_.GetRegions())
         {
             if (region.GetRole() != role)
@@ -229,8 +246,32 @@ void DomDownToolPreview::PreviewController::CompleteRangeDrawing(skui::Runtime& 
     SyncRangeEditor(runtime);
 }
 
+void DomDownToolPreview::PreviewController::CommitRangeRadiusInput(skui::Runtime& runtime)
+{
+    if (!rangeRadiusInput_)
+    {
+        return;
+    }
+    const std::string value = std::move(*rangeRadiusInput_);
+    rangeRadiusInput_.reset();
+    rangeEditorMessage_.clear();
+    double radius = 0.;
+    const auto [end, parseError] =
+        std::from_chars(value.data(), value.data() + value.size(), radius);
+    if (parseError != std::errc{} || end != value.data() + value.size())
+    {
+        rangeEditorMessage_ = "半径必须是大于 0 的有效数值。";
+    }
+    else
+    {
+        rangeEditor_.SetSelectedSquareRadiusMeters(radius, rangeEditorMessage_);
+    }
+    SyncRangeEditor(runtime);
+}
+
 void DomDownToolPreview::PreviewController::BeginExportRangeEditing(skui::Runtime& runtime)
 {
+    rangeRadiusInput_.reset();
     rangePreviewBackup_ = rangeEditor_.GetRegions();
     rangePreviewModeBackup_ = previewRangeMode_;
     rangePreviewRadiusBackup_ = previewRadiusValue_;
@@ -260,6 +301,7 @@ void DomDownToolPreview::PreviewController::BeginExportRangeEditing(skui::Runtim
 void DomDownToolPreview::PreviewController::FinishExportRangeEditing(skui::Runtime& runtime,
                                                                      bool apply)
 {
+    rangeRadiusInput_.reset();
     if (apply && !rangeDraft_.empty())
     {
         rangeEditorMessage_ = "请先完成或取消正在绘制的区域。";
@@ -276,8 +318,8 @@ void DomDownToolPreview::PreviewController::FinishExportRangeEditing(skui::Runti
         exportRadiusValue_ = previewRadiusValue_;
         if (exportRangeMode_ == ExportRangeMode::CenterRadius)
         {
-            exportLongitudeValue_ = fmt::format("{:.6f}", renderer_.center().lon);
-            exportLatitudeValue_ = fmt::format("{:.6f}", renderer_.center().lat);
+            exportLongitudeValue_ = fmt::format("{}", renderer_.center().lon);
+            exportLatitudeValue_ = fmt::format("{}", renderer_.center().lat);
         }
         runtime.setValueById("export-lon", exportLongitudeValue_);
         runtime.setValueById("export-lat", exportLatitudeValue_);
@@ -305,10 +347,26 @@ bool DomDownToolPreview::PreviewController::HandleRangeEditorEvent(skui::Runtime
 {
     if (event.type == skui::ElementEventType::MouseDown && !event.id.empty())
     {
+        if (event.id != "range-region-radius")
+        {
+            CommitRangeRadiusInput(runtime);
+        }
         rangeMapKeyboardActive_ = false;
     }
     const bool click = event.type == skui::ElementEventType::Click;
     const bool change = event.type == skui::ElementEventType::Change;
+    if (event.id == "range-region-radius" && event.type == skui::ElementEventType::Input)
+    {
+        rangeRadiusInput_ = event.value;
+        return true;
+    }
+    if (event.id == "range-region-radius" &&
+        (change || (event.type == skui::ElementEventType::KeyDown && event.key == VK_RETURN)))
+    {
+        rangeRadiusInput_ = event.value;
+        CommitRangeRadiusInput(runtime);
+        return true;
+    }
     if (event.id == "export-edit-range" && click)
     {
         BeginExportRangeEditing(runtime);
@@ -364,11 +422,14 @@ bool DomDownToolPreview::PreviewController::HandleRangeEditorEvent(skui::Runtime
     {
         ConvertRadiusToRegion(runtime);
     }
-    else if (event.id == "range-role-include" || event.id == "range-role-exclude")
+    else if (event.id == "range-role-include" || event.id == "range-role-exclude" ||
+             event.id == "range-role-terrain")
     {
         rangeDrawRole_ = event.id == "range-role-include"
                              ? DownTool::DownloadRegionRole::Include
-                             : DownTool::DownloadRegionRole::ExcludeGis;
+                             : event.id == "range-role-exclude"
+                                   ? DownTool::DownloadRegionRole::ExcludeGis
+                                   : DownTool::DownloadRegionRole::ExcludeTerrain;
         rangeDraft_.clear();
         rangeRectangleAnchor_.reset();
     }
@@ -419,6 +480,10 @@ bool DomDownToolPreview::PreviewController::HandleRangeEditorEvent(skui::Runtime
     {
         rangeEditor_.RemoveSelected(rangeEditorMessage_);
     }
+    else if (event.id == "range-copy-terrain")
+    {
+        rangeEditor_.CopySelectedAsTerrainExclusion(rangeEditorMessage_);
+    }
     else if (event.id == "range-region-name" && (change || rename))
     {
         rangeEditor_.SetSelectedName(event.value, rangeEditorMessage_);
@@ -451,6 +516,11 @@ bool DomDownToolPreview::PreviewController::HandleRangeEditorMessage(HWND window
     if (!rangePanelOpen_)
     {
         return false;
+    }
+    if (message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN ||
+        message == WM_MBUTTONDOWN || message == WM_KILLFOCUS)
+    {
+        CommitRangeRadiusInput(runtime);
     }
     if (message == WM_KILLFOCUS || message == WM_CANCELMODE || message == WM_CAPTURECHANGED)
     {
@@ -575,8 +645,8 @@ bool DomDownToolPreview::PreviewController::HandleRangeEditorMessage(HWND window
             {
                 rangeDragVertices_[*rangeDraggingVertex_] = *coordinate;
                 renderer_.SetDraftRegion(rangeDragVertices_,
-                                         rangeEditor_.GetSelectedRegion()->GetRole() ==
-                                             DownTool::DownloadRegionRole::ExcludeGis,
+                                         rangeEditor_.GetSelectedRegion()->GetRole() !=
+                                             DownTool::DownloadRegionRole::Include,
                                          true);
                 requestRedraw();
             }
@@ -703,7 +773,7 @@ bool DomDownToolPreview::PreviewController::HandleRangeEditorMessage(HWND window
                            *coordinate,
                            {anchor.lon, coordinate->lat}};
             renderer_.SetDraftRegion(
-                rangeDraft_, rangeDrawRole_ == DownTool::DownloadRegionRole::ExcludeGis, true);
+                rangeDraft_, rangeDrawRole_ != DownTool::DownloadRegionRole::Include, true);
             requestRedraw();
             return true;
         }
@@ -712,7 +782,7 @@ bool DomDownToolPreview::PreviewController::HandleRangeEditorMessage(HWND window
             auto draft = rangeDraft_;
             draft.push_back(*coordinate);
             renderer_.SetDraftRegion(
-                draft, rangeDrawRole_ == DownTool::DownloadRegionRole::ExcludeGis, false);
+                draft, rangeDrawRole_ != DownTool::DownloadRegionRole::Include, false);
             requestRedraw();
             return true;
         }

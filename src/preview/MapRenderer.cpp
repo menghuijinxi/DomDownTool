@@ -1117,7 +1117,7 @@ void DomDownToolPreview::MapRenderer::drawExportBounds(SkCanvas& canvas) const
         for (const auto& region : downloadRegions_)
         {
             if (!region.GetEnabled() ||
-                region.GetRole() != DownTool::DownloadRegionRole::ExcludeGis)
+                region.GetRole() == DownTool::DownloadRegionRole::Include)
             {
                 continue;
             }
@@ -1237,8 +1237,13 @@ void DomDownToolPreview::MapRenderer::drawExportBounds(SkCanvas& canvas) const
 void DomDownToolPreview::MapRenderer::drawRangeEditor(SkCanvas& canvas) const
 {
     const auto drawRegion = [&](const DownTool::Wgs84Ring& vertices,
-                               bool excluded, bool selected, bool closed)
+                               DownTool::DownloadRegionRole role, bool selected, bool closed)
     {
+        const bool excluded = role != DownTool::DownloadRegionRole::Include;
+        const SkColor color = role == DownTool::DownloadRegionRole::ExcludeTerrain
+                                  ? SkColorSetRGB(99, 184, 239)
+                                  : excluded ? SkColorSetRGB(243, 112, 112)
+                                             : SkColorSetRGB(255, 204, 74);
         SkPathBuilder builder;
         std::vector<ViewportPoint> points;
         for (const auto& vertex : vertices)
@@ -1264,8 +1269,7 @@ void DomDownToolPreview::MapRenderer::drawRangeEditor(SkCanvas& canvas) const
         SkPaint stroke;
         stroke.setAntiAlias(true);
         stroke.setStyle(SkPaint::kStroke_Style);
-        stroke.setColor(excluded ? SkColorSetRGB(243, 112, 112) :
-            SkColorSetRGB(255, 204, 74));
+        stroke.setColor(color);
         stroke.setStrokeWidth(selected ? 3.F : 2.F);
         if (excluded)
         {
@@ -1276,7 +1280,7 @@ void DomDownToolPreview::MapRenderer::drawRangeEditor(SkCanvas& canvas) const
                 canvas.save();
                 canvas.clipPath(path, true);
                 SkPaint hatch;
-                hatch.setColor(SkColorSetARGB(72, 243, 112, 112));
+                hatch.setColor(SkColorSetA(color, 72));
                 hatch.setStrokeWidth(1.F);
                 const SkRect bounds = canvas.getLocalClipBounds();
                 for (float x = bounds.left() - bounds.height(); x < bounds.right(); x += 12.F)
@@ -1305,15 +1309,17 @@ void DomDownToolPreview::MapRenderer::drawRangeEditor(SkCanvas& canvas) const
         if (region.GetEnabled())
         {
             const bool selected = region.GetId() == selectedRegionId_;
-            const bool excluded = region.GetRole() == DownTool::DownloadRegionRole::ExcludeGis;
+            const bool excluded = region.GetRole() != DownTool::DownloadRegionRole::Include;
             if (excluded || selected)
             {
-                drawRegion(region.GetVertices(), excluded, selected, true);
+                drawRegion(region.GetVertices(), region.GetRole(), selected, true);
             }
         }
     }
     if (!draftRegion_.empty())
     {
-        drawRegion(draftRegion_, draftRegionExcluded_, true, draftRegionClosed_);
+        drawRegion(draftRegion_, draftRegionExcluded_ ? DownTool::DownloadRegionRole::ExcludeGis :
+                                                       DownTool::DownloadRegionRole::Include,
+                   true, draftRegionClosed_);
     }
 }

@@ -1299,6 +1299,9 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
     output << "GIS 排除区数量: " << DownTool::GetRegionPolygons(
         configuration.GetDownloadRegions(), DownTool::DownloadRegionRole::ExcludeGis).size()
            << "\n";
+    output << "底板排除区数量: " << DownTool::GetRegionPolygons(
+        configuration.GetDownloadRegions(), DownTool::DownloadRegionRole::ExcludeTerrain).size()
+           << "\n";
     output
            << "层级: " << configuration.zoom << "\n"
            << "卫星图来源: " << FormatSourceNames(configuration) << "\n"
@@ -2377,6 +2380,8 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteDownloaderToRoot(
         configuration.fbxTerrainSampleRateMeters);
     downloader->SetFbxTerrainMaximumTriangles(configuration.GetTerrainMaximumTriangles());
     downloader->SetFbxDistanceLod(configuration.GetDistanceLod());
+    downloader->SetFbxExcludedPolygonsWgs84(DownTool::GetRegionPolygons(
+        configuration.GetDownloadRegions(), DownTool::DownloadRegionRole::ExcludeTerrain));
     ConfigureFbxElevation(*downloader, elevationData);
     downloader->SetProgressCallback(
         [this, taskId = queuedExport.taskId, stepIndex, stepCount, options](
@@ -2730,6 +2735,8 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
         configuration.fbxTerrainSampleRateMeters);
     downloader.SetFbxTerrainMaximumTriangles(configuration.GetTerrainMaximumTriangles());
     downloader.SetFbxDistanceLod(configuration.GetDistanceLod());
+    downloader.SetFbxExcludedPolygonsWgs84(DownTool::GetRegionPolygons(
+        configuration.GetDownloadRegions(), DownTool::DownloadRegionRole::ExcludeTerrain));
     ConfigureFbxElevation(downloader, elevationData);
     downloader.SetMaxDownQueue(std::max(1u, std::thread::hardware_concurrency()));
     downloader.SetProgressCallback(

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,14 +17,17 @@ class DownloadRangeEditor
     const std::string& GetSelectedId() const { return selectedId_; }
     void SetSelectedId(const std::string& value) { selectedId_ = value; }
     const DownTool::DownloadRegion* GetSelectedRegion() const;
+    std::optional<double> GetSelectedSquareRadiusMeters() const;
     bool GetCanUndo() const { return !undo_.empty(); }
     bool GetCanRedo() const { return !redo_.empty(); }
 
     bool AddRegion(const DownTool::Wgs84Ring& vertices, DownTool::DownloadRegionRole role,
                    std::string& error);
+    bool CopySelectedAsTerrainExclusion(std::string& error);
     bool AppendPolygons(const DownTool::Wgs84Polygons& polygons, const std::string& source,
                         std::string& error);
     bool SetSelectedVertices(const DownTool::Wgs84Ring& vertices, std::string& error);
+    bool SetSelectedSquareRadiusMeters(double radiusMeters, std::string& error);
     bool SetSelectedName(const std::string& name, std::string& error);
     bool SetSelectedEnabled(bool enabled, std::string& error);
     bool RemoveSelected(std::string& error);

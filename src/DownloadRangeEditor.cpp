@@ -1,6 +1,8 @@
 #include "preview/DownloadRangeEditor.h"
 
 #include <algorithm>
+#include <cmath>
+#include <numbers>
 #include <utility>
 
 void DomDownToolPreview::DownloadRangeEditor::SetRegions(const DownTool::DownloadRegions& value)
@@ -16,6 +18,84 @@ const DownTool::DownloadRegion* DomDownToolPreview::DownloadRangeEditor::GetSele
     const auto selected =
         std::ranges::find(regions_, selectedId_, &DownTool::DownloadRegion::GetId);
     return selected == regions_.end() ? nullptr : &*selected;
+}
+
+std::optional<double> DomDownToolPreview::DownloadRangeEditor::GetSelectedSquareRadiusMeters() const
+{
+    const auto* region = GetSelectedRegion();
+    if (!region || region->GetRole() != DownTool::DownloadRegionRole::Include)
+    {
+        return std::nullopt;
+    }
+    const auto& vertices = region->GetVertices();
+    const bool closed = vertices.size() == 5 && vertices.front().lon == vertices.back().lon &&
+                        vertices.front().lat == vertices.back().lat;
+    if (vertices.size() != 4 && !closed)
+    {
+        return std::nullopt;
+    }
+    const auto bounds = DownTool::CalculateGeographicBounds({vertices});
+    if (!bounds || bounds->west >= bounds->east || bounds->south >= bounds->north)
+    {
+        return std::nullopt;
+    }
+    for (const auto& vertex : vertices)
+    {
+        if ((std::abs(vertex.lon - bounds->west) > 1.e-9 &&
+             std::abs(vertex.lon - bounds->east) > 1.e-9) ||
+            (std::abs(vertex.lat - bounds->south) > 1.e-9 &&
+             std::abs(vertex.lat - bounds->north) > 1.e-9))
+        {
+            return std::nullopt;
+        }
+    }
+    const auto center = DownTool::GeographicBoundsCenter(*bounds);
+    const double halfHeight = (bounds->north - bounds->south) * 0.5;
+    const double halfWidth =
+        (bounds->east - bounds->west) * 0.5 * std::cos(center.lat * std::numbers::pi / 180.);
+    if (std::abs(halfWidth - halfHeight) > halfHeight * 0.001)
+    {
+        return std::nullopt;
+    }
+    // 沿用预览方框的球面半边长定义，避免旧半径区域转换后数值跳变。
+    constexpr double kEarthRadiusMeters = 6378137.;
+    return halfHeight * std::numbers::pi / 180. * kEarthRadiusMeters;
+}
+
+bool DomDownToolPreview::DownloadRangeEditor::SetSelectedSquareRadiusMeters(double radiusMeters,
+                                                                            std::string& error)
+{
+    const auto currentRadius = GetSelectedSquareRadiusMeters();
+    if (!currentRadius)
+    {
+        error = "请选择一个正方形下载区域。";
+        return false;
+    }
+    if (!std::isfinite(radiusMeters) || radiusMeters <= 0.)
+    {
+        error = "半径必须是大于 0 的有效数值。";
+        return false;
+    }
+    if (std::abs(radiusMeters - *currentRadius) < 1.e-6)
+    {
+        return true;
+    }
+    auto vertices = GetSelectedRegion()->GetVertices();
+    const auto bounds = DownTool::CalculateGeographicBounds({vertices});
+    const auto center = DownTool::GeographicBoundsCenter(*bounds);
+    const double scale = radiusMeters / *currentRadius;
+    for (auto& vertex : vertices)
+    {
+        vertex.lon = center.lon + (vertex.lon - center.lon) * scale;
+        vertex.lat = center.lat + (vertex.lat - center.lat) * scale;
+        if (!std::isfinite(vertex.lon) || !std::isfinite(vertex.lat) || vertex.lon < -180. ||
+            vertex.lon > 180. || std::abs(vertex.lat) > 85.05112878)
+        {
+            error = "半径过大，区域超出地图支持的经纬度范围。";
+            return false;
+        }
+    }
+    return SetSelectedVertices(vertices, error);
 }
 
 std::string DomDownToolPreview::DownloadRangeEditor::NewId(const DownTool::DownloadRegions& regions)
@@ -54,8 +134,9 @@ bool DomDownToolPreview::DownloadRangeEditor::AddRegion(const DownTool::Wgs84Rin
     DownTool::DownloadRegion region;
     region.SetId(NewId(next));
     const auto count = std::ranges::count(next, role, &DownTool::DownloadRegion::GetRole);
-    region.SetName((role == DownTool::DownloadRegionRole::Include ? "下载区 " : "GIS 排除区 ") +
-                   std::to_string(count + 1));
+    const std::string prefix = role == DownTool::DownloadRegionRole::Include ? "下载区 " :
+        role == DownTool::DownloadRegionRole::ExcludeGis ? "GIS 排除区 " : "底板排除区 ";
+    region.SetName(prefix + std::to_string(count + 1));
     region.SetRole(role);
     region.SetVertices(vertices);
     next.push_back(region);
@@ -65,6 +146,25 @@ bool DomDownToolPreview::DownloadRangeEditor::AddRegion(const DownTool::Wgs84Rin
     }
     selectedId_ = region.GetId();
     return true;
+}
+
+bool DomDownToolPreview::DownloadRangeEditor::CopySelectedAsTerrainExclusion(std::string& error)
+{
+    const auto* selected = GetSelectedRegion();
+    if (!selected || selected->GetRole() != DownTool::DownloadRegionRole::Include)
+    {
+        error = "请选择要复制的下载区域。";
+        return false;
+    }
+    auto next = regions_;
+    auto copy = *selected;
+    copy.SetId(NewId(next));
+    copy.SetName(selected->GetName() + "（底板排除）");
+    copy.SetRole(DownTool::DownloadRegionRole::ExcludeTerrain);
+    copy.SetEnabled(true);
+    next.push_back(std::move(copy));
+    // 保持原下载区选中，随后扩大半径时不会误改刚复制的排除区。
+    return Commit(std::move(next), error);
 }
 
 bool DomDownToolPreview::DownloadRangeEditor::AppendPolygons(

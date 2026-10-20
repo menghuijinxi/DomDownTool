@@ -1451,6 +1451,9 @@ bool ExportGroupedRunner::Run(
                 downloader.SetFbxTerrainSampleRateMeters(component.elevationSampleMeters);
                 downloader.SetFbxTerrainMaximumTriangles(component.GetTerrainMaximumTriangles());
                 downloader.SetFbxDistanceLod(component.GetDistanceLod());
+                downloader.SetFbxExcludedPolygonsWgs84(DownTool::GetRegionPolygons(
+                    queuedExport.configuration.GetDownloadRegions(),
+                    DownTool::DownloadRegionRole::ExcludeTerrain));
                 if (tiles)
                 {
                     downloader.SetTileSize(component.xyzTileSize);

@@ -2772,7 +2772,8 @@
         }
 
         .range-editor-panel button,
-        .range-editor-panel input[type="text"] {
+        .range-editor-panel input[type="text"],
+        .range-editor-panel input[type="number"] {
             min-width: 0;
             height: 30px;
             padding: 0 8px;
@@ -2803,6 +2804,11 @@
 
         .range-mode-controls button {
             flex: 1 1 0;
+        }
+
+        .range-role-controls button {
+            padding: 0 4px;
+            font-size: 12px;
         }
 
         .range-tools {
@@ -2881,6 +2887,26 @@
         #range-region-name {
             flex: 1 1 0;
             width: 100%;
+        }
+
+        #range-radius-field {
+            display: flex;
+            align-items: center;
+            flex: 0 0 auto;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        #range-radius-field span {
+            flex: 0 0 auto;
+            font-size: 12px;
+            color: #bdc8c3;
+        }
+
+        #range-region-radius {
+            flex: 1 1 0;
+            width: 100%;
+            text-align: left;
         }
 
         #range-editor-message {
@@ -3024,11 +3050,13 @@
                 <button id="range-mode-custom" type="button" data-action="edit-download-range"
                         aria-pressed="false">自定义范围</button>
             </div>
-            <div class="range-mode-controls">
+            <div class="range-mode-controls range-role-controls">
                 <button id="range-role-include" type="button" data-action="edit-download-range"
                         aria-pressed="true">下载区域</button>
                 <button id="range-role-exclude" type="button" data-action="edit-download-range"
-                        aria-pressed="false">GIS 排除区域</button>
+                        aria-pressed="false">GIS 排除</button>
+                <button id="range-role-terrain" type="button" data-action="edit-download-range"
+                        aria-pressed="false">底板排除</button>
             </div>
             <div class="range-tools">
                 <button id="range-tool-select" class="range-icon" type="button"
@@ -3062,6 +3090,9 @@
             </div>
             <div id="range-selected-fields" style="display: none">
                 <input id="range-region-name" type="text" aria-label="区域名称">
+                <button id="range-copy-terrain" class="range-icon" type="button"
+                        data-action="edit-download-range" title="复制为底板排除区"
+                        aria-label="复制为底板排除区" disabled>&#10697;</button>
                 <button id="range-delete" class="range-icon" type="button"
                         data-action="edit-download-range"
                         title="删除所选区域" aria-label="删除所选区域" disabled>
@@ -3069,6 +3100,11 @@
                         fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
                 </button>
             </div>
+            <label id="range-radius-field" style="display: none">
+                <span>半径（米）</span>
+                <input id="range-region-radius" type="number" min="0.001" step="100"
+                       aria-label="正方形下载区半径（米）" title="正方形中心到边的距离">
+            </label>
             <div id="range-editor-message" role="alert"></div>
             <div class="range-editor-footer">
                 <button id="range-import-kml" type="button" data-action="edit-download-range">导入 KML</button>

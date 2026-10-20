@@ -1,5 +1,6 @@
 ﻿#include "DownToolBase.h"
 #include "FbxTerrainTriangulator.h"
+#include "FbxTerrainRegionClipper.h"
 
 #include <algorithm>
 #include <array>
@@ -1978,6 +1979,113 @@ namespace
 		return indices;
 	}
 
+    bool ClipFbxTerrainMesh(
+        FbxMeshData& mesh, const FbxTextureOutputInfo& texture,
+        const DownTool::FbxTerrainRegionClipper& clipper, std::string& error)
+    {
+        if (!clipper.IsActive())
+        {
+            return true;
+        }
+        const double west = LongitudeToWebMercatorX(texture.bounds.west);
+        const double south = LatitudeToWebMercatorY(texture.bounds.south);
+        const double width = LongitudeToWebMercatorX(texture.bounds.east) - west;
+        const double height = LatitudeToWebMercatorY(texture.bounds.north) - south;
+        const auto sourceVertices = std::move(mesh.vertices);
+        const auto sourceIndices = std::move(mesh.indices);
+        mesh.vertices.clear();
+        mesh.indices.clear();
+        std::vector<DownTool::FbxTerrainClipPoint> projected;
+        projected.reserve(sourceVertices.size());
+        for (const auto& vertex : sourceVertices)
+        {
+            projected.emplace_back(west + width * vertex.u, south + height * vertex.v);
+        }
+        constexpr uint32_t kUnmapped = std::numeric_limits<uint32_t>::max();
+        std::vector<uint32_t> originalIndices(sourceVertices.size(), kUnmapped);
+        std::map<std::pair<int64_t, int64_t>, uint32_t> intersections;
+        mesh.indices.reserve(sourceIndices.size());
+        const auto appendOriginal = [&](uint32_t index)
+        {
+            auto& mapped = originalIndices[index];
+            if (mapped == kUnmapped)
+            {
+                mapped = static_cast<uint32_t>(mesh.vertices.size());
+                mesh.vertices.push_back(sourceVertices[index]);
+            }
+            mesh.indices.push_back(mapped);
+        };
+        std::vector<DownTool::FbxTerrainClipTriangle> triangles;
+        for (size_t index = 0; index < sourceIndices.size(); index += 3)
+        {
+            const std::array<uint32_t, 3> indices = {
+                sourceIndices[index], sourceIndices[index + 1], sourceIndices[index + 2]};
+            const DownTool::FbxTerrainClipTriangle source = {
+                projected[indices[0]], projected[indices[1]], projected[indices[2]]};
+            if (!clipper.ClipTriangle(source, triangles, error))
+            {
+                return false;
+            }
+            const double firstX = source[1].GetX() - source[0].GetX();
+            const double firstY = source[1].GetY() - source[0].GetY();
+            const double secondX = source[2].GetX() - source[0].GetX();
+            const double secondY = source[2].GetY() - source[0].GetY();
+            const double determinant = firstX * secondY - firstY * secondX;
+            for (const auto& triangle : triangles)
+            {
+                for (const auto& point : triangle)
+                {
+                    bool original = false;
+                    for (size_t corner = 0; corner < 3; ++corner)
+                    {
+                        if (std::abs(point.GetX() - source[corner].GetX()) < 1.1e-5 &&
+                            std::abs(point.GetY() - source[corner].GetY()) < 1.1e-5)
+                        {
+                            appendOriginal(indices[corner]);
+                            original = true;
+                            break;
+                        }
+                    }
+                    if (original)
+                    {
+                        continue;
+                    }
+                    const auto key = std::pair(
+                        static_cast<int64_t>(std::llround(point.GetX() * 100000.)),
+                        static_cast<int64_t>(std::llround(point.GetY() * 100000.)));
+                    if (const auto found = intersections.find(key); found != intersections.end())
+                    {
+                        mesh.indices.push_back(found->second);
+                        continue;
+                    }
+                    const double offsetX = point.GetX() - source[0].GetX();
+                    const double offsetY = point.GetY() - source[0].GetY();
+                    const double secondWeight =
+                        (offsetX * secondY - offsetY * secondX) / determinant;
+                    const double thirdWeight =
+                        (firstX * offsetY - firstY * offsetX) / determinant;
+                    const std::array<double, 3> weights = {
+                        1. - secondWeight - thirdWeight, secondWeight, thirdWeight};
+                    FbxMeshVertex vertex;
+                    for (size_t corner = 0; corner < 3; ++corner)
+                    {
+                        const auto& input = sourceVertices[indices[corner]];
+                        vertex.x += input.x * weights[corner];
+                        vertex.y += input.y * weights[corner];
+                        vertex.z += input.z * weights[corner];
+                        vertex.u += input.u * weights[corner];
+                        vertex.v += input.v * weights[corner];
+                    }
+                    const auto mapped = static_cast<uint32_t>(mesh.vertices.size());
+                    intersections.emplace(key, mapped);
+                    mesh.vertices.push_back(vertex);
+                    mesh.indices.push_back(mapped);
+                }
+            }
+        }
+        return true;
+    }
+
 	using FbxNormalKey = std::array<int64_t, 2>;
 
 	FbxNormalKey MakeFbxNormalKey(const FbxMeshVertex& vertex)
@@ -2596,6 +2704,8 @@ void DownTool::DownToolBase::WaitDown()
 	}
 }
 
+DownTool::DownToolBase::DownToolBase() = default;
+
 DownTool::DownToolBase::~DownToolBase()
 {
 	StopDown();
@@ -2635,6 +2745,10 @@ void DownTool::DownToolBase::StartDown()
 	{
 		return;
 	}
+    if (!PrepareFbxDownloadRange())
+    {
+        return;
+    }
 
 	bDowning = true;
 	DowningCount = 0;
@@ -2805,7 +2919,7 @@ DownTool::DownToolBase::BuildCandidateTileRanges(uint32_t zoom) const
 bool DownTool::DownToolBase::TargetTileIntersectsDownloadRange(
 	const Tile& tile) const
 {
-	if (DownloadPolygonsWgs84.empty())
+	if (DownloadPolygonsWgs84.empty() && !fbxDownloadClipper_)
 	{
 		return true;
 	}
@@ -2828,7 +2942,25 @@ bool DownTool::DownToolBase::TargetTileIntersectsDownloadRange(
 		std::min(northWest.lat, southEast.lat),
 		std::max(northWest.lat, southEast.lat)
 	};
-	return GeographicPolygonsIntersectBounds(DownloadPolygonsWgs84, bounds);
+    if (!GeographicPolygonsIntersectBounds(DownloadPolygonsWgs84, bounds))
+    {
+        return false;
+    }
+    if (fbxDownloadClipper_)
+    {
+        bool visible = false;
+        std::string error;
+        if (!fbxDownloadClipper_->HasVisibleArea(bounds, visible, error))
+        {
+            if (IsStopRequested())
+            {
+                return false;
+            }
+            throw std::runtime_error(error);
+        }
+        return visible;
+    }
+    return true;
 }
 
 void DownTool::DownToolBase::BuildRequestedTilesAtZoom(
@@ -3617,8 +3749,39 @@ bool DownTool::DownToolBase::RepairTilesFromParent(
 	return readyTileCount == batchTileCount;
 }
 
+void DownTool::DownToolBase::SetFbxExcludedPolygonsWgs84(const Wgs84Polygons& value)
+{
+    fbxExcludedPolygonsWgs84_ = value;
+    fbxDownloadClipper_.reset();
+}
+
+bool DownTool::DownToolBase::PrepareFbxDownloadRange()
+{
+    fbxDownloadClipper_.reset();
+    // 只有纯底板导出可跳过内圈影像；XYZ、大图等其他产物仍使用完整下载范围。
+    if (!PostProcessFbxEnabled || PostProcessEnabled || PostProcessMaxZoomOnlyEnabled ||
+        PostProcessMergedImageEnabled || fbxExcludedPolygonsWgs84_.empty())
+    {
+        return true;
+    }
+    auto clipper = std::make_unique<FbxTerrainRegionClipper>();
+    std::string error;
+    if (!clipper->Initialize({}, fbxExcludedPolygonsWgs84_, error,
+                             [this] { return IsStopRequested(); }))
+    {
+        fmt::print("底板下载范围准备失败：{}\n", error);
+        return false;
+    }
+    fbxDownloadClipper_ = std::move(clipper);
+    return true;
+}
+
 void DownTool::DownToolBase::RunPostProcess()
 {
+    if (!PrepareFbxDownloadRange())
+    {
+        return;
+    }
 	const auto postProcessStartTime = std::chrono::steady_clock::now();
 	std::vector<Tile> targetTiles;
 	BuildRequestedTiles(targetTiles);
@@ -4420,6 +4583,14 @@ bool DownTool::DownToolBase::GeneratePostProcessMergedImage(
 
 bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailable) const
 {
+    FbxTerrainRegionClipper regionClipper;
+    std::string regionError;
+    if (!regionClipper.Initialize(DownloadPolygonsWgs84, fbxExcludedPolygonsWgs84_,
+                                 regionError, [this] { return IsStopRequested(); }))
+    {
+        fmt::print("FBX 导出失败：{}\n", regionError);
+        return false;
+    }
     const std::string distanceError = fbxDistanceLod_.Validate();
     if (!distanceError.empty())
     {
@@ -4590,6 +4761,16 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 			{
 				continue;
 			}
+            bool visible = false;
+            if (!regionClipper.HasVisibleArea(textureGeographicBounds, visible, regionError))
+            {
+                fmt::print("FBX 导出失败：{}\n", regionError);
+                return false;
+            }
+            if (!visible)
+            {
+                continue;
+            }
 
 			const double centerMercatorX =
 				(LongitudeToWebMercatorX(northWestLonLat.lon) +
@@ -4858,6 +5039,15 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 			{
 				return std::vector<FbxMeshData>{};
 			}
+            if (!ClipFbxTerrainMesh(meshData, textureInfo, regionClipper, regionError))
+            {
+                fmt::print("FBX 导出失败：{}\n", regionError);
+                return std::vector<FbxMeshData>{};
+            }
+            if (meshData.indices.empty())
+            {
+                continue;
+            }
 			meshDatas.push_back(std::move(meshData));
 		}
 		AssignFbxMeshNormals(meshDatas);

@@ -157,9 +157,6 @@ class PreviewController
                             const std::filesystem::path& taskRoot,
                             std::string title);
 
-    void InitializeExportDraft(
-        skui::Runtime& runtime, const ExportConfiguration* configuration = nullptr);
-
     void UpdateExportUi(skui::Runtime& runtime);
 
     void ResetExportComposer(const ExportConfiguration* configuration);
@@ -191,9 +188,6 @@ class PreviewController
     [[nodiscard]] bool hasSelectedBuildingExportGroup() const;
 
     void SubmitExport(skui::Runtime& runtime);
-
-    [[nodiscard]] std::optional<ExportConfiguration> BuildExportConfiguration(
-        std::string& error) const;
 
     void selectGisColorCategory(GisOverlayCategory category);
 
@@ -260,6 +254,10 @@ class PreviewController
     void requestRedraw() const;
 
 protected:
+    void InitializeExportDraft(
+        skui::Runtime& runtime, const ExportConfiguration* configuration = nullptr);
+    [[nodiscard]] std::optional<ExportConfiguration> BuildExportConfiguration(
+        std::string& error) const;
     bool HandleRangeEditorEvent(skui::Runtime& runtime, const skui::ElementEvent& event);
     bool HandleRangeEditorMessage(
         HWND window, UINT message, WPARAM wParam, LPARAM lParam, skui::Runtime& runtime);
@@ -270,6 +268,7 @@ protected:
     void CompleteRangeDrawing(skui::Runtime& runtime);
     void FocusDownloadRegion(const DownTool::DownloadRegion& region);
     bool ConvertRadiusToRegion(skui::Runtime& runtime);
+    void CommitRangeRadiusInput(skui::Runtime& runtime);
 
 private:
     std::atomic<HWND> window_{nullptr};
@@ -434,6 +433,7 @@ protected:
     bool rangePanning_ = false;
     POINT rangePanPoint_{};
     std::string rangeEditorMessage_;
+    std::optional<std::string> rangeRadiusInput_;
     std::string lastRangeListHtml_;
     DownTool::DownloadRegions rangePreviewBackup_;
     ExportRangeMode rangePreviewModeBackup_ = ExportRangeMode::CenterRadius;

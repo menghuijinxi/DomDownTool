@@ -874,12 +874,113 @@ namespace
         return true;
     }
 
+    bool RequireTerrainExclusionMesh(const std::filesystem::path& testRoot)
+    {
+        const auto root = testRoot / "terrain-exclusion";
+        postprocess_test::TestPostProcessDown tool;
+        tool.Configure(root / "cache", root / "XYZ", 15, 32,
+            DownTool::Tile(16384, 16384, 15), DownTool::Tile(16385, 16385, 15),
+            {0.005, -0.005});
+        tool.SetPostProcessEnabled(true);
+        tool.SetPostProcessMaxZoomOnlyEnabled(true);
+        tool.SetPostProcessFbxEnabled(true);
+        tool.SetFbxTextureSize(64);
+        tool.SetFbxShape(DownTool::FbxPlanetShape::Both);
+        tool.SetFbxTerrainSampleRateMeters(100.);
+        const auto minimum = tool.GetMinLonLat();
+        const auto maximum = tool.GetMaxLonLat();
+        const auto rectangle = [](double west, double south, double east, double north)
+        {
+            return DownTool::Wgs84Ring{{west, south}, {east, south},
+                                       {east, north}, {west, north}};
+        };
+        tool.SetDownloadPolygonsWgs84({
+            rectangle(minimum.lon, minimum.lat, maximum.lon, maximum.lat)});
+        const double middleLongitude = (minimum.lon + maximum.lon) * 0.5;
+        const auto exclusion = rectangle(
+            middleLongitude - (maximum.lon - minimum.lon) * 0.13,
+            minimum.lat - 0.01, maximum.lon + 0.01, maximum.lat + 0.01);
+        const double clippedLongitude = exclusion.front().lon;
+        constexpr double earthRadius = 6378137.;
+        const double expectedMaxX =
+            (clippedLongitude - tool.GetCenterLonLat().lon) * earthRadius *
+            std::numbers::pi / 180. * 100.;
+        tool.SetFbxExcludedPolygonsWgs84({exclusion});
+        tool.SetFbxElevationSampler([](const DownTool::LonLat& point)
+        {
+            return std::optional<double>(150. + point.lon * 10000.);
+        });
+        if (!postprocess_test::WriteSourceTiles(tool))
+        {
+            return false;
+        }
+        for (const auto [elevated, pureTerrain] :
+             {std::pair(false, false), std::pair(true, false), std::pair(true, true)})
+        {
+            if (pureTerrain)
+            {
+                if (!postprocess_test::ResetDirectory(root / "XYZ"))
+                {
+                    return false;
+                }
+                for (int32_t y = 16384; y <= 16385; ++y)
+                {
+                    if (!postprocess_test::Require(
+                            std::filesystem::remove(tool.TilePath({16385, y, 15})),
+                            "无法移除排除区内的测试影像"))
+                    {
+                        return false;
+                    }
+                }
+            }
+            tool.SetPostProcessEnabled(!pureTerrain);
+            tool.SetPostProcessMaxZoomOnlyEnabled(!pureTerrain);
+            const auto fbxRoot = root / (pureTerrain ? "outer-only" : elevated ? "elevated" : "flat");
+            tool.SetFbxOutputPath(postprocess_test::PathToUtf8String(fbxRoot));
+            tool.SetFbxTerrainHeightEnabled(elevated);
+            tool.RunPostProcessForTest();
+            Assimp::Importer importer;
+            const auto* scene = postprocess_test::ReadFbxScene(importer, fbxRoot / "plane.fbx");
+            if (!postprocess_test::Require(scene && scene->mNumMeshes > 0,
+                    "排除区裁切没有生成底板网格") ||
+                !postprocess_test::RequireFileExists(fbxRoot / "sphere.fbx"))
+            {
+                return false;
+            }
+            float actualMaxX = std::numeric_limits<float>::lowest();
+            for (unsigned int index = 0; index < scene->mNumMeshes; ++index)
+            {
+                const auto& mesh = *scene->mMeshes[index];
+                for (unsigned int vertexIndex = 0; vertexIndex < mesh.mNumVertices; ++vertexIndex)
+                {
+                    const auto& vertex = mesh.mVertices[vertexIndex];
+                    actualMaxX = std::max(actualMaxX, vertex.x);
+                    const double longitude = vertex.x / 100. / earthRadius * 180. /
+                        std::numbers::pi + tool.GetCenterLonLat().lon;
+                    const double expectedHeight = elevated ? (150. + longitude * 10000.) * 100. : 0.;
+                    if (!postprocess_test::Require(vertex.x <= expectedMaxX + 0.02 &&
+                            std::abs(vertex.z - expectedHeight) < 0.02,
+                            "底板越过排除边界或裁切交点的高程插值错误"))
+                    {
+                        return false;
+                    }
+                }
+            }
+            if (!postprocess_test::Require(std::abs(actualMaxX - expectedMaxX) < 0.02,
+                    "跨边界瓦块被整体丢弃，没有保留精确裁切边"))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool RunTest()
     {
         const std::filesystem::path testRoot =
             postprocess_test::MakeTestRoot("fbx");
         if (!postprocess_test::ResetDirectory(testRoot) ||
-            !RequireSignedSeaLevelTerrain(testRoot))
+            !RequireSignedSeaLevelTerrain(testRoot) || !RequireTerrainExclusionMesh(testRoot))
         {
             return false;
         }

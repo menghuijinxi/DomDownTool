@@ -33,12 +33,59 @@ class InspectableGoogleDown final : public DownTool::GoogleDownBase
   public:
     std::vector<DownTool::Tile> BuildSelectedTiles()
     {
+        if (!PrepareFbxDownloadRange())
+        {
+            return {};
+        }
         CalculateDownRange();
         std::vector<DownTool::Tile> tiles;
         BuildRequestedTiles(tiles);
         return tiles;
     }
+    bool IntersectsDownloadRange(const DownTool::Tile& tile) const
+    {
+        return TargetTileIntersectsDownloadRange(tile);
+    }
 };
+
+bool TestTerrainExcludedDownloadTiles()
+{
+    InspectableGoogleDown downloader;
+    downloader.SetZoom(16);
+    downloader.SetCenterLonLat({116.4, 39.9});
+    downloader.SetRadius(5000.);
+    downloader.SetPostProcessFbxEnabled(true);
+    const auto all = downloader.BuildSelectedTiles();
+    downloader.SetFbxExcludedPolygonsWgs84({{
+        {116.38, 39.88}, {116.42, 39.88}, {116.42, 39.92}, {116.38, 39.92}}});
+    const auto outer = downloader.BuildSelectedTiles();
+    if (!Require(!outer.empty() && outer.size() < all.size(),
+                 "纯底板导出没有跳过排除区内部瓦片"))
+    {
+        return false;
+    }
+    downloader.SetPostProcessEnabled(true);
+    const auto xyz = downloader.BuildSelectedTiles();
+    downloader.SetPostProcessEnabled(false);
+    downloader.SetPostProcessMergedImageEnabled(true);
+    const auto merged = downloader.BuildSelectedTiles();
+    if (!Require(xyz.size() == all.size() && merged.size() == all.size(),
+                 "底板排除改变了 XYZ 或合并大图的下载范围"))
+    {
+        return false;
+    }
+    downloader.SetPostProcessMergedImageEnabled(false);
+    if (!Require(!downloader.BuildSelectedTiles().empty(), "无法准备底板查询取消测试"))
+    {
+        return false;
+    }
+    int cancellationChecks = 0;
+    downloader.SetCancellationRequestedCallback([&] { return ++cancellationChecks >= 2; });
+    const bool intersects = downloader.IntersectsDownloadRange(all.front());
+    downloader.SetCancellationRequestedCallback({});
+    return Require(!intersects,
+                   "底板范围查询在取消后仍返回可见瓦片");
+}
 
 bool TestKmlParsing(const std::filesystem::path& testRoot)
 {
@@ -275,6 +322,10 @@ bool RunTest()
 
 int main()
 {
+    if (!TestTerrainExcludedDownloadTiles())
+    {
+        return 1;
+    }
     try
     {
         return RunTest() ? 0 : 1;

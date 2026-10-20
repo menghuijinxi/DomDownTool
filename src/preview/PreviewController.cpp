@@ -2812,6 +2812,10 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
     runtime.setElementKeyDownCallback(
         [this, &runtime](const skui::ElementEvent& event)
         {
+            if (event.id == "range-region-radius" && event.key == VK_RETURN)
+            {
+                return HandleRangeEditorEvent(runtime, event);
+            }
             if (event.key == VK_ESCAPE &&
                 (taskClearConfirmOpen_ || taskDeleteTargetId_.has_value()))
             {
@@ -4682,10 +4686,10 @@ void DomDownToolPreview::PreviewController::InitializeExportDraft(
     }
     exportKmlFileName_ = configuration ?
         configuration->kmlFileName : previewKmlFileName_;
-    exportLongitudeValue_ = fmt::format("{:.6f}", configuration ?
-                                        configuration->centerWgs84.lon : center.lon);
-    exportLatitudeValue_ = fmt::format("{:.6f}", configuration ?
-                                       configuration->centerWgs84.lat : center.lat);
+    exportLongitudeValue_ = configuration ? fmt::format("{}", configuration->centerWgs84.lon) :
+                                           fmt::format("{:.6f}", center.lon);
+    exportLatitudeValue_ = configuration ? fmt::format("{}", configuration->centerWgs84.lat) :
+                                          fmt::format("{:.6f}", center.lat);
     exportRadiusValue_ = fmt::format("{:.0f}", configuration ?
                                      configuration->radiusMeters :
                                      renderer_.GetExportRadiusMeters());
@@ -4859,19 +4863,23 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
     runtime.setVisibleById("export-kml-field", kmlMode);
     runtime.setTextById(
         "export-kml-name",
-        fmt::format("下载区 {} · GIS 排除区 {}",
+        fmt::format("下载区 {} · GIS 排除区 {} · 底板排除区 {}",
             exportPolygonsWgs84_.size(),
             DownTool::GetRegionPolygons(exportDownloadRegions_,
-                DownTool::DownloadRegionRole::ExcludeGis).size()));
+                DownTool::DownloadRegionRole::ExcludeGis).size(),
+            DownTool::GetRegionPolygons(exportDownloadRegions_,
+                DownTool::DownloadRegionRole::ExcludeTerrain).size()));
     if (kmlMode)
     {
         runtime.setTextById(
             "export-config-summary",
             fmt::format(
-                "自定义范围 · 下载区 {} · GIS 排除区 {} · z{}",
+                "自定义范围 · 下载区 {} · GIS 排除区 {} · 底板排除区 {} · z{}",
                 exportPolygonsWgs84_.size(),
                 DownTool::GetRegionPolygons(exportDownloadRegions_,
                     DownTool::DownloadRegionRole::ExcludeGis).size(),
+                DownTool::GetRegionPolygons(exportDownloadRegions_,
+                    DownTool::DownloadRegionRole::ExcludeTerrain).size(),
                 exportZoomValue_));
     }
     else

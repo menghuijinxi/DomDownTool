@@ -4,6 +4,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -29,6 +30,7 @@ namespace DownTool
 	const std::string serverIndexReplace = "{s}";
 
 	class DownToolBase;
+    class FbxTerrainRegionClipper;
 
 	enum class CurlRequestType
 	{
@@ -176,6 +178,8 @@ namespace DownTool
 		//远距离贴图降级参数
 		std::vector<FbxTextureDistanceOffset> FbxTextureDistanceOffsets;
         FbxDistanceLod fbxDistanceLod_;
+        Wgs84Polygons fbxExcludedPolygonsWgs84_;
+        std::unique_ptr<FbxTerrainRegionClipper> fbxDownloadClipper_;
 
 		//瓦片像素大小
 		uint32_t TileSize = 256;
@@ -247,6 +251,7 @@ namespace DownTool
 		bool IsCoveredByPendingLowerZoomRepair(const Tile& tile) const;
 
 		void RunPostProcess();
+        bool PrepareFbxDownloadRange();
 
 		bool GeneratePostProcessMaxZoomTiles(const std::vector<Tile>& targetTiles);
 
@@ -368,6 +373,7 @@ namespace DownTool
 
 	public:
 
+        DownToolBase();
 		virtual ~DownToolBase();
 
 		//开始下载，做一些准备工作
@@ -416,6 +422,11 @@ namespace DownTool
 
         const FbxDistanceLod& GetFbxDistanceLod() const { return fbxDistanceLod_; }
         void SetFbxDistanceLod(const FbxDistanceLod& value) { fbxDistanceLod_ = value; }
+        const Wgs84Polygons& GetFbxExcludedPolygonsWgs84() const
+        {
+            return fbxExcludedPolygonsWgs84_;
+        }
+        void SetFbxExcludedPolygonsWgs84(const Wgs84Polygons& value);
 
 		const Wgs84Polygons& GetDownloadPolygonsWgs84() const
 		{

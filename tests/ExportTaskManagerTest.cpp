@@ -1471,6 +1471,10 @@ bool runTest()
         disabled.SetId("exclusion-disabled");
         disabled.SetEnabled(false);
         regions.push_back(disabled);
+        auto terrainExcluded = excluded;
+        terrainExcluded.SetId("terrain-exclusion-1");
+        terrainExcluded.SetRole(DownTool::DownloadRegionRole::ExcludeTerrain);
+        regions.push_back(terrainExcluded);
         configuration.SetDownloadRegions(regions);
         const std::string taskId = manager.Enqueue(configuration);
         const bool finished = waitForFinished(manager, taskId);
@@ -1539,12 +1543,14 @@ bool runTest()
                     configuration->polygonsWgs84.size() == 1 &&
                     configuration->polygonsWgs84.front().size() == 4 &&
                     configuration->kmlFileName == "persisted-range.kml" &&
-                    configuration->GetDownloadRegions().size() == 3 &&
+                    configuration->GetDownloadRegions().size() == 4 &&
                     configuration->GetDownloadRegions()[1].GetRole() ==
                         DownTool::DownloadRegionRole::ExcludeGis &&
                     configuration->GetDownloadRegions()[1].GetName() ==
                         "可重新编辑的 GIS 排除区" &&
                     !configuration->GetDownloadRegions()[2].GetEnabled() &&
+                    configuration->GetDownloadRegions()[3].GetRole() ==
+                        DownTool::DownloadRegionRole::ExcludeTerrain &&
                     DomDownToolPreview::ExportGisSpatialRange(
                         *configuration).GetExcludedPolygons().size() == 1 &&
                     configuration->zoom == 15 && configuration->exportTiles &&
