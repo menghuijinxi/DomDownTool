@@ -21,6 +21,7 @@
 #include "ArcGISDown.h"
 #include "AmapBuildingFbxExporter.h"
 #include "AmapVectorDownloader.h"
+#include "AmapVectorShapefileWriter.h"
 #include "BaiduDown.h"
 #include "BingDown.h"
 #include "CopernicusDem.h"
@@ -1198,6 +1199,9 @@ std::string BuildTaskDetailsText(const ExportConfiguration& configuration)
                     break;
                 case ExportComponentKind::GeoJson:
                     addOutput("GeoJSON");
+                    break;
+                case ExportComponentKind::Shapefile:
+                    addOutput("SHP");
                     break;
                 }
             }
@@ -3273,14 +3277,14 @@ bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
     return true;
 }
 
-bool DomDownToolPreview::ExportTaskManager::RunGeoJsonExport(
-    const QueuedExport& queuedExport, size_t stepIndex, size_t stepCount,
-    std::string& error)
+std::optional<DownTool::AmapVectorDecodedData> DomDownToolPreview::ExportTaskManager::
+    DownloadGisVectorData(const QueuedExport& queuedExport, size_t stepIndex, size_t stepCount,
+                          std::string& error)
 {
     const ExportConfiguration& configuration = queuedExport.configuration;
     if (IsCancellationRequested())
     {
-        return false;
+        return std::nullopt;
     }
     DownTool::AmapVectorDownloadOptions options;
     options.centerWgs84 = configuration.centerWgs84;
@@ -3294,59 +3298,96 @@ bool DomDownToolPreview::ExportTaskManager::RunGeoJsonExport(
     options.maxConcurrency = 0;
     options.cancellationRequested = [this] { return IsCancellationRequested(); };
     options.SetProcessingProgressCallback(
-        [this, taskId = queuedExport.taskId, stepIndex, stepCount](
-            const DownTool::GisProcessingProgress& progress)
-        {
+        [this, taskId = queuedExport.taskId, stepIndex,
+         stepCount](const DownTool::GisProcessingProgress& progress) {
             const double processing = GisProcessingRatio(progress);
             UpdateProgress(taskId, DownTool::GisProcessingStageName(progress.GetStage()),
-                (static_cast<double>(stepIndex) + 0.7 + processing * 0.25) /
-                    static_cast<double>(stepCount),
-                progress.GetCompleted(), progress.GetTotal());
+                           (static_cast<double>(stepIndex) + 0.7 + processing * 0.25) /
+                               static_cast<double>(stepCount),
+                           progress.GetCompleted(), progress.GetTotal());
         });
-    options.progressCallback =
-        [this, taskId = queuedExport.taskId, stepIndex, stepCount](
-            const DownTool::AmapVectorDownloadProgress& progress)
-        {
-            UpdateProgress(
-                taskId, "下载 GIS GeoJSON",
-                (static_cast<double>(stepIndex) +
-                 ProgressRatio(progress.completedTaskCount, progress.totalTaskCount) * 0.7) /
-                    static_cast<double>(stepCount),
-                progress.completedTaskCount, progress.totalTaskCount);
-        };
+    options.progressCallback = [this, taskId = queuedExport.taskId, stepIndex,
+                                stepCount](const DownTool::AmapVectorDownloadProgress& progress) {
+        UpdateProgress(taskId, "下载 GIS 矢量数据",
+                       (static_cast<double>(stepIndex) +
+                        ProgressRatio(progress.completedTaskCount, progress.totalTaskCount) * 0.7) /
+                           static_cast<double>(stepCount),
+                       progress.completedTaskCount, progress.totalTaskCount);
+    };
 
     DownTool::AmapVectorDownloader downloader;
     const DownTool::AmapVectorDownloadResult result = downloader.Download(options);
     if (IsCancellationRequested())
     {
-        return false;
+        return std::nullopt;
     }
     if (!result.success)
     {
         error = result.error;
-        return false;
+        return std::nullopt;
     }
-    const std::filesystem::path outputRoot = GisOutputRoot(
-        configuration, queuedExport.taskId, "GeoJSON", "所选图层");
-    const std::filesystem::path outputFile =
-        configuration.geoJsonOutputFileOverride.empty() ?
-        outputRoot / "数据.geojson" : configuration.geoJsonOutputFileOverride;
-    const std::function<bool()> cancellationRequested =
-        [this] { return IsCancellationRequested(); };
-    const DownTool::AmapVectorDecodedData filteredData = FilterGisData(
-        result.decodedData, configuration.gisCategories, cancellationRequested);
+    const std::function<bool()> cancellationRequested = [this] {
+        return IsCancellationRequested();
+    };
+    auto filteredData =
+        FilterGisData(result.decodedData, configuration.gisCategories, cancellationRequested);
     if (IsCancellationRequested())
+    {
+        return std::nullopt;
+    }
+    return filteredData;
+}
+
+bool DomDownToolPreview::ExportTaskManager::RunGeoJsonExport(const QueuedExport& queuedExport,
+                                                             size_t stepIndex, size_t stepCount,
+                                                             std::string& error)
+{
+    const auto filteredData = DownloadGisVectorData(queuedExport, stepIndex, stepCount, error);
+    if (!filteredData)
     {
         return false;
     }
-    if (!DownTool::AmapVectorGeoJsonWriter::WriteFile(
-            filteredData, outputFile, error, cancellationRequested))
+    const ExportConfiguration& configuration = queuedExport.configuration;
+    const std::filesystem::path outputRoot =
+        GisOutputRoot(configuration, queuedExport.taskId, "GeoJSON", "所选图层");
+    const std::filesystem::path outputFile = configuration.geoJsonOutputFileOverride.empty()
+                                                 ? outputRoot / "数据.geojson"
+                                                 : configuration.geoJsonOutputFileOverride;
+    const std::function<bool()> cancellationRequested = [this] {
+        return IsCancellationRequested();
+    };
+    if (!DownTool::AmapVectorGeoJsonWriter::WriteFile(*filteredData, outputFile, error,
+                                                      cancellationRequested))
     {
         return false;
     }
     UpdateProgress(queuedExport.taskId, "GeoJSON 导出完成",
+                   static_cast<double>(stepIndex + 1) / static_cast<double>(stepCount), 1, 1);
+    return true;
+}
+
+bool DomDownToolPreview::ExportTaskManager::RunShapefileExport(const QueuedExport& queuedExport,
+                                                               size_t stepIndex, size_t stepCount,
+                                                               std::string& error)
+{
+    const auto decoded = DownloadGisVectorData(queuedExport, stepIndex, stepCount, error);
+    if (!decoded)
+    {
+        return false;
+    }
+    UpdateProgress(queuedExport.taskId, "写入 SHP",
+                   (static_cast<double>(stepIndex) + 0.95) / static_cast<double>(stepCount), 0,
+                   decoded->features.size());
+    const auto outputDirectory =
+        ExportTaskOutputRoot(queuedExport.configuration, queuedExport.taskId);
+    if (!DownTool::AmapVectorShapefileWriter::WriteDirectory(
+            *decoded, outputDirectory, error, [this] { return IsCancellationRequested(); }))
+    {
+        return false;
+    }
+    UpdateProgress(queuedExport.taskId, "SHP 导出完成",
                    static_cast<double>(stepIndex + 1) / static_cast<double>(stepCount),
-                   1, 1);
+                   decoded->features.size(), decoded->features.size());
     return true;
 }
 

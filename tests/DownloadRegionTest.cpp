@@ -122,7 +122,7 @@ bool TestCopyTerrainExclusion()
     }
     const auto original = DownloadRegionsToJson(editor.GetRegions());
     const auto selected = editor.GetSelectedId();
-    if (!Require(editor.CopySelectedAsTerrainExclusion(error) &&
+    if (!Require(editor.CopySelectedAs(DownloadRegionRole::ExcludeTerrain, error) &&
                      editor.GetRegions().size() == 2 && editor.GetSelectedId() == selected,
                  "复制底板排除区失败或改变了当前选区：" + error))
     {
@@ -156,16 +156,75 @@ bool TestCopyTerrainExclusion()
         return false;
     }
     editor.SetSelectedId(editor.GetRegions().back().GetId());
-    if (!Require(!editor.CopySelectedAsTerrainExclusion(error) &&
-                     DownloadRegionsToJson(editor.GetRegions()) == copied,
-                 "排除区被错误地再次复制或失败操作修改了区域"))
-    {
-        return false;
-    }
     return Require(editor.SetSelectedEnabled(false, error) &&
                        GetRegionPolygons(editor.GetRegions(),
                                          DownloadRegionRole::ExcludeTerrain).empty(),
                    "停用底板排除区没有生效");
+}
+
+bool TestCopyRegionRoles()
+{
+    const auto ring =
+        Rectangle(116.1234567890123, 39.1234567890123, 116.2234567890123, 39.2234567890123);
+    for (const auto sourceRole : {DownloadRegionRole::Include, DownloadRegionRole::ExcludeGis,
+                                  DownloadRegionRole::ExcludeTerrain})
+    {
+        for (const auto targetRole : {DownloadRegionRole::Include, DownloadRegionRole::ExcludeGis,
+                                      DownloadRegionRole::ExcludeTerrain})
+        {
+            DomDownToolPreview::DownloadRangeEditor editor;
+            std::string error;
+            if (!Require(!editor.CopySelectedAs(targetRole, error) && editor.GetRegions().empty() &&
+                             !editor.GetCanUndo(),
+                         "未选中区域时复制改动了区域或撤销记录"))
+            {
+                return false;
+            }
+            DownloadRegion source;
+            source.SetId("copy-source");
+            source.SetName("原区域");
+            source.SetSource("原任务范围");
+            source.SetRole(sourceRole);
+            source.SetEnabled(false);
+            source.SetVertices(ring);
+            editor.SetRegions({source});
+            editor.SetSelectedId(source.GetId());
+            const auto original = DownloadRegionsToJson(editor.GetRegions());
+            if (!Require(editor.CopySelectedAs(targetRole, error),
+                         std::string(DownloadRegionRoleName(sourceRole)) + "无法复制：" + error))
+            {
+                return false;
+            }
+            const auto copied = DownloadRegionsToJson(editor.GetRegions());
+            if (!Require(copied.size() == 2 && copied[0] == original[0] &&
+                             copied[1]["id"] != copied[0]["id"] &&
+                             copied[1]["verticesWgs84"] == original[0]["verticesWgs84"] &&
+                             editor.GetRegions().back().GetSource() == source.GetSource() &&
+                             editor.GetRegions().back().GetEnabled() &&
+                             editor.GetRegions().back().GetRole() == targetRole &&
+                             editor.GetSelectedId() == source.GetId(),
+                         "复制未使用指定类型或改变了原始边界、来源、选区"))
+            {
+                return false;
+            }
+            editor.Undo();
+            if (!Require(DownloadRegionsToJson(editor.GetRegions()) == original,
+                         "复制区域无法一次撤销"))
+            {
+                return false;
+            }
+            editor.Redo();
+            DownloadRegions restored;
+            if (!Require(DownloadRegionsToJson(editor.GetRegions()) == copied &&
+                             ReadDownloadRegions(copied, restored, error) &&
+                             DownloadRegionsToJson(restored) == copied,
+                         "复制区域无法重做或保存恢复"))
+            {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 bool TestSquareRadiusEditing()
@@ -456,6 +515,7 @@ bool TestDirectPngRendering()
 int main()
 {
     if (!TestRegionPersistenceAndEditing() || !TestCopyTerrainExclusion() ||
+        !TestCopyRegionRoles() ||
         !TestSquareRadiusEditing() ||
         !TestRoadClippingAndBuildingExclusion() || !TestPolygonHolesAndOverlappingIncludes() ||
         !TestGcj02CoordinatesAndCompleteExclusion() || !TestDirectPngRendering())

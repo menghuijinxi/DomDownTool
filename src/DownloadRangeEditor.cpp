@@ -148,22 +148,23 @@ bool DomDownToolPreview::DownloadRangeEditor::AddRegion(const DownTool::Wgs84Rin
     return true;
 }
 
-bool DomDownToolPreview::DownloadRangeEditor::CopySelectedAsTerrainExclusion(std::string& error)
+bool DomDownToolPreview::DownloadRangeEditor::CopySelectedAs(DownTool::DownloadRegionRole role,
+                                                             std::string& error)
 {
     const auto* selected = GetSelectedRegion();
-    if (!selected || selected->GetRole() != DownTool::DownloadRegionRole::Include)
+    if (!selected)
     {
-        error = "请选择要复制的下载区域。";
+        error = "请选择要复制的区域。";
         return false;
     }
     auto next = regions_;
     auto copy = *selected;
     copy.SetId(NewId(next));
-    copy.SetName(selected->GetName() + "（底板排除）");
-    copy.SetRole(DownTool::DownloadRegionRole::ExcludeTerrain);
+    copy.SetName(selected->GetName() + "（" + DownTool::DownloadRegionRoleName(role) + "）");
+    copy.SetRole(role);
     copy.SetEnabled(true);
     next.push_back(std::move(copy));
-    // 保持原下载区选中，随后扩大半径时不会误改刚复制的排除区。
+    // 保持原区域选中，后续编辑不会误改刚复制的区域。
     return Commit(std::move(next), error);
 }
 

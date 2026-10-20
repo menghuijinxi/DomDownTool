@@ -170,6 +170,7 @@ bool TestCopyTerrainExclusion(RangeController& controller, skui::Runtime& runtim
     }
     controller.OpenExportEditor(runtime);
     UiClick(controller, adapter, window, runtime, 100.F, 319.F);
+    UiClick(controller, adapter, window, runtime, 232.F, 174.F);
     const auto selected = controller.GetSelectedId();
     const auto original = DownTool::DownloadRegionsToJson(controller.GetRegions());
     UiClick(controller, adapter, window, runtime, 220.F, 734.F);
@@ -718,6 +719,7 @@ std::optional<POINT> FindElementCenter(skui::Runtime& runtime, const std::string
 bool ClickElement(RangeController& controller, skui::Runtime& runtime,
                   skui::win32::Win32EventAdapter& adapter, HWND window, const std::string& id)
 {
+    runtime.scrollIntoViewById(id);
     const auto center = FindElementCenter(runtime, id);
     if (!center)
     {
@@ -731,6 +733,201 @@ bool ClickElement(RangeController& controller, skui::Runtime& runtime,
                                        runtime);
     }
     return true;
+}
+
+bool TestCopyUsesActiveRegionRole(HWND window, const std::filesystem::path& testRoot)
+{
+    using postprocess_test::Require;
+    skui::Runtime runtime;
+    if (!Require(runtime.loadDocument((std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) /
+                                       "resources/preview/index.html")
+                                          .string()),
+                 "排除区复制测试文档加载失败"))
+    {
+        return false;
+    }
+    RangeController controller;
+    controller.attachRuntime(runtime);
+    skui::win32::Win32EventAdapter adapter(runtime);
+    DownTool::DownloadRegion source;
+    source.SetId("exclude-source");
+    source.SetName("GIS 排除区 1");
+    source.SetRole(DownTool::DownloadRegionRole::ExcludeGis);
+    source.SetVertices({{116.418123456789, 39.889123456789},
+                        {116.419234567891, 39.889234567891},
+                        {116.419345678912, 39.888345678912},
+                        {116.418456789123, 39.888456789123}});
+    DomDownToolPreview::ExportConfiguration configuration;
+    configuration.rangeMode = DomDownToolPreview::ExportRangeMode::CustomPolygon;
+    configuration.centerWgs84 = {116.41822112345678, 39.88901312345678};
+    configuration.zoom = 18;
+    configuration.SetDownloadRegions({source});
+    for (const int width : {1440, 700})
+    {
+        runtime.resize(width, width == 1440 ? 900 : 600, 1.F);
+        controller.resizeRuntime(runtime);
+        controller.LoadExport(runtime, configuration);
+        controller.OpenExportEditor(runtime);
+        const auto click = [&](const std::string& id) {
+            return ClickElement(controller, runtime, adapter, window, id);
+        };
+        if (!click("range-select-exclude-source"))
+        {
+            return false;
+        }
+        const std::array<std::pair<const char*, DownTool::DownloadRegionRole>, 3> targets = {{
+            {"include", DownTool::DownloadRegionRole::Include},
+            {"exclude", DownTool::DownloadRegionRole::ExcludeGis},
+            {"terrain", DownTool::DownloadRegionRole::ExcludeTerrain},
+        }};
+        for (const auto& [action, role] : targets)
+        {
+            const auto count = controller.GetRegions().size();
+            if (!click(std::string("range-role-") + action) ||
+                !Require(runtime.textContentById("range-copy-tip") ==
+                             std::string("复制为") + DownTool::DownloadRegionRoleName(role),
+                         "复制按钮提示没有跟随当前区域类型") ||
+                !click("range-copy") ||
+                !Require(controller.GetRegions().size() == count + 1 &&
+                             controller.GetRegions().back().GetRole() == role &&
+                             controller.GetSelectedId() == source.GetId(),
+                         "复制类型没有跟随上方选中的区域类型"))
+            {
+                return false;
+            }
+            const auto copied = DownTool::DownloadRegionsToJson(controller.GetRegions());
+            if (!Require(copied[0] == DownTool::DownloadRegionsToJson({source})[0] &&
+                             copied.back()["verticesWgs84"] == copied[0]["verticesWgs84"],
+                         "界面复制改变了原区域或边界坐标") ||
+                !click("range-undo") ||
+                !Require(controller.GetRegions().size() == count, "复制区域无法撤销") ||
+                !click("range-redo") ||
+                !Require(DownTool::DownloadRegionsToJson(controller.GetRegions()) == copied,
+                         "复制区域无法重做"))
+            {
+                return false;
+            }
+            const auto center = FindElementCenter(runtime, "range-copy");
+            if (!center)
+            {
+                return false;
+            }
+            WindowMessage(controller, adapter, window, runtime, WM_MOUSEMOVE, 0,
+                          MAKELPARAM(center->x, center->y));
+            if (!WriteTaskScreenshot(runtime,
+                                     testRoot / (std::string("range-copy-") + action +
+                                                 (width == 1440 ? "-desktop.png" : "-narrow.png"))))
+            {
+                return false;
+            }
+            if (role != DownTool::DownloadRegionRole::ExcludeTerrain && !click("range-undo"))
+            {
+                return false;
+            }
+        }
+        if (!click("range-select-" + controller.GetRegions().back().GetId()) ||
+            !click("range-role-include") || !click("range-copy") ||
+            !Require(controller.GetRegions().size() == 3 &&
+                         controller.GetRegions().back().GetRole() ==
+                             DownTool::DownloadRegionRole::Include,
+                     "选中底板排除区后无法复制为下载区域") ||
+            !click("range-return-export") ||
+            !Require(controller.GetExportRegions().size() == 3, "应用范围时丢失复制的区域"))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TestShapefileComponent(HWND window, const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    using postprocess_test::Require;
+    skui::Runtime runtime;
+    if (!Require(runtime.loadDocument((std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) /
+                                       "resources/preview/index.html")
+                                          .string()),
+                 "SHP 组件测试文档加载失败"))
+    {
+        return false;
+    }
+    runtime.resize(1440, 900, 1.F);
+    RangeController controller;
+    controller.attachRuntime(runtime);
+    skui::win32::Win32EventAdapter adapter(runtime);
+    const auto click = [&](const std::string& id) {
+        return ClickElement(controller, runtime, adapter, window, id);
+    };
+    if (!click("open-export-page"))
+    {
+        return false;
+    }
+    ExportConfiguration configuration;
+    configuration.centerWgs84 = {116.42, 39.89};
+    configuration.radiusMeters = 20000.;
+    configuration.zoom = 16;
+    ExportContentGroup group;
+    group.id = "g1";
+    group.name = "当前预览";
+    configuration.groups = {group};
+    controller.LoadExport(runtime, configuration);
+    if (!click("export-act-open-components__g1") ||
+        !Require(runtime.textContentById("export-act-add-component__g1__shapefile") == "SHP",
+                 "添加组件菜单缺少 SHP") ||
+        !click("export-act-add-component__g1__shapefile"))
+    {
+        return false;
+    }
+    const auto children = runtime.childElementIdsById("export-group__g1");
+    constexpr std::string_view kComponentPrefix = "export-act-select-component__";
+    const auto row = std::find_if(children.begin(), children.end(),
+                                  [&](const auto& id) { return id.starts_with(kComponentPrefix); });
+    if (!Require(row != children.end(), "添加 SHP 后没有显示组件行"))
+    {
+        return false;
+    }
+    const auto componentId = row->substr(kComponentPrefix.size());
+    if (!click("export-act-open-sources__" + componentId) ||
+        !Require(
+            !runtime.textContentById("export-act-add-source__" + componentId + "__google.satellite")
+                 .has_value(),
+            "SHP 图源菜单错误提供了影像") ||
+        !click("export-act-add-source__" + componentId + "__gis.building") ||
+        !click("export-act-toggle-labels__" + componentId))
+    {
+        return false;
+    }
+    std::string error;
+    auto exported = controller.ReadExport(error);
+    if (!Require(exported &&
+                     exported->groups[0].components[0].kind == ExportComponentKind::Shapefile &&
+                     exported->groups[0].components[0].includeLabels &&
+                     exported->groups[0].components[0].includeBaseLayers &&
+                     exported->groups[0].components[0].sources.size() == 1 &&
+                     exported->groups[0].components[0].sources[0].gisCategory ==
+                         DownTool::AmapVectorRenderCategory::Building,
+                 "SHP 图源或图层选项没有进入导出配置：" + error) ||
+        !Require(WriteTaskScreenshot(runtime, testRoot / "shapefile-component-desktop.png"),
+                 "SHP 桌面界面截图失败"))
+    {
+        return false;
+    }
+    runtime.resize(700, 600, 1.F);
+    controller.resizeRuntime(runtime);
+    if (!runtime.scrollIntoViewById("export-param-panel") ||
+        !click("export-act-toggle-base-layers__" + componentId))
+    {
+        return false;
+    }
+    exported = controller.ReadExport(error);
+    return Require(exported && !exported->groups[0].components[0].includeBaseLayers &&
+                       exported->groups[0].components[0].includeLabels,
+                   "窄窗口内无法修改 SHP 图层选项") &&
+           Require(WriteTaskScreenshot(runtime, testRoot / "shapefile-component-narrow.png"),
+                   "SHP 窄窗口界面截图失败") &&
+           runtime.scrollIntoViewById("export-act-done-panel") &&
+           click("export-act-done-panel");
 }
 
 bool TestTaskActions(HWND window, const std::filesystem::path& testRoot)
@@ -1077,7 +1274,8 @@ int main()
     {
         return 1;
     }
-    const bool passed = RunTest(window, testRoot) && TestTaskActions(window, testRoot);
+    const bool passed = RunTest(window, testRoot) && TestCopyUsesActiveRegionRole(window, testRoot) &&
+                        TestShapefileComponent(window, testRoot) && TestTaskActions(window, testRoot);
     DestroyWindow(window);
     CoUninitialize();
     if (!passed)

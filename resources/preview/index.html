@@ -2867,6 +2867,36 @@
         }
 
         @media (max-width: 700px) {
+            .page-content.export-composer {
+                overflow-y: auto;
+            }
+
+            .export-range-bar,
+            .export-workspace,
+            .export-group-list {
+                flex: 0 0 auto;
+            }
+
+            .export-workspace {
+                flex-direction: column;
+            }
+
+            .export-group-list {
+                overflow: visible;
+            }
+
+            .export-group-card.is-only-group {
+                min-height: 0;
+            }
+
+            .export-param-panel {
+                flex: 0 0 480px;
+                width: 100%;
+                min-width: 0;
+                max-width: 100%;
+                height: 480px;
+            }
+
             .param-row {
                 grid-template-columns: minmax(0, 1fr);
             }
@@ -3041,6 +3071,10 @@
             align-items: center;
             gap: 6px;
             margin-top: 10px;
+        }
+
+        #range-copy-tip {
+            top: -38px;
         }
 
         #range-region-name {
@@ -3249,9 +3283,12 @@
             </div>
             <div id="range-selected-fields" style="display: none">
                 <input id="range-region-name" type="text" aria-label="区域名称">
-                <button id="range-copy-terrain" class="range-icon" type="button"
-                        data-action="edit-download-range" title="复制为底板排除区"
-                        aria-label="复制为底板排除区" disabled>&#10697;</button>
+                <button id="range-copy" class="range-icon task-tooltip-trigger" type="button"
+                        data-action="edit-download-range" title="复制为下载区域"
+                        aria-label="复制为下载区域" disabled>&#10697;
+                    <span id="range-copy-tip" class="task-action-tooltip"
+                          role="tooltip">复制为下载区域</span>
+                </button>
                 <button id="range-delete" class="range-icon" type="button"
                         data-action="edit-download-range"
                         title="删除所选区域" aria-label="删除所选区域" disabled>

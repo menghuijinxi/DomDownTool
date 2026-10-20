@@ -373,3 +373,51 @@ Assimp 6.0.4 遇到 `.ktx2` URI 会声明 KHR_texture_basisu，但写出 texture
 本地入口：`src/CesiumTextureEncoder.cpp`、`src/CesiumGlbWriter.cpp`、
 vcpkg 安装包的 `include/ktx.h`、`share/ktx/copyright` 和 `share/ktx/LICENSES/`；
 Assimp 参考 `code/AssetLib/glTF2/glTF2AssetWriter.inl`。
+
+## Shapelib 导出、中文路径与 DBF 限制
+
+日期：2026-10-20。版本：Shapelib 1.6.3，由 vcpkg `shapelib` 提供。
+采用核心库提供的 MIT 许可选项；发行目录保留包内 `copyright`。
+使用 `shapelib::shp` 静态链接目标，不额外依赖 GDAL。
+
+### 目标与约束
+
+为导出组件新增 SHP，复用 GeoJSON 的 PBF 获取、分类与空间过滤流程。
+SHP 单个文件只能保存一种几何类型，因此点、多段线和多边形分别写出；
+多边形通过 `SHPRewindObject` 规范外环、孔洞方向。
+高德输入为 GCJ-02，写入前调用现有坐标转换为 WGS84，并补写 `.prj`。
+Shapelib 自身不负责坐标转换或投影文件生成。
+
+### API 与平台问题
+
+- SHP、DBF 和几何对象分别通过 `SHPClose`、`DBFClose`、
+  `SHPDestroyObject` 管理；各次调用使用独立句柄，不在线程间共享。
+- Windows 中文路径使用 `SASetupUtf8Hooks` 配合 `SHPCreateLL`、
+  `DBFCreateLL`，其他配套文件使用 `std::filesystem::path` 流。
+  不将中文路径先转为本地窄字符串再拼接扩展名。
+- `DBFCreateLL` 指定 `UTF-8`；先确认 `.cpg` 可创建，规避该版本在 CPG
+  创建失败后继续操作空文件句柄的路径。
+- DBF 字段名最多 10 字符、文本采用 254 字节上限；截短时保留完整 UTF-8 字符。
+  完整名称、多语言数组及长属性另存 `.attributes.json`，通过记录序号对应。
+- `uid` 用文本保存；数值整数用 `DBFWriteAttributeDirectly` 写十进制文本，
+  避免写入前先转换为 double 丢失精度。空高度用 DBF NULL。
+- 检查创建句柄、添加字段、写几何及属性的返回值；失败返回任务错误。
+  每个要素和坐标循环检查取消，暂存文件由 RAII 清理；完成后同目录重命名，
+  避免大文件重复复制。重新下载沿用任务层的暂存目录及旧结果替换流程。
+- VS18 的 19.5x 编译器被当前包的 CMake 版本检查误判为不兼容；
+  `find_package` 沿用 GeographicLib 的工具集版本兼容处理，不更改实际编译器。
+
+### 验证与快速检查
+
+`AmapVectorShapefileTest` 写出后用 Shapelib 重读，检查中文路径/属性、
+大整数、孔洞、多点、多段线、坐标系、空结果、取消和错误路径。
+`ExportTaskManagerTest` 用本地 PBF 缓存跑完整 SHP/GeoJSON 组件任务，
+验证 GIS 排除区和任务持久化；`PreviewRangeEditorTest` 点击生产菜单及图层开关，
+检查桌面和窄窗口的实际渲染。
+
+遇到乱码先查 `.cpg` 和 UTF-8 路径钩子；错位先查 GCJ-02 转换与 `.prj`；
+长字段缺失先对照 `.attributes.json` 和 `manifest.json` 的字段映射。
+
+官方参考：<https://github.com/OSGeo/shapelib/tree/v1.6.3>。
+代码入口：`src/AmapVectorShapefileWriter.cpp`；库源码参考
+`shapefil.h`、`safileio.c`、`shpopen.c`、`dbfopen.c`。

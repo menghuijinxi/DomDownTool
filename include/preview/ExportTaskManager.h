@@ -81,7 +81,8 @@ enum class ExportComponentKind
     BuildingModel,
     CesiumTerrain,
     CesiumBuildings,
-    GeoJson
+    GeoJson,
+    Shapefile
 };
 
 enum class ExportSourceKind
@@ -390,6 +391,12 @@ class ExportTaskManager
     bool RunGeoJsonExport(const QueuedExport& queuedExport,
                           size_t stepIndex, size_t stepCount,
                           std::string& error);
+
+    bool RunShapefileExport(const QueuedExport& queuedExport,
+                           size_t stepIndex, size_t stepCount, std::string& error);
+
+    std::optional<DownTool::AmapVectorDecodedData> DownloadGisVectorData(
+        const QueuedExport& queuedExport, size_t stepIndex, size_t stepCount, std::string& error);
 
     void UpdateProgress(std::string_view taskId, std::string stage,
                         double progress, uint64_t completed, uint64_t total);

@@ -30,6 +30,7 @@
       "version>=": "4.4.2"
     },
     "protobuf",
+    "shapelib",
     "earcut-hpp",
     {
       "name": "skiaui",

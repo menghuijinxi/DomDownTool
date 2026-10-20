@@ -15,7 +15,10 @@
 #include <vector>
 
 #include "nlohmann/json.hpp"
+#include "zlib.h"
+#include "amap_vector_tile.pb.h"
 
+#include "AmapVectorDownloader.h"
 #include "DownToolBase.h"
 #include "CopernicusDem.h"
 #include "preview/ExportTaskManager.h"
@@ -763,6 +766,174 @@ bool verifyRestartAndRename(const std::filesystem::path& testRoot)
                        records.front().outputPath == outputPath &&
                        records.front().configuration->zoom == 16,
                    "重启程序后没有保留重命名和修改后的参数");
+}
+
+bool verifyShapefileTask(const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    using postprocess_test::Require;
+    const auto root = testRoot / "shapefile-task";
+    std::filesystem::create_directories(root);
+    // 进程末尾隔离默认 PBF 缓存，整个组件执行验证不访问网络。
+    std::filesystem::current_path(root);
+    domdown::amap::Result packet;
+    packet.set_status(true);
+    packet.set_version("shapefile-task-test");
+    auto* tile = packet.add_tiles();
+    tile->set_z(14);
+    tile->set_x(13473);
+    tile->set_y(4553);
+    domdown::amap::BuildingLayer buildings;
+    auto* style = buildings.add_buildings();
+    style->set_main_key(55001);
+    style->set_resolution(12);
+    auto* item = style->add_items();
+    item->set_min_zoom(15);
+    item->set_max_zoom(30);
+    auto* building = item->add_features();
+    building->set_uid(123456);
+    building->set_height(18);
+    building->add_names()->set_name("测试建筑");
+    for (const auto coordinate : {800, 800, 400, 0, 0, 400, -400, 0, 0, -400})
+    {
+        building->add_polygon(coordinate);
+    }
+    auto* layer = tile->add_layers();
+    layer->set_z(14);
+    layer->set_x(13473);
+    layer->set_y(4553);
+    layer->set_type(3);
+    layer->set_data(buildings.SerializeAsString());
+    const auto protobuf = packet.SerializeAsString();
+    std::string compressed(compressBound(static_cast<uLong>(protobuf.size())) + 32, '\0');
+    z_stream stream{};
+    if (!Require(deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 16 + MAX_WBITS, 8,
+                              Z_DEFAULT_STRATEGY) == Z_OK,
+                 "无法初始化测试 PBF 压缩"))
+    {
+        return false;
+    }
+    stream.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(protobuf.data()));
+    stream.avail_in = static_cast<uInt>(protobuf.size());
+    stream.next_out = reinterpret_cast<Bytef*>(compressed.data());
+    stream.avail_out = static_cast<uInt>(compressed.size());
+    const int compressedResult = deflate(&stream, Z_FINISH);
+    compressed.resize(stream.total_out);
+    deflateEnd(&stream);
+    if (!Require(compressedResult == Z_STREAM_END, "无法构造测试 PBF"))
+    {
+        return false;
+    }
+    std::string envelope;
+    for (const int shift : {24, 16, 8, 0})
+    {
+        envelope.push_back(static_cast<char>((compressed.size() >> shift) & 0xff));
+    }
+    envelope += compressed;
+    const auto cache = DownTool::AmapVectorDownloadOptions{}.rawTileCachePath /
+                       std::filesystem::u8path("基础图层/14/13473/4553.pbf");
+    std::filesystem::create_directories(cache.parent_path());
+    {
+        std::ofstream output(cache, std::ios::binary);
+        output << envelope;
+    }
+    ExportConfiguration configuration;
+    configuration.centerWgs84 = {116.05, 39.976};
+    configuration.radiusMeters = 25.;
+    configuration.zoom = 16;
+    configuration.outputRoot = root / "outputs";
+    ExportComponent shapefile;
+    shapefile.id = "shp";
+    shapefile.kind = ExportComponentKind::Shapefile;
+    ExportSourceEntry source;
+    source.id = "gis.building";
+    source.name = "建筑";
+    source.kind = ExportSourceKind::Gis;
+    source.gisCategory = DownTool::AmapVectorRenderCategory::Building;
+    shapefile.sources = {source};
+    ExportComponent geojson = shapefile;
+    geojson.id = "json";
+    geojson.kind = ExportComponentKind::GeoJson;
+    ExportContentGroup group;
+    group.id = "vector";
+    group.name = "矢量";
+    ExportComponent secondShapefile = shapefile;
+    secondShapefile.id = "shp-second";
+    group.components = {shapefile, geojson, secondShapefile};
+    configuration.groups = {group};
+    if (!Require(GroupedExportError(configuration).empty(), "SHP 组件校验失败"))
+    {
+        return false;
+    }
+    configuration.groups[0].components[0].sources[0].kind = ExportSourceKind::Imagery;
+    if (!Require(!GroupedExportError(configuration).empty(), "SHP 错误接受了影像图源"))
+    {
+        return false;
+    }
+    configuration.groups = {group};
+    configuration.groups[0].components[0].includeBaseLayers = false;
+    if (!Require(!GroupedExportError(configuration).empty(), "SHP 接受了全部关闭的图层"))
+    {
+        return false;
+    }
+    configuration.groups = {group};
+    const auto recordsPath = root / "records.json";
+    std::string taskId;
+    {
+        ExportTaskManager manager({}, recordsPath);
+        taskId = manager.Enqueue(configuration);
+        if (!Require(waitForFinished(manager, taskId), "SHP 缓存导出任务没有结束"))
+        {
+            return false;
+        }
+        const auto records = manager.GetRecords();
+        const auto* record = findRecord(records, taskId);
+        const auto taskOutput = ExportTaskOutputRoot(configuration, taskId);
+        const auto shpRoot = taskOutput / std::filesystem::u8path("矢量/SHP");
+        const auto shpManifest = loadJsonFile(shpRoot / "manifest.json");
+        const auto geoJson =
+            loadJsonFile(taskOutput / std::filesystem::u8path("矢量/GeoJSON/数据.geojson"));
+        if (!Require(record && record->state == ExportTaskState::Succeeded &&
+                         record->detail.find("SHP") != std::string::npos &&
+                         std::filesystem::exists(shpRoot / "polygons.shp") &&
+                         std::filesystem::exists(
+                             taskOutput / std::filesystem::u8path("矢量/SHP (2)/polygons.shp")) &&
+                         shpManifest["layers"][0]["featureCount"] == 1 &&
+                         geoJson["features"].size() == 1 &&
+                         geoJson["features"][0]["properties"]["height"] == 18,
+                     "SHP/GeoJSON 组件执行、分类过滤或输出目录错误"))
+        {
+            return false;
+        }
+        DownTool::DownloadRegion excluded;
+        excluded.SetId("exclude");
+        excluded.SetName("排除");
+        excluded.SetRole(DownTool::DownloadRegionRole::ExcludeGis);
+        excluded.SetVertices({{115., 39.}, {117., 39.}, {117., 41.}, {115., 41.}});
+        configuration.SetDownloadRegions({excluded});
+        const auto excludedId = manager.Enqueue(configuration);
+        if (!Require(waitForFinished(manager, excludedId), "带排除区的 SHP 任务没有结束"))
+        {
+            return false;
+        }
+        const auto excludedManifest =
+            loadJsonFile(ExportTaskOutputRoot(configuration, excludedId) /
+                         std::filesystem::u8path("矢量/SHP/manifest.json"));
+        if (!Require(excludedManifest.is_object() && excludedManifest["layers"].empty(),
+                     "GIS 排除区没有作用于 SHP"))
+        {
+            return false;
+        }
+    }
+    ExportTaskManager restored({}, recordsPath);
+    const auto records = restored.GetRecords();
+    const auto* record = findRecord(records, taskId);
+    return Require(record && record->configuration &&
+                       record->configuration->groups[0].components[0].kind ==
+                           ExportComponentKind::Shapefile &&
+                       record->configuration->groups[0].components[0].sources[0].gisCategory ==
+                           DownTool::AmapVectorRenderCategory::Building,
+                   "重启后丢失了 SHP 组件或图源配置");
 }
 
 bool runTest()
@@ -2023,7 +2194,7 @@ bool runTest()
     return postprocess_test::Require(
         changeCount.load(std::memory_order_relaxed) >= 3,
         "导出任务状态变化没有通知界面") &&
-        verifySeaLevelExports(testRoot);
+        verifySeaLevelExports(testRoot) && verifyShapefileTask(testRoot);
 }
 } // namespace
 

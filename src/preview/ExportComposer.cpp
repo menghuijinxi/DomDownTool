@@ -144,6 +144,8 @@ std::string KindName(ExportComponentKind kind)
         return "3D Tiles 建筑";
     case ExportComponentKind::GeoJson:
         return "GeoJSON";
+    case ExportComponentKind::Shapefile:
+        return "SHP";
     }
     return "组件";
 }
@@ -172,6 +174,8 @@ std::string KindValue(ExportComponentKind kind)
         return "cesium-buildings";
     case ExportComponentKind::GeoJson:
         return "geojson";
+    case ExportComponentKind::Shapefile:
+        return "shapefile";
     }
     return {};
 }
@@ -210,6 +214,10 @@ std::optional<ExportComponentKind> KindFrom(std::string_view value)
     {
         return ExportComponentKind::GeoJson;
     }
+    if (value == "shapefile")
+    {
+        return ExportComponentKind::Shapefile;
+    }
     if (value == "cesium-terrain")
     {
         return ExportComponentKind::CesiumTerrain;
@@ -224,6 +232,7 @@ std::optional<ExportComponentKind> KindFrom(std::string_view value)
 bool AllowsImagery(ExportComponentKind kind)
 {
     return kind != ExportComponentKind::GeoJson &&
+        kind != ExportComponentKind::Shapefile &&
         kind != ExportComponentKind::BuildingModel &&
         kind != ExportComponentKind::CesiumBuildings &&
         kind != ExportComponentKind::CesiumTerrain &&
@@ -419,6 +428,7 @@ std::string ComponentSummary(const ExportComponent& component)
         return fmt::format("{} 层 · {:.0f} 米分块", component.GetCesiumLodLevels(),
             component.GetBuildingChunkSizeMeters());
     case ExportComponentKind::GeoJson:
+    case ExportComponentKind::Shapefile:
         return names;
     }
     return names;
@@ -1159,7 +1169,8 @@ std::string PanelBodyHtml(
                 PathToUtf8(component.roofTexturePath));
         }
     }
-    else if (component.kind == ExportComponentKind::GeoJson)
+    else if (component.kind == ExportComponentKind::GeoJson ||
+             component.kind == ExportComponentKind::Shapefile)
     {
         html += fmt::format(
             "<label class=\"export-check-row\"><input id=\"export-act-toggle-base-layers__{}\" type=\"checkbox\"{}>"
@@ -1218,7 +1229,8 @@ void DomDownToolPreview::PreviewController::RenderExportComposer(skui::Runtime& 
                 ExportComponentKind::BuildingModel,
                 ExportComponentKind::CesiumTerrain,
                 ExportComponentKind::CesiumBuildings,
-                ExportComponentKind::GeoJson};
+                ExportComponentKind::GeoJson,
+                ExportComponentKind::Shapefile};
             for (const ExportComponentKind kind : kKinds)
             {
                 menu += fmt::format(
@@ -1311,6 +1323,11 @@ void DomDownToolPreview::PreviewController::RenderExportComposer(skui::Runtime& 
         {
             lastExportParamPanelHtml_ = panelHtml;
             lastExportParamPanelComponentId_ = selected == nullptr ? "" : selected->id;
+            if (selected != nullptr && !sameSelectedPanel &&
+                runtime.width() <= 700.F * runtime.effectiveScale())
+            {
+                runtime.scrollIntoViewById("export-param-panel");
+            }
         }
         else
         {

@@ -23,7 +23,7 @@ class DownloadRangeEditor
 
     bool AddRegion(const DownTool::Wgs84Ring& vertices, DownTool::DownloadRegionRole role,
                    std::string& error);
-    bool CopySelectedAsTerrainExclusion(std::string& error);
+    bool CopySelectedAs(DownTool::DownloadRegionRole role, std::string& error);
     bool AppendPolygons(const DownTool::Wgs84Polygons& polygons, const std::string& source,
                         std::string& error);
     bool SetSelectedVertices(const DownTool::Wgs84Ring& vertices, std::string& error);

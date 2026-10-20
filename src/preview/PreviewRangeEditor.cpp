@@ -181,9 +181,13 @@ void DomDownToolPreview::PreviewController::UpdateRangeEditorUi(skui::Runtime& r
                                     excludes.size() + terrainExcludes.size()));
     runtime.setTextById("range-editor-message", rangeEditorMessage_);
     const auto* selected = rangeEditor_.GetSelectedRegion();
-    SetControlEnabled(runtime, "range-copy-terrain",
-                      selected && selected->GetRole() == DownTool::DownloadRegionRole::Include);
-    runtime.setVisibleById("range-copy-terrain", selected != nullptr);
+    const auto copyLabel =
+        fmt::format("复制为{}", DownTool::DownloadRegionRoleName(rangeDrawRole_));
+    runtime.setAttributeById("range-copy", "title", copyLabel);
+    runtime.setAttributeById("range-copy", "aria-label", copyLabel);
+    runtime.setTextById("range-copy-tip", copyLabel);
+    SetControlEnabled(runtime, "range-copy", selected != nullptr);
+    runtime.setVisibleById("range-copy", selected != nullptr);
     runtime.setVisibleById("range-selected-fields", selected != nullptr);
     if (selected)
     {
@@ -480,9 +484,9 @@ bool DomDownToolPreview::PreviewController::HandleRangeEditorEvent(skui::Runtime
     {
         rangeEditor_.RemoveSelected(rangeEditorMessage_);
     }
-    else if (event.id == "range-copy-terrain")
+    else if (event.id == "range-copy")
     {
-        rangeEditor_.CopySelectedAsTerrainExclusion(rangeEditorMessage_);
+        rangeEditor_.CopySelectedAs(rangeDrawRole_, rangeEditorMessage_);
     }
     else if (event.id == "range-region-name" && (change || rename))
     {

@@ -93,6 +93,8 @@ std::string ComponentKindValue(ExportComponentKind kind)
         return "cesium-buildings";
     case ExportComponentKind::GeoJson:
         return "geojson";
+    case ExportComponentKind::Shapefile:
+        return "shapefile";
     }
     return "merged-image";
 }
@@ -130,6 +132,10 @@ std::optional<ExportComponentKind> ComponentKindFrom(std::string_view value)
     if (value == "geojson")
     {
         return ExportComponentKind::GeoJson;
+    }
+    if (value == "shapefile")
+    {
+        return ExportComponentKind::Shapefile;
     }
     if (value == "cesium-terrain")
     {
@@ -193,6 +199,8 @@ std::string ComponentDirectoryName(ExportComponentKind kind)
         return "3D Tiles 建筑";
     case ExportComponentKind::GeoJson:
         return "GeoJSON";
+    case ExportComponentKind::Shapefile:
+        return "SHP";
     }
     return "组件";
 }
@@ -902,9 +910,14 @@ std::string GroupedExportError(const ExportConfiguration& configuration)
                 }
                 break;
             case ExportComponentKind::GeoJson:
+            case ExportComponentKind::Shapefile:
                 if (!gis || imagery)
                 {
-                    return "GeoJSON 只接受 GIS 图源。";
+                    return "GeoJSON 和 SHP 只接受 GIS 图源。";
+                }
+                if (!component.includeBaseLayers && !component.includeLabels)
+                {
+                    return "GeoJSON 和 SHP 至少需要启用基础图层或标注图层。";
                 }
                 break;
             }
@@ -1126,6 +1139,7 @@ bool ExportGroupedRunner::Run(
         return !succeeded;
     };
 
+    std::map<std::filesystem::path, size_t> shapefileDirectoryCounts;
     for (const Job& job : jobs)
     {
         if (manager.IsCancellationRequested())
@@ -1134,9 +1148,18 @@ bool ExportGroupedRunner::Run(
             return false;
         }
         const ExportComponent& component = *job.component;
-        const std::filesystem::path componentDirectory =
+        std::filesystem::path componentDirectory =
             groupDirectories.at(job.group) /
             std::filesystem::u8path(ComponentDirectoryName(component.kind));
+        if (component.kind == ExportComponentKind::Shapefile)
+        {
+            const size_t index = ++shapefileDirectoryCounts[componentDirectory];
+            if (index > 1)
+            {
+                componentDirectory = groupDirectories.at(job.group) /
+                    std::filesystem::u8path(fmt::format("SHP ({})", index));
+            }
+        }
         if (!CreateDirectory(componentDirectory, error))
         {
             return false;
@@ -1811,15 +1834,24 @@ bool ExportGroupedRunner::Run(
                 referenceOutput << reference.dump(2);
             }
         }
-        else if (component.kind == ExportComponentKind::GeoJson)
+        else if (component.kind == ExportComponentKind::GeoJson ||
+                 component.kind == ExportComponentKind::Shapefile)
         {
             ExportTaskManager::QueuedExport step = queuedExport;
             step.configuration.gisCategories = GisCategories(component);
             step.configuration.includeBaseLayersOverride = component.includeBaseLayers;
             step.configuration.includeLabelsOverride = component.includeLabels;
-            step.configuration.geoJsonOutputFileOverride =
-                componentDirectory / std::filesystem::u8path("数据.geojson");
-            succeeded = !failed(manager.RunGeoJsonExport(step, stepIndex, stepCount, error));
+            if (component.kind == ExportComponentKind::GeoJson)
+            {
+                step.configuration.geoJsonOutputFileOverride =
+                    componentDirectory / std::filesystem::u8path("数据.geojson");
+                succeeded = !failed(manager.RunGeoJsonExport(step, stepIndex, stepCount, error));
+            }
+            else
+            {
+                step.configuration.executionRootOverride = componentDirectory;
+                succeeded = !failed(manager.RunShapefileExport(step, stepIndex, stepCount, error));
+            }
         }
 
         if (!succeeded)

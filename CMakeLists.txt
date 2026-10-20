@@ -114,11 +114,12 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(LibXml2 REQUIRED)
 
 if(MSVC AND MSVC_VERSION GREATER_EQUAL 1950)
-    # GeographicLib 2.4 的版本脚本还未适配 VS18 的 19.5x 编译器版本号。
+    # GeographicLib 和 Shapelib 的版本脚本还未适配 VS18 的 19.5x 编译器版本号。
     set(DOMDOWNTOOL_MSVC_TOOLSET_VERSION ${MSVC_TOOLSET_VERSION})
     set(MSVC_TOOLSET_VERSION 145)
 endif()
 find_package(GeographicLib CONFIG REQUIRED)
+find_package(shapelib CONFIG REQUIRED)
 if(DEFINED DOMDOWNTOOL_MSVC_TOOLSET_VERSION)
     set(MSVC_TOOLSET_VERSION ${DOMDOWNTOOL_MSVC_TOOLSET_VERSION})
 endif()
@@ -147,7 +148,8 @@ set(DOMDOWNTOOL_LIBRARIES
     KTX::ktx
     protobuf::libprotobuf
     TIFF::TIFF
-    ZLIB::ZLIB)
+    ZLIB::ZLIB
+    shapelib::shp)
 
 file(GLOB DOMDOWNTOOL_CORE_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
@@ -299,6 +301,20 @@ if(EXISTS "${polyclipping_DIR}/copyright")
   endforeach()
 endif()
 
+if(EXISTS "${shapelib_DIR}/copyright")
+  foreach(target_name IN ITEMS DomDownTool AmapGisDownload DomDownToolPreview)
+    if(TARGET ${target_name})
+      add_custom_command(TARGET ${target_name} POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+          "$<TARGET_FILE_DIR:${target_name}>/licenses/shapelib"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+          "${shapelib_DIR}/copyright"
+          "$<TARGET_FILE_DIR:${target_name}>/licenses/shapelib/copyright"
+        VERBATIM)
+    endif()
+  endforeach()
+endif()
+
 enable_testing()
 
 if(MSVC)
@@ -397,6 +413,8 @@ add_domdown_test(RealDataFbxIntegrationTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/RealDataFbxIntegrationTest.cpp)
 add_domdown_test(AmapVectorGeoJsonTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorGeoJsonTest.cpp)
+add_domdown_test(AmapVectorShapefileTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorShapefileTest.cpp)
 add_domdown_test(AmapBuildingChunkTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapBuildingChunkTest.cpp)
 add_domdown_test(MapViewportTest
