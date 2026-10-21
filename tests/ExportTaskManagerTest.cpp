@@ -896,6 +896,7 @@ bool verifyShapefileTask(const std::filesystem::path& testRoot)
         if (!Require(record && record->state == ExportTaskState::Succeeded &&
                          record->detail.find("SHP") != std::string::npos &&
                          std::filesystem::exists(shpRoot / "polygons.shp") &&
+                         !std::filesystem::exists(shpRoot / "polygons.attributes.json") &&
                          std::filesystem::exists(
                              taskOutput / std::filesystem::u8path("矢量/SHP (2)/polygons.shp")) &&
                          shpManifest["layers"][0]["featureCount"] == 1 &&

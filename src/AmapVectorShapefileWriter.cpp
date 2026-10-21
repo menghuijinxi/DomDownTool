@@ -180,7 +180,7 @@ bool WriteAttributes(DBFHandle handle, int record, const Json& properties)
             std::string text = value.is_string() ? value.get<std::string>() : value.dump();
             if (type == FTString)
             {
-                // DBF 按字节限制宽度；完整值另存属性 JSON，避免截断 UTF-8 字符。
+                // DBF 按字节限制宽度，截短时保留完整 UTF-8 字符。
                 text = Utf8Prefix(std::move(text), static_cast<size_t>(width));
                 written = DBFWriteStringAttribute(handle, record, index, text.c_str());
             }
@@ -316,13 +316,6 @@ class LayerWriter
                 return false;
             }
         }
-        fullAttributes_.open(WithSuffix(basePath_, ".attributes.json"), std::ios::binary);
-        fullAttributes_ << "{\"features\":[";
-        if (!fullAttributes_)
-        {
-            error = "无法创建 SHP 完整属性文件。";
-            return false;
-        }
         return true;
     }
 
@@ -349,31 +342,14 @@ class LayerWriter
             error = "无法写入 SHP 几何或属性记录。";
             return false;
         }
-        if (count_ != 0)
-        {
-            fullAttributes_ << ',';
-        }
-        fullAttributes_ << Json({{"record", record}, {"properties", properties}}).dump();
-        if (!fullAttributes_)
-        {
-            error = "无法写入 SHP 完整属性。";
-            return false;
-        }
         ++count_;
         return true;
     }
 
     bool Close(std::string& error)
     {
-        fullAttributes_ << "]}\n";
-        fullAttributes_.close();
         attributes_.reset();
         shapes_.reset();
-        if (!fullAttributes_)
-        {
-            error = "无法完成 SHP 完整属性写入。";
-            return false;
-        }
         return WriteText(WithSuffix(basePath_, ".prj"), kWgs84Prj, error);
     }
 
@@ -383,7 +359,6 @@ class LayerWriter
     std::filesystem::path basePath_;
     ShapeHandle shapes_;
     AttributeHandle attributes_;
-    std::ofstream fullAttributes_;
     int count_ = 0;
 };
 } // namespace
@@ -446,9 +421,8 @@ bool DownTool::AmapVectorShapefileWriter::WriteDirectory(
             {
                 return false;
             }
-            layers.push_back({{"file", std::string(name) + ".shp"},
-                              {"attributes", std::string(name) + ".attributes.json"},
-                              {"featureCount", writer.GetCount()}});
+            layers.push_back(
+                {{"file", std::string(name) + ".shp"}, {"featureCount", writer.GetCount()}});
         }
     }
     Json fields = Json::object();

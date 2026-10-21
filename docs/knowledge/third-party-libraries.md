@@ -398,7 +398,7 @@ Shapelib 自身不负责坐标转换或投影文件生成。
 - `DBFCreateLL` 指定 `UTF-8`；先确认 `.cpg` 可创建，规避该版本在 CPG
   创建失败后继续操作空文件句柄的路径。
 - DBF 字段名最多 10 字符、文本采用 254 字节上限；截短时保留完整 UTF-8 字符。
-  完整名称、多语言数组及长属性另存 `.attributes.json`，通过记录序号对应。
+  属性直接写入 DBF；不生成额外的属性 JSON 副本，避免重复序列化和磁盘写入。
 - `uid` 用文本保存；数值整数用 `DBFWriteAttributeDirectly` 写十进制文本，
   避免写入前先转换为 double 丢失精度。空高度用 DBF NULL。
 - 检查创建句柄、添加字段、写几何及属性的返回值；失败返回任务错误。
@@ -410,13 +410,14 @@ Shapelib 自身不负责坐标转换或投影文件生成。
 ### 验证与快速检查
 
 `AmapVectorShapefileTest` 写出后用 Shapelib 重读，检查中文路径/属性、
-大整数、孔洞、多点、多段线、坐标系、空结果、取消和错误路径。
+大整数、孔洞、多点、多段线、坐标系、空结果、取消和错误路径，
+并确认不生成属性 JSON、清单不再引用此类文件。
 `ExportTaskManagerTest` 用本地 PBF 缓存跑完整 SHP/GeoJSON 组件任务，
 验证 GIS 排除区和任务持久化；`PreviewRangeEditorTest` 点击生产菜单及图层开关，
 检查桌面和窄窗口的实际渲染。
 
 遇到乱码先查 `.cpg` 和 UTF-8 路径钩子；错位先查 GCJ-02 转换与 `.prj`；
-长字段缺失先对照 `.attributes.json` 和 `manifest.json` 的字段映射。
+长字段截短先核对 DBF 字段宽度和 `manifest.json` 的字段映射。
 
 官方参考：<https://github.com/OSGeo/shapelib/tree/v1.6.3>。
 代码入口：`src/AmapVectorShapefileWriter.cpp`；库源码参考

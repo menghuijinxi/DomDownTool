@@ -146,15 +146,14 @@ bool RunTest()
         }
         const std::string uid = DBFReadStringAttribute(attributes.get(), 0, 8);
         const std::string exportedName = DBFReadStringAttribute(attributes.get(), 0, 9);
-        const auto propertiesPath = output / (std::string(name) + ".attributes.json");
-        const auto properties = Json::parse(ReadText(propertiesPath));
         if (!Require(uid == std::to_string(point.uid) &&
                          DBFReadDoubleAttribute(attributes.get(), 0, 1) == point.mainKey &&
-                         exportedName.size() <= 254 && longName.starts_with(exportedName) &&
+                         exportedName.size() == 252 && longName.starts_with(exportedName) &&
                          !Json::parse("\"" + exportedName + "\"", nullptr, false).is_discarded() &&
-                         properties["features"][0]["properties"]["names"][0]["text"] == longName &&
-                         properties["features"][0]["properties"]["uid"] == point.uid,
-                     "SHP 丢失中文名称、大整数 ID 或完整属性") ||
+                         std::string(DBFReadStringAttribute(attributes.get(), 0, 10)) == "zh-CN",
+                     "SHP 的 DBF 中文属性截短或大整数 ID 错误") ||
+            !Require(!std::filesystem::exists(output / (std::string(name) + ".attributes.json")),
+                     "SHP 仍生成了非标准属性 JSON 文件") ||
             !Require(ReadText(output / (std::string(name) + ".cpg")).starts_with("UTF-8") &&
                          ReadText(output / (std::string(name) + ".prj")).find("WGS_1984") !=
                              std::string::npos,
@@ -169,6 +168,13 @@ bool RunTest()
                  "SHP 输出清单或 DBF 字段映射错误"))
     {
         return false;
+    }
+    for (const auto& layer : manifest["layers"])
+    {
+        if (!Require(!layer.contains("attributes"), "SHP 清单仍引用属性 JSON 文件"))
+        {
+            return false;
+        }
     }
     const auto emptyOutput = root / "empty";
     if (!Require(DownTool::AmapVectorShapefileWriter::WriteDirectory({}, emptyOutput, error) &&
