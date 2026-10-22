@@ -2996,7 +2996,7 @@
         }
 
         .range-role-controls button {
-            padding: 0 4px;
+            padding: 0 2px;
             font-size: 12px;
         }
 
@@ -3250,6 +3250,9 @@
                         aria-pressed="false">GIS 排除</button>
                 <button id="range-role-terrain" type="button" data-action="edit-download-range"
                         aria-pressed="false">底板排除</button>
+                <button id="range-role-flatten" type="button" data-action="edit-download-range"
+                          title="区域内使用平均海拔生成地形，建筑贴地跟随平整后的高度"
+                          aria-pressed="false">平整区域</button>
             </div>
             <div class="range-tools">
                 <button id="range-tool-select" class="range-icon" type="button"
@@ -3277,7 +3280,10 @@
                         data-action="edit-download-range"
                         title="完成当前区域" aria-label="完成当前区域" disabled>&#10003;</button>
             </div>
-            <div id="range-summary">下载区 0 · GIS 排除区 0</div>
+            <div id="range-summary">
+                <div id="range-summary-primary">下载区 0 · GIS 排除区 0</div>
+                <div id="range-summary-terrain">底板排除区 0 · 平整区域 0</div>
+            </div>
             <div class="range-region-scroll">
                 <div id="range-region-list"></div>
             </div>

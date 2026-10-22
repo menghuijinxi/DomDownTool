@@ -137,7 +137,8 @@ class MapRenderer
     void SetExportPolygonsWgs84(const DownTool::Wgs84Polygons& polygons);
     void SetDownloadRegions(
         const DownTool::DownloadRegions& regions, const std::string& selectedId = {});
-    void SetDraftRegion(const DownTool::Wgs84Ring& vertices, bool excluded, bool closed);
+    void SetDraftRegion(const DownTool::Wgs84Ring& vertices, DownTool::DownloadRegionRole role,
+                        bool closed);
     [[nodiscard]] std::optional<ViewportPoint> ScreenPointForLonLat(
         const DownTool::LonLat& coordinate) const;
 
@@ -242,7 +243,7 @@ protected:
     DownTool::DownloadRegions downloadRegions_;
     std::string selectedRegionId_;
     DownTool::Wgs84Ring draftRegion_;
-    bool draftRegionExcluded_ = false;
+    DownTool::DownloadRegionRole draftRegionRole_ = DownTool::DownloadRegionRole::Include;
     bool draftRegionClosed_ = false;
 };
 } // namespace DomDownToolPreview

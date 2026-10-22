@@ -140,6 +140,8 @@ struct ExportComponent
 
     uint32_t GetTerrainMaximumTriangles() const { return terrainMaximumTriangles_; }
     void SetTerrainMaximumTriangles(uint32_t value) { terrainMaximumTriangles_ = value; }
+    bool GetFbxPerTile() const { return fbxPerTile_; }
+    void SetFbxPerTile(bool value) { fbxPerTile_ = value; }
     const DownTool::FbxDistanceLod& GetDistanceLod() const { return distanceLod_; }
     void SetDistanceLod(const DownTool::FbxDistanceLod& value) { distanceLod_ = value; }
     double GetBuildingChunkSizeMeters() const { return buildingChunkSizeMeters_; }
@@ -157,6 +159,7 @@ struct ExportComponent
 
 protected:
     uint32_t terrainMaximumTriangles_ = 0;
+    bool fbxPerTile_ = false;
     DownTool::FbxDistanceLod distanceLod_;
     double buildingChunkSizeMeters_ = 2200.;
     double cesiumErrorMeters_ = 1.;
@@ -226,6 +229,8 @@ struct ExportConfiguration
     void SetDownloadRegions(const DownTool::DownloadRegions& value) { downloadRegions_ = value; }
     uint32_t GetTerrainMaximumTriangles() const { return terrainMaximumTriangles_; }
     void SetTerrainMaximumTriangles(uint32_t value) { terrainMaximumTriangles_ = value; }
+    bool GetFbxPerTile() const { return fbxPerTile_; }
+    void SetFbxPerTile(bool value) { fbxPerTile_ = value; }
     const DownTool::FbxDistanceLod& GetDistanceLod() const { return distanceLod_; }
     void SetDistanceLod(const DownTool::FbxDistanceLod& value) { distanceLod_ = value; }
     double GetBuildingChunkSizeMeters() const { return buildingChunkSizeMeters_; }
@@ -234,6 +239,7 @@ struct ExportConfiguration
 protected:
     DownTool::DownloadRegions downloadRegions_;
     uint32_t terrainMaximumTriangles_ = 0;
+    bool fbxPerTile_ = false;
     DownTool::FbxDistanceLod distanceLod_;
     double buildingChunkSizeMeters_ = 2200.;
 };

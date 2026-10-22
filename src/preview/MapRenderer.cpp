@@ -831,11 +831,11 @@ void DomDownToolPreview::MapRenderer::SetDownloadRegions(
     selectedRegionId_ = selectedId;
 }
 
-void DomDownToolPreview::MapRenderer::SetDraftRegion(
-    const DownTool::Wgs84Ring& vertices, bool excluded, bool closed)
+void DomDownToolPreview::MapRenderer::SetDraftRegion(const DownTool::Wgs84Ring& vertices,
+                                                     DownTool::DownloadRegionRole role, bool closed)
 {
     draftRegion_ = vertices;
-    draftRegionExcluded_ = excluded;
+    draftRegionRole_ = role;
     draftRegionClosed_ = closed;
 }
 
@@ -1240,10 +1240,11 @@ void DomDownToolPreview::MapRenderer::drawRangeEditor(SkCanvas& canvas) const
                                DownTool::DownloadRegionRole role, bool selected, bool closed)
     {
         const bool excluded = role != DownTool::DownloadRegionRole::Include;
-        const SkColor color = role == DownTool::DownloadRegionRole::ExcludeTerrain
-                                  ? SkColorSetRGB(99, 184, 239)
-                                  : excluded ? SkColorSetRGB(243, 112, 112)
-                                             : SkColorSetRGB(255, 204, 74);
+        const SkColor color =
+            role == DownTool::DownloadRegionRole::FlattenTerrain   ? SkColorSetRGB(130, 220, 137)
+            : role == DownTool::DownloadRegionRole::ExcludeTerrain ? SkColorSetRGB(99, 184, 239)
+            : excluded                                             ? SkColorSetRGB(243, 112, 112)
+                                                                   : SkColorSetRGB(255, 204, 74);
         SkPathBuilder builder;
         std::vector<ViewportPoint> points;
         for (const auto& vertex : vertices)
@@ -1318,8 +1319,6 @@ void DomDownToolPreview::MapRenderer::drawRangeEditor(SkCanvas& canvas) const
     }
     if (!draftRegion_.empty())
     {
-        drawRegion(draftRegion_, draftRegionExcluded_ ? DownTool::DownloadRegionRole::ExcludeGis :
-                                                       DownTool::DownloadRegionRole::Include,
-                   true, draftRegionClosed_);
+        drawRegion(draftRegion_, draftRegionRole_, true, draftRegionClosed_);
     }
 }

@@ -134,8 +134,11 @@ bool DomDownToolPreview::DownloadRangeEditor::AddRegion(const DownTool::Wgs84Rin
     DownTool::DownloadRegion region;
     region.SetId(NewId(next));
     const auto count = std::ranges::count(next, role, &DownTool::DownloadRegion::GetRole);
-    const std::string prefix = role == DownTool::DownloadRegionRole::Include ? "下载区 " :
-        role == DownTool::DownloadRegionRole::ExcludeGis ? "GIS 排除区 " : "底板排除区 ";
+    const std::string prefix = role == DownTool::DownloadRegionRole::Include      ? "下载区 "
+                               : role == DownTool::DownloadRegionRole::ExcludeGis ? "GIS 排除区 "
+                               : role == DownTool::DownloadRegionRole::ExcludeTerrain
+                                   ? "底板排除区 "
+                                   : "平整区域 ";
     region.SetName(prefix + std::to_string(count + 1));
     region.SetRole(role);
     region.SetVertices(vertices);

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "nlohmann/json.hpp"
+#include "CopernicusDem.h"
 
 namespace
 {
@@ -148,6 +149,172 @@ namespace
         }
 
         return postprocess_test::Require(foundTexture, "FBX has no diffuse texture");
+    }
+
+    bool RequirePerTileFbxMatchesMerged(const std::filesystem::path& mergedRoot,
+                                        const std::filesystem::path& splitRoot)
+    {
+        using postprocess_test::Require;
+        size_t expectedFileCount = 0;
+        for (const auto* shape : {"plane", "sphere"})
+        {
+            Assimp::Importer mergedImporter;
+            const auto* merged = postprocess_test::ReadFbxScene(
+                mergedImporter, mergedRoot / (std::string(shape) + ".fbx"));
+            if (!Require(merged && merged->mNumMeshes > 1, "测试没有生成多个底板网格") ||
+                !Require(!std::filesystem::exists(splitRoot / (std::string(shape) + ".fbx")),
+                         "单块模式仍然生成了合并 FBX"))
+            {
+                return false;
+            }
+            for (unsigned meshIndex = 0; meshIndex < merged->mNumMeshes; ++meshIndex)
+            {
+                const auto& expected = *merged->mMeshes[meshIndex];
+                const auto path =
+                    splitRoot / fmt::format("{}_{}.fbx", shape, expected.mName.C_Str());
+                Assimp::Importer splitImporter;
+                const auto* split = postprocess_test::ReadFbxScene(splitImporter, path);
+                if (!Require(split && split->mNumMeshes == 1,
+                             "独立 FBX 缺失或包含多个网格：" + path.string()) ||
+                    !RequireFbxTexturesBesideModel(path, splitRoot) ||
+                    !postprocess_test::RequireFbxAxisAndUnit(path))
+                {
+                    return false;
+                }
+                const auto& actual = *split->mMeshes[0];
+                if (!Require(actual.mName == expected.mName &&
+                                 actual.mNumVertices == expected.mNumVertices &&
+                                 actual.mNumFaces == expected.mNumFaces && actual.HasNormals() &&
+                                 expected.HasNormals() && actual.HasTextureCoords(0) &&
+                                 expected.HasTextureCoords(0),
+                             "独立 FBX 的网格结构与合并结果不一致"))
+                {
+                    return false;
+                }
+                for (unsigned vertex = 0; vertex < expected.mNumVertices; ++vertex)
+                {
+                    if (!Require(
+                            (actual.mVertices[vertex] - expected.mVertices[vertex]).SquareLength() <
+                                    1.e-8F &&
+                                (actual.mNormals[vertex] - expected.mNormals[vertex])
+                                        .SquareLength() < 1.e-8F &&
+                                (actual.mTextureCoords[0][vertex] -
+                                 expected.mTextureCoords[0][vertex])
+                                        .SquareLength() < 1.e-8F,
+                            "拆分 FBX 改变了顶点坐标、边界法线或 UV"))
+                    {
+                        return false;
+                    }
+                }
+                for (unsigned face = 0; face < expected.mNumFaces; ++face)
+                {
+                    for (unsigned corner = 0; corner < 3; ++corner)
+                    {
+                        if (!Require(actual.mFaces[face].mIndices[corner] ==
+                                         expected.mFaces[face].mIndices[corner],
+                                     "拆分 FBX 改变了三角面索引"))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                const auto* expectedNode = merged->mRootNode->FindNode(expected.mName);
+                const auto* actualNode = split->mRootNode->FindNode(actual.mName);
+                if (!Require(expectedNode && actualNode &&
+                                 expectedNode->mTransformation == actualNode->mTransformation &&
+                                 merged->mRootNode->mTransformation ==
+                                     split->mRootNode->mTransformation,
+                             "独立底板的节点坐标原点发生变化"))
+                {
+                    return false;
+                }
+                ++expectedFileCount;
+            }
+        }
+        size_t actualFileCount = 0;
+        for (const auto& entry : std::filesystem::directory_iterator(splitRoot))
+        {
+            if (entry.path().extension() == ".fbx")
+            {
+                ++actualFileCount;
+            }
+        }
+        std::ifstream input(splitRoot / "manifest.json");
+        const auto manifest = nlohmann::json::parse(input);
+        return Require(actualFileCount == expectedFileCount &&
+                           manifest.value("filemode", "") == "per-tile",
+                       "独立 FBX 文件数量或清单输出模式错误");
+    }
+
+    bool RequirePerTileFbxExport(const std::filesystem::path& testRoot)
+    {
+        class PerTileTestDownloader : public postprocess_test::TestPostProcessDown
+        {
+          public:
+            bool GenerateFbx() const { return GeneratePostProcessFbx(true); }
+        };
+        for (const bool elevation : {false, true})
+        {
+            const auto root = testRoot / (elevation ? "per-tile-terrain" : "per-tile-flat");
+            PerTileTestDownloader tool;
+            tool.Configure(root / "cache", root / "XYZ", 15, 32, {16383, 16383, 15},
+                           {16386, 16386, 15}, {0., 0.});
+            tool.SetFbxTextureSize(64);
+            tool.SetFbxTextureFormat(elevation ? "jpg" : "png");
+            tool.SetFbxShape(DownTool::FbxPlanetShape::Both);
+            tool.SetFbxMeshSubdivision(4);
+            tool.SetFbxTerrainHeightEnabled(elevation);
+            tool.SetFbxTerrainSampleRateMeters(100.);
+            tool.SetFbxTerrainMaximumTriangles(200);
+            tool.SetFbxElevationSampler([](const DownTool::LonLat& point) {
+                return std::optional<double>(100. + 40. * std::sin(point.lon * 800.) *
+                                                        std::cos(point.lat * 800.));
+            });
+            if (!postprocess_test::WriteSourceTiles(tool))
+            {
+                return false;
+            }
+            tool.SetPostProcessEnabled(true);
+            tool.SetPostProcessMaxZoomOnlyEnabled(true);
+            tool.RunPostProcessForTest();
+            tool.SetFbxOutputPath((root / "merged").string());
+            if (!postprocess_test::Require(!tool.GetFbxPerTile() && tool.GenerateFbx(),
+                                           "默认合并 FBX 导出失败"))
+            {
+                return false;
+            }
+            tool.SetFbxOutputPath((root / "split").string());
+            tool.SetFbxPerTile(true);
+            if (!postprocess_test::Require(tool.GenerateFbx(), "独立底板 FBX 导出失败") ||
+                !RequirePerTileFbxMatchesMerged(root / "merged", root / "split"))
+            {
+                return false;
+            }
+            tool.SetFbxOutputPath((root / "canceled").string());
+            tool.SetProgressCallback([&tool](const DownTool::DownToolProgress& progress) {
+                if (progress.stage == "生成独立底板 FBX" && progress.completed == 1)
+                {
+                    tool.StopDown();
+                }
+            });
+            if (!postprocess_test::Require(!tool.GenerateFbx(), "取消请求没有中止独立 FBX 写出"))
+            {
+                return false;
+            }
+            size_t canceledFiles = 0;
+            for (const auto& entry : std::filesystem::directory_iterator(root / "canceled"))
+            {
+                if (entry.path().extension() == ".fbx")
+                {
+                    ++canceledFiles;
+                }
+            }
+            if (!postprocess_test::Require(canceledFiles == 1, "取消后仍继续写入独立 FBX 文件"))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     bool HasAnyJpg(const std::filesystem::path& path)
@@ -975,12 +1142,151 @@ namespace
         return true;
     }
 
+    bool RequireFlattenedTerrainMesh(const std::filesystem::path& testRoot)
+    {
+        const auto root = testRoot / "flattened-terrain";
+        postprocess_test::TestPostProcessDown tool;
+        tool.Configure(root / "cache", root / "XYZ", 15, 32, DownTool::Tile(16384, 16384, 15),
+                       DownTool::Tile(16387, 16387, 15), {0.02, -0.02});
+        tool.SetPostProcessEnabled(true);
+        tool.SetPostProcessFbxEnabled(true);
+        tool.SetFbxTextureSize(64);
+        tool.SetFbxShape(DownTool::FbxPlanetShape::Plane);
+        tool.SetFbxTerrainHeightEnabled(true);
+        tool.SetFbxTerrainSampleRateMeters(30.);
+        DownTool::CopernicusDemOptions options;
+        options.centerWgs84 = tool.GetCenterLonLat();
+        options.radiusMeters = 10000.;
+        options.cachePath = root / "dem-cache";
+        options.SetFlattenPolygonsWgs84({{{-0.1, -0.1}, {0.1, -0.1}, {0.1, 0.1}, {-0.1, 0.1}}});
+        options.downloadCallback = [](std::string_view, const std::filesystem::path& path,
+                                      const DownTool::CopernicusDemCancellationCallback&,
+                                      std::string&) {
+            cv::Mat image(8, 8, CV_32FC1);
+            for (int y = 0; y < image.rows; ++y)
+            {
+                for (int x = 0; x < image.cols; ++x)
+                {
+                    image.at<float>(y, x) = x * 20.F;
+                }
+            }
+            std::vector<unsigned char> encoded;
+            cv::imencode(".tif", image, encoded);
+            std::ofstream output(path, std::ios::binary);
+            output.write(reinterpret_cast<const char*>(encoded.data()), encoded.size());
+            return output.good();
+        };
+        std::string error;
+        const auto elevation = DownTool::CopernicusDemData::Prepare(options, error);
+        if (!postprocess_test::Require(elevation != nullptr, "无法准备平整地形高程：" + error))
+        {
+            return false;
+        }
+        const double expected = elevation->Sample(tool.GetCenterLonLat()).value();
+        tool.SetFbxElevationSampler(
+            [elevation](const DownTool::LonLat& point) { return elevation->Sample(point); });
+        tool.SetFbxFlattenRegions(elevation->GetFlattenedRegions());
+        tool.SetFbxOutputPath(postprocess_test::PathToUtf8String(root / "FBX"));
+        if (!postprocess_test::WriteSourceTiles(tool))
+        {
+            return false;
+        }
+        tool.RunPostProcessForTest();
+        Assimp::Importer importer;
+        const auto* scene = postprocess_test::ReadFbxScene(importer, root / "FBX/plane.fbx");
+        if (!postprocess_test::Require(scene && scene->mNumMeshes >= 4,
+                                       "平整区域没有生成多块地形 FBX"))
+        {
+            return false;
+        }
+        for (unsigned index = 0; index < scene->mNumMeshes; ++index)
+        {
+            const auto& mesh = *scene->mMeshes[index];
+            for (unsigned vertex = 0; vertex < mesh.mNumVertices; ++vertex)
+            {
+                if (!postprocess_test::Require(
+                        std::abs(mesh.mVertices[vertex].z - expected * 100.) < 0.01,
+                        "平整区域内不同网格块没有使用相同的平均海拔"))
+                {
+                    return false;
+                }
+            }
+        }
+        // 小范围未覆盖采样网格点时，也必须沿轮廓切出平整面。
+        options.SetFlattenPolygonsWgs84(
+            {{{0.02001, -0.02004}, {0.02004, -0.02004}, {0.02004, -0.02001}, {0.02001, -0.02001}}});
+        const auto tiny = DownTool::CopernicusDemData::Prepare(options, error);
+        if (!postprocess_test::Require(tiny != nullptr, "无法准备小平整区域"))
+        {
+            return false;
+        }
+        tool.SetFbxElevationSampler(
+            [tiny](const DownTool::LonLat& point) { return tiny->Sample(point); });
+        tool.SetFbxFlattenRegions(tiny->GetFlattenedRegions());
+        tool.SetFbxOutputPath(postprocess_test::PathToUtf8String(root / "tiny-FBX"));
+        tool.RunPostProcessForTest();
+        Assimp::Importer tinyImporter;
+        const auto* tinyScene =
+            postprocess_test::ReadFbxScene(tinyImporter, root / "tiny-FBX/plane.fbx");
+        if (!postprocess_test::Require(tinyScene && tinyScene->mNumMeshes > 0,
+                                       "小平整区域没有生成 FBX"))
+        {
+            return false;
+        }
+        const auto& polygon = options.GetFlattenPolygonsWgs84().front();
+        const double tinyHeight = tiny->Sample({0.020025, -0.020025}).value();
+        size_t flattenedFaces = 0;
+        const auto coordinate = [&](const aiVector3D& vertex) {
+            constexpr double earthRadius = 6378137.;
+            const double centerY =
+                earthRadius *
+                std::log(std::tan(std::numbers::pi / 4. +
+                                  tool.GetCenterLonLat().lat * std::numbers::pi / 360.));
+            return DownTool::LonLat(
+                tool.GetCenterLonLat().lon +
+                    vertex.x / (100. * earthRadius) * 180. / std::numbers::pi,
+                (2. * std::atan(std::exp((vertex.y / 100. + centerY) / earthRadius)) -
+                 std::numbers::pi / 2.) *
+                    180. / std::numbers::pi);
+        };
+        for (unsigned index = 0; index < tinyScene->mNumMeshes; ++index)
+        {
+            const auto& mesh = *tinyScene->mMeshes[index];
+            for (unsigned face = 0; face < mesh.mNumFaces; ++face)
+            {
+                const auto& triangle = mesh.mFaces[face];
+                const auto& first = mesh.mVertices[triangle.mIndices[0]];
+                const auto& second = mesh.mVertices[triangle.mIndices[1]];
+                const auto& third = mesh.mVertices[triangle.mIndices[2]];
+                if (DownTool::GeographicRingContainsPoint(
+                        polygon, coordinate((first + second + third) / 3.F)))
+                {
+                    ++flattenedFaces;
+                    if (!postprocess_test::Require(std::abs(first.z - tinyHeight * 100.) < 0.01 &&
+                                                       std::abs(second.z - tinyHeight * 100.) <
+                                                           0.01 &&
+                                                       std::abs(third.z - tinyHeight * 100.) < 0.01,
+                                                   "跨平整区域轮廓的三角面没有被切开并统一高度"))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+        if (!postprocess_test::Require(flattenedFaces > 0, "小于采样间距的平整区被网格简化漏掉"))
+        {
+            return false;
+        }
+        return true;
+    }
+
     bool RunTest()
     {
         const std::filesystem::path testRoot =
             postprocess_test::MakeTestRoot("fbx");
         if (!postprocess_test::ResetDirectory(testRoot) ||
-            !RequireSignedSeaLevelTerrain(testRoot) || !RequireTerrainExclusionMesh(testRoot))
+            !RequireSignedSeaLevelTerrain(testRoot) || !RequireTerrainExclusionMesh(testRoot) ||
+            !RequireFlattenedTerrainMesh(testRoot) || !RequirePerTileFbxExport(testRoot))
         {
             return false;
         }

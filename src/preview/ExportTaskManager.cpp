@@ -302,10 +302,10 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
     }
 
     Json json = {
-        {"rangeMode", configuration.rangeMode == ExportRangeMode::KmlPolygon ?
-            "custom-polygon" : "center-radius"},
-        {"centerWgs84", {{"lon", configuration.centerWgs84.lon},
-                          {"lat", configuration.centerWgs84.lat}}},
+        {"rangeMode", configuration.rangeMode == ExportRangeMode::KmlPolygon ? "custom-polygon"
+                                                                             : "center-radius"},
+        {"centerWgs84",
+         {{"lon", configuration.centerWgs84.lon}, {"lat", configuration.centerWgs84.lat}}},
         {"radiusMeters", configuration.radiusMeters},
         {"polygonsWgs84", std::move(polygonsWgs84)},
         {"downloadRegions", DownTool::DownloadRegionsToJson(configuration.GetDownloadRegions())},
@@ -325,12 +325,12 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
         {"exportBuildingFbx", configuration.exportBuildingFbx},
         {"buildingWallTexturePath", PathToUtf8(configuration.buildingWallTexturePath)},
         {"buildingRoofTexturePath", PathToUtf8(configuration.buildingRoofTexturePath)},
-        {"buildingFbxWallTextureMode", BuildingFbxTextureModeValue(
-            configuration.buildingFbxWallTextureMode)},
-        {"buildingFbxRoofTextureMode", BuildingFbxRoofTextureModeValue(
-            configuration.buildingFbxRoofTextureMode)},
-        {"buildingFbxAtlasImageFormat", BuildingFbxAtlasImageFormatValue(
-            configuration.buildingFbxAtlasImageFormat)},
+        {"buildingFbxWallTextureMode",
+         BuildingFbxTextureModeValue(configuration.buildingFbxWallTextureMode)},
+        {"buildingFbxRoofTextureMode",
+         BuildingFbxRoofTextureModeValue(configuration.buildingFbxRoofTextureMode)},
+        {"buildingFbxAtlasImageFormat",
+         BuildingFbxAtlasImageFormatValue(configuration.buildingFbxAtlasImageFormat)},
         {"buildingLayerHeightCentimeters", configuration.buildingLayerHeightCentimeters},
         {"buildingChunkSizeMeters", configuration.GetBuildingChunkSizeMeters()},
         {"buildingMaxWallMaterialsPerBucket", configuration.buildingMaxWallMaterialsPerBucket},
@@ -341,6 +341,7 @@ Json ExportConfigurationToJson(const ExportConfiguration& configuration)
         {"fbxTextureFormat", NormalizeImageFormat(configuration.fbxTextureFormat)},
         {"fbxTerrainSampleRateMeters", configuration.fbxTerrainSampleRateMeters},
         {"terrainMaximumTriangles", configuration.GetTerrainMaximumTriangles()},
+        {"fbxPerTile", configuration.GetFbxPerTile()},
         {"distanceLod", DownTool::FbxDistanceLodToJson(configuration.GetDistanceLod())}};
     if (!configuration.groups.empty())
     {
@@ -438,6 +439,7 @@ std::optional<ExportConfiguration> ExportConfigurationFromJson(const Json& value
     configuration.exportTiles = GetJsonBool(value, "exportTiles");
     configuration.exportMergedImage = GetJsonBool(value, "exportMergedImage");
     configuration.exportFbx = GetJsonBool(value, "exportFbx");
+    configuration.SetFbxPerTile(GetJsonBool(value, "fbxPerTile"));
     configuration.exportTerrainHeight = GetJsonBool(value, "exportTerrainHeight");
     configuration.exportGeoJson = GetJsonBool(value, "exportGeoJson");
     configuration.colorBuildingsByHeight = GetJsonBool(value, "colorBuildingsByHeight");
@@ -1069,6 +1071,7 @@ void ConfigureFbxElevation(
         return;
     }
     downloader.SetFbxTerrainHeightEnabled(true);
+    downloader.SetFbxFlattenRegions(elevationData->GetFlattenedRegions());
     // 固定海拔零面，避免改变下载范围后模型出现整体高度偏移。
     downloader.SetFbxElevationReferenceMeters(0.);
     downloader.SetFbxElevationSampler(
@@ -1306,6 +1309,11 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
     output << "底板排除区数量: " << DownTool::GetRegionPolygons(
         configuration.GetDownloadRegions(), DownTool::DownloadRegionRole::ExcludeTerrain).size()
            << "\n";
+    output << "平整区域数量: "
+           << DownTool::GetRegionPolygons(configuration.GetDownloadRegions(),
+                                          DownTool::DownloadRegionRole::FlattenTerrain)
+                  .size()
+           << "\n";
     output
            << "层级: " << configuration.zoom << "\n"
            << "卫星图来源: " << FormatSourceNames(configuration) << "\n"
@@ -1343,10 +1351,10 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
             }
         }
     }
-    output
-           << "GIS 产物根目录: "
+    output << "GIS 产物根目录: "
            << PathToUtf8(TaskOutputRoot(configuration, std::string(taskId)) /
-              std::filesystem::u8path("GIS")) << "\n"
+                         std::filesystem::u8path("GIS"))
+           << "\n"
            << "GIS 分类: " << MakeCategoryName(configuration.gisCategories) << "\n"
            << "GIS 组合方式: " << FormatGisModes(configuration) << "\n"
            << "导出类型: " << BuildTaskDetailsText(configuration) << "\n"
@@ -1354,43 +1362,32 @@ bool WriteTaskRecordFile(const std::filesystem::path& outputRoot,
            << configuration.mergedImageResolution << "\n"
            << "GIS 透明大图格式: PNG\n"
            << "FBX 贴图尺寸: " << configuration.fbxTextureSize << "\n"
-           << "FBX 贴图格式: " << NormalizeImageFormat(configuration.fbxTextureFormat)
-           << "\n"
-           << "FBX 导出高度: "
-           << (configuration.exportTerrainHeight ? "是" : "否") << "\n"
-           << "FBX 高度采样率 (米): "
-           << configuration.fbxTerrainSampleRateMeters << "\n"
-           << "地形每块三角面上限（0不限）："
-           << configuration.GetTerrainMaximumTriangles() << "\n"
+           << "FBX 每块单独导出: " << (configuration.GetFbxPerTile() ? "是" : "否") << "\n"
+           << "FBX 贴图格式: " << NormalizeImageFormat(configuration.fbxTextureFormat) << "\n"
+           << "FBX 导出高度: " << (configuration.exportTerrainHeight ? "是" : "否") << "\n"
+           << "FBX 高度采样率 (米): " << configuration.fbxTerrainSampleRateMeters << "\n"
+           << "地形每块三角面上限（0不限）：" << configuration.GetTerrainMaximumTriangles() << "\n"
            << "FBX 距离档位: "
            << DownTool::FbxDistanceLodToJson(configuration.GetDistanceLod()).dump() << "\n"
-           << "建筑按高度着色: "
-           << (configuration.colorBuildingsByHeight ? "是" : "否") << "\n"
-            << "建筑 FBX: "
-            << (configuration.exportBuildingFbx ? "是" : "否") << "\n"
-            << "建筑 FBX 墙体贴图模式: "
-            << BuildingFbxTextureModeName(configuration.buildingFbxWallTextureMode) << "\n"
-            << "建筑 FBX 屋顶贴图模式: "
-            << BuildingFbxRoofTextureModeName(configuration.buildingFbxRoofTextureMode) << "\n"
-            << "建筑 FBX 合并贴图格式: "
-            << BuildingFbxAtlasImageFormatName(configuration.buildingFbxAtlasImageFormat)
-           << "\n"
+           << "建筑按高度着色: " << (configuration.colorBuildingsByHeight ? "是" : "否") << "\n"
+           << "建筑 FBX: " << (configuration.exportBuildingFbx ? "是" : "否") << "\n"
+           << "建筑 FBX 墙体贴图模式: "
+           << BuildingFbxTextureModeName(configuration.buildingFbxWallTextureMode) << "\n"
+           << "建筑 FBX 屋顶贴图模式: "
+           << BuildingFbxRoofTextureModeName(configuration.buildingFbxRoofTextureMode) << "\n"
+           << "建筑 FBX 合并贴图格式: "
+           << BuildingFbxAtlasImageFormatName(configuration.buildingFbxAtlasImageFormat) << "\n"
            << "建筑 FBX 卫星屋顶输出: "
-           << (UsesSatelliteRoofTexture(configuration) ?
-               "写入对应卫星或叠加卫星 FBX 目录，复用 manifest 贴图" : "否")
+           << (UsesSatelliteRoofTexture(configuration)
+                   ? "写入对应卫星或叠加卫星 FBX 目录，复用 manifest 贴图"
+                   : "否")
            << "\n"
-           << "建筑墙体贴图目录: "
-           << PathToUtf8(configuration.buildingWallTexturePath) << "\n"
-           << "建筑屋顶贴图目录: "
-           << PathToUtf8(configuration.buildingRoofTexturePath) << "\n"
-           << "建筑楼层高度 (厘米): "
-           << configuration.buildingLayerHeightCentimeters << "\n"
-           << "建筑分块边长 (米): "
-           << configuration.GetBuildingChunkSizeMeters() << "\n"
-           << "建筑墙体材质上限: "
-           << configuration.buildingMaxWallMaterialsPerBucket << "\n"
-           << "建筑贴图随机种子: "
-           << configuration.buildingTextureRandomSeed << "\n"
+           << "建筑墙体贴图目录: " << PathToUtf8(configuration.buildingWallTexturePath) << "\n"
+           << "建筑屋顶贴图目录: " << PathToUtf8(configuration.buildingRoofTexturePath) << "\n"
+           << "建筑楼层高度 (厘米): " << configuration.buildingLayerHeightCentimeters << "\n"
+           << "建筑分块边长 (米): " << configuration.GetBuildingChunkSizeMeters() << "\n"
+           << "建筑墙体材质上限: " << configuration.buildingMaxWallMaterialsPerBucket << "\n"
+           << "建筑贴图随机种子: " << configuration.buildingTextureRandomSeed << "\n"
            << "结果: " << result << "\n";
     for (const ExportContentGroup& group : configuration.groups)
     {
@@ -2388,6 +2385,8 @@ bool DomDownToolPreview::ExportTaskManager::RunExport(
         elevationOptions.centerWgs84 = configuration.centerWgs84;
         elevationOptions.radiusMeters = configuration.radiusMeters;
         elevationOptions.polygonsWgs84 = configuration.polygonsWgs84;
+        elevationOptions.SetFlattenPolygonsWgs84(DownTool::GetRegionPolygons(
+            configuration.GetDownloadRegions(), DownTool::DownloadRegionRole::FlattenTerrain));
         elevationOptions.cancellationRequested =
             [this] { return IsCancellationRequested(); };
         elevationOptions.progressCallback =
@@ -2613,6 +2612,7 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteDownloaderToRoot(
     downloader->SetFbxTerrainSampleRateMeters(
         configuration.fbxTerrainSampleRateMeters);
     downloader->SetFbxTerrainMaximumTriangles(configuration.GetTerrainMaximumTriangles());
+    downloader->SetFbxPerTile(configuration.GetFbxPerTile());
     downloader->SetFbxDistanceLod(configuration.GetDistanceLod());
     downloader->SetFbxExcludedPolygonsWgs84(DownTool::GetRegionPolygons(
         configuration.GetDownloadRegions(), DownTool::DownloadRegionRole::ExcludeTerrain));
@@ -2968,6 +2968,7 @@ bool DomDownToolPreview::ExportTaskManager::RunGisExport(
     downloader.SetFbxTerrainSampleRateMeters(
         configuration.fbxTerrainSampleRateMeters);
     downloader.SetFbxTerrainMaximumTriangles(configuration.GetTerrainMaximumTriangles());
+    downloader.SetFbxPerTile(configuration.GetFbxPerTile());
     downloader.SetFbxDistanceLod(configuration.GetDistanceLod());
     downloader.SetFbxExcludedPolygonsWgs84(DownTool::GetRegionPolygons(
         configuration.GetDownloadRegions(), DownTool::DownloadRegionRole::ExcludeTerrain));

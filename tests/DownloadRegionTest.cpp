@@ -166,11 +166,13 @@ bool TestCopyRegionRoles()
 {
     const auto ring =
         Rectangle(116.1234567890123, 39.1234567890123, 116.2234567890123, 39.2234567890123);
-    for (const auto sourceRole : {DownloadRegionRole::Include, DownloadRegionRole::ExcludeGis,
-                                  DownloadRegionRole::ExcludeTerrain})
+    for (const auto sourceRole :
+         {DownloadRegionRole::Include, DownloadRegionRole::ExcludeGis,
+          DownloadRegionRole::ExcludeTerrain, DownloadRegionRole::FlattenTerrain})
     {
-        for (const auto targetRole : {DownloadRegionRole::Include, DownloadRegionRole::ExcludeGis,
-                                      DownloadRegionRole::ExcludeTerrain})
+        for (const auto targetRole :
+             {DownloadRegionRole::Include, DownloadRegionRole::ExcludeGis,
+              DownloadRegionRole::ExcludeTerrain, DownloadRegionRole::FlattenTerrain})
         {
             DomDownToolPreview::DownloadRangeEditor editor;
             std::string error;

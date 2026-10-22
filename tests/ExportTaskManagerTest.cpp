@@ -8,6 +8,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <numbers>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -197,16 +198,27 @@ class ImageOutputDownloader final : public DownTool::DownToolBase
 {
   public:
     explicit ImageOutputDownloader(cv::Scalar color,
-                                   std::shared_ptr<std::atomic<double>> elevationReference = {})
-        : color_(color), elevationReference_(std::move(elevationReference))
+                                   std::shared_ptr<std::atomic<double>> elevationReference = {},
+                                   std::shared_ptr<std::atomic<double>> sampledElevation = {},
+                                   std::shared_ptr<std::atomic_bool> perTile = {})
+        : color_(color), elevationReference_(std::move(elevationReference)),
+          sampledElevation_(std::move(sampledElevation)), perTile_(std::move(perTile))
     {
     }
 
     void StartDown() override
     {
+        if (perTile_)
+        {
+            perTile_->store(GetFbxPerTile());
+        }
         if (elevationReference_)
         {
             elevationReference_->store(GetFbxElevationReferenceMeters());
+        }
+        if (sampledElevation_ && GetFbxElevationSampler())
+        {
+            sampledElevation_->store(GetFbxElevationSampler()(GetCenterLonLat()).value_or(-9999.));
         }
         ReportProgress("下载瓦片", 1, 2);
         if (GetPostProcessEnabled())
@@ -273,6 +285,8 @@ class ImageOutputDownloader final : public DownTool::DownToolBase
 
     cv::Scalar color_;
     std::shared_ptr<std::atomic<double>> elevationReference_;
+    std::shared_ptr<std::atomic<double>> sampledElevation_;
+    std::shared_ptr<std::atomic_bool> perTile_;
 };
 
 class FailingDownloader final : public DownTool::DownToolBase
@@ -501,6 +515,21 @@ bool verifySeaLevelExports(const std::filesystem::path& testRoot)
             configuration.outputRoot = root / "output";
             configuration.exportFbx = true;
             configuration.exportTerrainHeight = true;
+            if (outer)
+            {
+                DownTool::DownloadRegion flattened;
+                flattened.SetId("flatten");
+                flattened.SetName("周边平整区域");
+                flattened.SetRole(DownTool::DownloadRegionRole::FlattenTerrain);
+                flattened.SetVertices(
+                    {{116.5, 39.01}, {116.99, 39.01}, {116.99, 39.5}, {116.5, 39.5}});
+                auto disabled = flattened;
+                disabled.SetId("disabled-flatten");
+                disabled.SetEnabled(false);
+                disabled.SetVertices(
+                    {{116.01, 39.01}, {116.99, 39.01}, {116.99, 39.99}, {116.01, 39.99}});
+                configuration.SetDownloadRegions({flattened, disabled});
+            }
             ExportSourceEntry source;
             source.id = "test.satellite";
             source.name = "测试卫星";
@@ -537,10 +566,13 @@ bool verifySeaLevelExports(const std::filesystem::path& testRoot)
 
             const auto reference =
                 std::make_shared<std::atomic<double>>(std::numeric_limits<double>::quiet_NaN());
-            ExportTaskManager manager({}, root / "records.json", [reference](std::string_view) {
-                return std::make_unique<ImageOutputDownloader>(cv::Scalar(10, 20, 30, 255),
-                                                               reference);
-            });
+            const auto sampled =
+                std::make_shared<std::atomic<double>>(std::numeric_limits<double>::quiet_NaN());
+            ExportTaskManager manager({}, root / "records.json",
+                                      [reference, sampled](std::string_view) {
+                                          return std::make_unique<ImageOutputDownloader>(
+                                              cv::Scalar(10, 20, 30, 255), reference, sampled);
+                                      });
             const auto taskId = manager.Enqueue(configuration);
             const bool finished = waitForFinished(manager, taskId);
             const auto records = manager.GetRecords();
@@ -553,6 +585,16 @@ bool verifySeaLevelExports(const std::filesystem::path& testRoot)
             }
             const auto metadata = loadJsonFile(ExportTaskOutputRoot(configuration, taskId) /
                                                std::filesystem::u8path("高度") / "meta.json");
+            const double northernWeight = std::cos(39.375 * std::numbers::pi / 180.);
+            const double southernWeight = std::cos(39.125 * std::numbers::pi / 180.);
+            const double expected = outer ? (300. * northernWeight + 175. * southernWeight) /
+                                                (2. * (northernWeight + southernWeight))
+                                          : 150.;
+            if (!postprocess_test::Require(std::abs(sampled->load() - expected) < 1.e-8,
+                                           "旧式或分组导出未应用平整区，或停用的平整区仍生效"))
+            {
+                return false;
+            }
             if (!postprocess_test::Require(reference->load() == 0. && metadata.is_object() &&
                                                metadata.value("referenceMode", "") == "sea-level" &&
                                                metadata.value("referenceElevationMeters", -1.) ==
@@ -561,6 +603,114 @@ bool verifySeaLevelExports(const std::filesystem::path& testRoot)
             {
                 return false;
             }
+        }
+    }
+    return true;
+}
+
+bool verifyPerTileFbxConfiguration(const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    using postprocess_test::Require;
+    for (const bool grouped : {false, true})
+    {
+        const auto root = testRoot / (grouped ? "per-tile-grouped" : "per-tile-legacy");
+        const auto captured = std::make_shared<std::atomic_bool>(false);
+        std::string taskId;
+        {
+            ExportTaskManager manager({}, root / "records.json", [captured](std::string_view) {
+                return std::make_unique<ImageOutputDownloader>(cv::Scalar(10, 20, 30, 255), nullptr,
+                                                               nullptr, captured);
+            });
+            ExportConfiguration configuration;
+            configuration.radiusMeters = 1000.;
+            configuration.outputRoot = root / "output";
+            configuration.exportFbx = true;
+            configuration.SetFbxPerTile(!grouped);
+            ExportSourceEntry source;
+            source.id = "test.satellite";
+            source.name = "测试卫星";
+            source.cachePath = root / "cache";
+            if (grouped)
+            {
+                ExportComponent component;
+                component.id = "terrain";
+                component.kind = ExportComponentKind::BasePlate;
+                component.SetFbxPerTile(true);
+                component.sources = {source};
+                ExportContentGroup group;
+                group.id = "terrain-group";
+                group.components = {component};
+                configuration.groups = {group};
+            }
+            else
+            {
+                configuration.satelliteSources = {{source.id, source.name, source.cachePath}};
+            }
+            taskId = manager.Enqueue(configuration);
+            if (!Require(waitForFinished(manager, taskId) && captured->load() &&
+                             manager.GetRecords()[0].state == ExportTaskState::Succeeded,
+                         "独立 FBX 设置没有传给下载器"))
+            {
+                return false;
+            }
+            configuration.SetFbxPerTile(grouped);
+            if (grouped)
+            {
+                configuration.groups[0].components[0].SetFbxPerTile(false);
+            }
+            std::string error;
+            if (!Require(manager.Restart(taskId, configuration, error) &&
+                             waitForFinished(manager, taskId) && !captured->load() &&
+                             manager.GetRecords().size() == 1 &&
+                             manager.GetRecords()[0].state == ExportTaskState::Succeeded,
+                         "重新下载没有更新原任务的 FBX 拆分设置：" + error))
+            {
+                return false;
+            }
+        }
+        ExportTaskManager restored({}, root / "records.json");
+        const auto records = restored.GetRecords();
+        const auto* record = findRecord(records, taskId);
+        if (!Require(
+                record && record->configuration &&
+                    record->configuration->GetFbxPerTile() == grouped &&
+                    (!grouped || !record->configuration->groups[0].components[0].GetFbxPerTile()),
+                "重启后没有恢复 FBX 拆分设置"))
+        {
+            return false;
+        }
+        auto legacy = loadJsonFile(root / "records.json");
+        for (auto& task : legacy["tasks"])
+        {
+            auto& configuration = task["configuration"];
+            configuration.erase("fbxPerTile");
+            if (configuration.contains("groups"))
+            {
+                for (auto& group : configuration["groups"])
+                {
+                    for (auto& component : group["components"])
+                    {
+                        component.erase("fbxPerTile");
+                    }
+                }
+            }
+        }
+        const auto legacyPath = root / "legacy-records.json";
+        {
+            std::ofstream output(legacyPath, std::ios::binary | std::ios::trunc);
+            output << legacy.dump();
+        }
+        ExportTaskManager legacyManager({}, legacyPath);
+        const auto legacyRecords = legacyManager.GetRecords();
+        const auto* legacyRecord = findRecord(legacyRecords, taskId);
+        if (!Require(legacyRecord && legacyRecord->configuration &&
+                         !legacyRecord->configuration->GetFbxPerTile() &&
+                         (!grouped ||
+                          !legacyRecord->configuration->groups[0].components[0].GetFbxPerTile()),
+                     "缺少拆分字段的旧任务未保持合并模式"))
+        {
+            return false;
         }
     }
     return true;
@@ -949,7 +1099,8 @@ bool runTest()
     {
         return false;
     }
-    if (!verifyCesiumConfiguration(testRoot) || !verifyRestartAndRename(testRoot))
+    if (!verifyCesiumConfiguration(testRoot) || !verifyRestartAndRename(testRoot) ||
+        !verifyPerTileFbxConfiguration(testRoot))
     {
         return false;
     }
@@ -1862,6 +2013,11 @@ bool runTest()
         terrainExcluded.SetId("terrain-exclusion-1");
         terrainExcluded.SetRole(DownTool::DownloadRegionRole::ExcludeTerrain);
         regions.push_back(terrainExcluded);
+        auto flattened = excluded;
+        flattened.SetId("flatten-terrain-1");
+        flattened.SetName("周边平整区域");
+        flattened.SetRole(DownTool::DownloadRegionRole::FlattenTerrain);
+        regions.push_back(flattened);
         configuration.SetDownloadRegions(regions);
         const std::string taskId = manager.Enqueue(configuration);
         const bool finished = waitForFinished(manager, taskId);
@@ -1925,24 +2081,25 @@ bool runTest()
             records.size() == 1 ? records.front().configuration : std::nullopt;
         if (!postprocess_test::Require(
                 configuration.has_value() && configuration->radiusMeters == 1000. &&
-                    configuration->rangeMode ==
-                        DomDownToolPreview::ExportRangeMode::KmlPolygon &&
+                    configuration->rangeMode == DomDownToolPreview::ExportRangeMode::KmlPolygon &&
                     configuration->polygonsWgs84.size() == 1 &&
                     configuration->polygonsWgs84.front().size() == 4 &&
                     configuration->kmlFileName == "persisted-range.kml" &&
-                    configuration->GetDownloadRegions().size() == 4 &&
+                    configuration->GetDownloadRegions().size() == 5 &&
                     configuration->GetDownloadRegions()[1].GetRole() ==
                         DownTool::DownloadRegionRole::ExcludeGis &&
-                    configuration->GetDownloadRegions()[1].GetName() ==
-                        "可重新编辑的 GIS 排除区" &&
+                    configuration->GetDownloadRegions()[1].GetName() == "可重新编辑的 GIS 排除区" &&
                     !configuration->GetDownloadRegions()[2].GetEnabled() &&
                     configuration->GetDownloadRegions()[3].GetRole() ==
                         DownTool::DownloadRegionRole::ExcludeTerrain &&
-                    DomDownToolPreview::ExportGisSpatialRange(
-                        *configuration).GetExcludedPolygons().size() == 1 &&
+                    configuration->GetDownloadRegions()[4].GetRole() ==
+                        DownTool::DownloadRegionRole::FlattenTerrain &&
+                    configuration->GetDownloadRegions()[4].GetName() == "周边平整区域" &&
+                    DomDownToolPreview::ExportGisSpatialRange(*configuration)
+                            .GetExcludedPolygons()
+                            .size() == 1 &&
                     configuration->zoom == 15 && configuration->exportTiles &&
-                    !configuration->exportBuildingFbx &&
-                    configuration->fbxTextureFormat == "jpg" &&
+                    !configuration->exportBuildingFbx && configuration->fbxTextureFormat == "jpg" &&
                     configuration->fbxTerrainSampleRateMeters == 60. &&
                     configuration->GetTerrainMaximumTriangles() == 8192 &&
                     configuration->outputRoot == testRoot / "progress-burst-output" &&

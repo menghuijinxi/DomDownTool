@@ -407,40 +407,41 @@ Json ComponentToJson(const ExportComponent& component)
     {
         sources.push_back(SourceToJson(source));
     }
-    return {
-        {"id", component.id},
-        {"kind", ComponentKindValue(component.kind)},
-        {"sources", std::move(sources)},
-        {"imageFormat", NormalizeFormat(component.imageFormat)},
-        {"maxEdge", component.maxEdge},
-        {"xyzTileSize", component.xyzTileSize},
-        {"textureSize", component.textureSize},
-        {"textureFormat", NormalizeFormat(component.textureFormat)},
-        {"shape", ShapeValue(component.shape)},
-        {"exportElevation", component.exportElevation},
-        {"elevationSampleMeters", component.elevationSampleMeters},
-        {"terrainMaximumTriangles", component.GetTerrainMaximumTriangles()},
-        {"distanceLod", DownTool::FbxDistanceLodToJson(component.GetDistanceLod())},
-        {"meshSubdivision", component.meshSubdivision},
-        {"wallTexturePath", PathToUtf8(component.wallTexturePath)},
-        {"roofTexturePath", PathToUtf8(component.roofTexturePath)},
-        {"wallTextureMode", WallModeValue(component.wallTextureMode)},
-        {"roofTextureMode", RoofModeValue(component.roofTextureMode)},
-        {"atlasImageFormat", component.atlasImageFormat ==
-            DownTool::AmapBuildingFbxAtlasImageFormat::Jpg ? "jpg" : "png"},
-        {"layerHeightCentimeters", component.layerHeightCentimeters},
-        {"buildingChunkSizeMeters", component.GetBuildingChunkSizeMeters()},
-        {"cesiumErrorMeters", component.GetCesiumErrorMeters()},
-        {"cesiumLodLevels", component.GetCesiumLodLevels()},
-        {"cesiumHeightOffsetMeters", component.GetCesiumHeightOffsetMeters()},
-        {"cesiumGeoidPath", PathToUtf8(component.GetCesiumGeoidPath())},
-        {"cesiumTextureMipmaps", component.GetCesiumTextureMipmaps()},
-        {"maxWallMaterialsPerBucket", component.maxWallMaterialsPerBucket},
-        {"textureRandomSeed", component.textureRandomSeed},
-        {"followBaseElevation", component.followBaseElevation},
-        {"basePlateComponentId", component.basePlateComponentId},
-        {"includeBaseLayers", component.includeBaseLayers},
-        {"includeLabels", component.includeLabels}};
+    return {{"id", component.id},
+            {"kind", ComponentKindValue(component.kind)},
+            {"sources", std::move(sources)},
+            {"imageFormat", NormalizeFormat(component.imageFormat)},
+            {"maxEdge", component.maxEdge},
+            {"xyzTileSize", component.xyzTileSize},
+            {"textureSize", component.textureSize},
+            {"textureFormat", NormalizeFormat(component.textureFormat)},
+            {"shape", ShapeValue(component.shape)},
+            {"exportElevation", component.exportElevation},
+            {"elevationSampleMeters", component.elevationSampleMeters},
+            {"terrainMaximumTriangles", component.GetTerrainMaximumTriangles()},
+            {"fbxPerTile", component.GetFbxPerTile()},
+            {"distanceLod", DownTool::FbxDistanceLodToJson(component.GetDistanceLod())},
+            {"meshSubdivision", component.meshSubdivision},
+            {"wallTexturePath", PathToUtf8(component.wallTexturePath)},
+            {"roofTexturePath", PathToUtf8(component.roofTexturePath)},
+            {"wallTextureMode", WallModeValue(component.wallTextureMode)},
+            {"roofTextureMode", RoofModeValue(component.roofTextureMode)},
+            {"atlasImageFormat",
+             component.atlasImageFormat == DownTool::AmapBuildingFbxAtlasImageFormat::Jpg ? "jpg"
+                                                                                          : "png"},
+            {"layerHeightCentimeters", component.layerHeightCentimeters},
+            {"buildingChunkSizeMeters", component.GetBuildingChunkSizeMeters()},
+            {"cesiumErrorMeters", component.GetCesiumErrorMeters()},
+            {"cesiumLodLevels", component.GetCesiumLodLevels()},
+            {"cesiumHeightOffsetMeters", component.GetCesiumHeightOffsetMeters()},
+            {"cesiumGeoidPath", PathToUtf8(component.GetCesiumGeoidPath())},
+            {"cesiumTextureMipmaps", component.GetCesiumTextureMipmaps()},
+            {"maxWallMaterialsPerBucket", component.maxWallMaterialsPerBucket},
+            {"textureRandomSeed", component.textureRandomSeed},
+            {"followBaseElevation", component.followBaseElevation},
+            {"basePlateComponentId", component.basePlateComponentId},
+            {"includeBaseLayers", component.includeBaseLayers},
+            {"includeLabels", component.includeLabels}};
 }
 
 std::optional<ExportComponent> ComponentFromJson(const Json& json)
@@ -479,6 +480,7 @@ std::optional<ExportComponent> ComponentFromJson(const Json& json)
     component.textureFormat = NormalizeFormat(JsonString(json, "textureFormat", "png"));
     component.shape = ShapeFrom(JsonString(json, "shape", "sphere"));
     component.exportElevation = JsonBool(json, "exportElevation", false);
+    component.SetFbxPerTile(JsonBool(json, "fbxPerTile", false));
     component.elevationSampleMeters = JsonNumber(json, "elevationSampleMeters", 30.);
     component.SetTerrainMaximumTriangles(static_cast<uint32_t>(std::clamp(
         JsonNumber(json, "terrainMaximumTriangles", 0.), 0.,
@@ -1056,6 +1058,9 @@ bool ExportGroupedRunner::Run(
         elevationOptions.radiusMeters = queuedExport.configuration.radiusMeters;
         elevationOptions.polygonsWgs84 =
             queuedExport.configuration.polygonsWgs84;
+        elevationOptions.SetFlattenPolygonsWgs84(
+            DownTool::GetRegionPolygons(queuedExport.configuration.GetDownloadRegions(),
+                                        DownTool::DownloadRegionRole::FlattenTerrain));
         elevationOptions.cancellationRequested = [&manager]
         {
             return manager.IsCancellationRequested();
@@ -1232,6 +1237,7 @@ bool ExportGroupedRunner::Run(
             step.configuration.fbxTextureFormat = NormalizeFormat(component.textureFormat);
             step.configuration.fbxTerrainSampleRateMeters = component.elevationSampleMeters;
             step.configuration.SetTerrainMaximumTriangles(component.GetTerrainMaximumTriangles());
+            step.configuration.SetFbxPerTile(component.GetFbxPerTile());
             step.configuration.SetDistanceLod(component.GetDistanceLod());
             step.configuration.executionTileSize = tiles ? component.xyzTileSize : 0;
             step.configuration.executionFbxShape = fbx ?
@@ -1470,6 +1476,7 @@ bool ExportGroupedRunner::Run(
                 downloader.SetFbxTextureFormat(NormalizeFormat(component.textureFormat));
                 downloader.SetFbxTerrainSampleRateMeters(component.elevationSampleMeters);
                 downloader.SetFbxTerrainMaximumTriangles(component.GetTerrainMaximumTriangles());
+                downloader.SetFbxPerTile(component.GetFbxPerTile());
                 downloader.SetFbxDistanceLod(component.GetDistanceLod());
                 downloader.SetFbxExcludedPolygonsWgs84(DownTool::GetRegionPolygons(
                     queuedExport.configuration.GetDownloadRegions(),
@@ -1489,6 +1496,7 @@ bool ExportGroupedRunner::Run(
                 if (componentElevation)
                 {
                     downloader.SetFbxTerrainHeightEnabled(true);
+                    downloader.SetFbxFlattenRegions(componentElevation->GetFlattenedRegions());
                     downloader.SetFbxElevationReferenceMeters(0.);
                     downloader.SetFbxElevationSampler(
                         [componentElevation](const DownTool::LonLat& lonLat)

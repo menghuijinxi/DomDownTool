@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <numbers>
 #include <string_view>
 #include <vector>
 
@@ -89,6 +90,8 @@ std::shared_ptr<DownTool::CopernicusDemData> PrepareDemData(
     options.centerWgs84 = {116.5, 39.5};
     options.radiusMeters = 1000.;
     options.cachePath = testRoot / "dem-cache";
+    options.SetFlattenPolygonsWgs84(
+        {{{116.25, 39.25}, {116.75, 39.25}, {116.75, 39.75}, {116.25, 39.75}}});
     options.downloadCallback =
         [](
             const std::string_view,
@@ -301,6 +304,24 @@ bool RunTest()
             "无法读取 DEM GeoTIFF 像素格式或地理标签"))
     {
         return false;
+    }
+    const double northernWeight = std::cos(39.625 * std::numbers::pi / 180.);
+    const double southernWeight = std::cos(39.375 * std::numbers::pi / 180.);
+    const double expectedMean =
+        (200. * northernWeight + 150. * southernWeight) / (2. * (northernWeight + southernWeight));
+    std::vector<float> elevations(demGrid->width);
+    for (uint32_t row = 0; row < demGrid->height; ++row)
+    {
+        if (!postprocess_test::Require(
+                TIFFReadScanline(tiff.get(), elevations.data(), row) == 1 &&
+                    std::ranges::all_of(elevations,
+                                        [expectedMean](float elevation) {
+                                            return std::abs(elevation - expectedMean) < 1.e-4;
+                                        }),
+                "DEM GeoTIFF 像元没有使用平整区域平均高程"))
+        {
+            return false;
+        }
     }
     return postprocess_test::Require(
                bitsPerSample == 32 &&

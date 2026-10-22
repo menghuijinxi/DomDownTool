@@ -15,6 +15,8 @@ const char* DownTool::DownloadRegionRoleName(DownloadRegionRole role)
         return "GIS 排除区域";
     case DownloadRegionRole::ExcludeTerrain:
         return "底板排除区域";
+    case DownloadRegionRole::FlattenTerrain:
+        return "平整区域";
     }
     return "未知区域";
 }
@@ -67,9 +69,10 @@ nlohmann::json DownTool::DownloadRegionsToJson(const DownloadRegions& regions)
             {{"id", region.GetId()},
              {"name", region.GetName()},
              {"source", region.GetSource()},
-             {"role", region.GetRole() == DownloadRegionRole::Include ? "include" :
-                          region.GetRole() == DownloadRegionRole::ExcludeGis ? "exclude-gis" :
-                                                                              "exclude-terrain"},
+             {"role", region.GetRole() == DownloadRegionRole::Include          ? "include"
+                      : region.GetRole() == DownloadRegionRole::ExcludeGis     ? "exclude-gis"
+                      : region.GetRole() == DownloadRegionRole::ExcludeTerrain ? "exclude-terrain"
+                                                                               : "flatten-terrain"},
              {"enabled", region.GetEnabled()},
              {"verticesWgs84", std::move(vertices)}});
     }
@@ -98,7 +101,8 @@ bool DownTool::ReadDownloadRegions(const nlohmann::json& value, DownloadRegions&
             return false;
         }
         const std::string role = entry["role"].get<std::string>();
-        if (role != "include" && role != "exclude-gis" && role != "exclude-terrain")
+        if (role != "include" && role != "exclude-gis" && role != "exclude-terrain" &&
+            role != "flatten-terrain")
         {
             error = "任务区域类型无效。";
             return false;
@@ -107,9 +111,10 @@ bool DownTool::ReadDownloadRegions(const nlohmann::json& value, DownloadRegions&
         region.SetId(entry["id"].get<std::string>());
         region.SetName(entry["name"].get<std::string>());
         region.SetSource(entry.value("source", ""));
-        region.SetRole(role == "include" ? DownloadRegionRole::Include :
-                       role == "exclude-gis" ? DownloadRegionRole::ExcludeGis :
-                                              DownloadRegionRole::ExcludeTerrain);
+        region.SetRole(role == "include"           ? DownloadRegionRole::Include
+                       : role == "exclude-gis"     ? DownloadRegionRole::ExcludeGis
+                       : role == "exclude-terrain" ? DownloadRegionRole::ExcludeTerrain
+                                                   : DownloadRegionRole::FlattenTerrain);
         region.SetEnabled(entry["enabled"].get<bool>());
         Wgs84Ring vertices;
         for (const auto& vertex : entry["verticesWgs84"])

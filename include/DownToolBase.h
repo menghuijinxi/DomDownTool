@@ -15,6 +15,7 @@
 #include "DataType.h"
 #include "FbxDistanceLod.h"
 #include "GeographicPolygon.h"
+#include "TerrainFlattenRegion.h"
 #include "curl/curl.h"
 
 namespace cv
@@ -178,7 +179,9 @@ namespace DownTool
 		//远距离贴图降级参数
 		std::vector<FbxTextureDistanceOffset> FbxTextureDistanceOffsets;
         FbxDistanceLod fbxDistanceLod_;
+        bool fbxPerTile_ = false;
         Wgs84Polygons fbxExcludedPolygonsWgs84_;
+        std::vector<TerrainFlattenRegion> fbxFlattenRegions_;
         std::unique_ptr<FbxTerrainRegionClipper> fbxDownloadClipper_;
 
 		//瓦片像素大小
@@ -422,6 +425,16 @@ namespace DownTool
 
         const FbxDistanceLod& GetFbxDistanceLod() const { return fbxDistanceLod_; }
         void SetFbxDistanceLod(const FbxDistanceLod& value) { fbxDistanceLod_ = value; }
+        bool GetFbxPerTile() const { return fbxPerTile_; }
+        void SetFbxPerTile(bool value) { fbxPerTile_ = value; }
+        const std::vector<TerrainFlattenRegion>& GetFbxFlattenRegions() const
+        {
+            return fbxFlattenRegions_;
+        }
+        void SetFbxFlattenRegions(const std::vector<TerrainFlattenRegion>& value)
+        {
+            fbxFlattenRegions_ = value;
+        }
         const Wgs84Polygons& GetFbxExcludedPolygonsWgs84() const
         {
             return fbxExcludedPolygonsWgs84_;

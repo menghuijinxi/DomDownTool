@@ -127,6 +127,9 @@ bool WriteScreenshot(skui::Runtime& runtime, const DownTool::DownloadRegions& re
     return cv::imwrite(path.string(), cv::Mat(height, width, CV_8UC4, pixels.data()));
 }
 
+bool ClickElement(RangeController& controller, skui::Runtime& runtime,
+                  skui::win32::Win32EventAdapter& adapter, HWND window, const std::string& id);
+
 bool TestCopyTerrainExclusion(RangeController& controller, skui::Runtime& runtime,
                               skui::win32::Win32EventAdapter& adapter, HWND window,
                               const std::filesystem::path& testRoot)
@@ -169,8 +172,12 @@ bool TestCopyTerrainExclusion(RangeController& controller, skui::Runtime& runtim
         return false;
     }
     controller.OpenExportEditor(runtime);
-    UiClick(controller, adapter, window, runtime, 100.F, 319.F);
-    UiClick(controller, adapter, window, runtime, 232.F, 174.F);
+    if (!ClickElement(controller, runtime, adapter, window,
+                      "range-select-" + controller.GetRegions().front().GetId()) ||
+        !ClickElement(controller, runtime, adapter, window, "range-role-terrain"))
+    {
+        return false;
+    }
     const auto selected = controller.GetSelectedId();
     const auto original = DownTool::DownloadRegionsToJson(controller.GetRegions());
     UiClick(controller, adapter, window, runtime, 220.F, 734.F);
@@ -240,7 +247,11 @@ bool TestCopyTerrainExclusion(RangeController& controller, skui::Runtime& runtim
         return false;
     }
     controller.OpenExportEditor(runtime);
-    UiClick(controller, adapter, window, runtime, 100.F, 319.F);
+    if (!ClickElement(controller, runtime, adapter, window,
+                      "range-select-" + controller.GetRegions().front().GetId()))
+    {
+        return false;
+    }
     if (!Require(controller.GetRegions().size() == 2 &&
                      DownTool::DownloadRegionsToJson(controller.GetRegions()) == expanded,
                  "应用和重新打开丢失底板排除区"))
@@ -286,7 +297,11 @@ bool TestSquareRadiusInput(RangeController& controller, skui::Runtime& runtime,
     controller.RestoreExportRegions(regions);
     controller.OpenExportEditor(runtime);
     UiClick(controller, adapter, window, runtime, 210.F, 134.F);
-    UiClick(controller, adapter, window, runtime, 100.F, 319.F);
+    if (!ClickElement(controller, runtime, adapter, window,
+                      "range-select-" + controller.GetRegions().front().GetId()))
+    {
+        return false;
+    }
     if (!Require(controller.GetSquareRadius().has_value() &&
                      std::abs(*controller.GetSquareRadius() - 1000.) < 1.e-6,
                  "选中旧正方形区域后没有恢复半径参数"))
@@ -447,7 +462,11 @@ bool TestSquareRadiusInput(RangeController& controller, skui::Runtime& runtime,
     }
     UiClick(controller, adapter, window, runtime, 232.F, 828.F);
     controller.OpenExportEditor(runtime);
-    UiClick(controller, adapter, window, runtime, 100.F, 319.F);
+    if (!ClickElement(controller, runtime, adapter, window,
+                      "range-select-" + controller.GetRegions().front().GetId()))
+    {
+        return false;
+    }
     if (!Require(controller.GetSquareRadius().has_value() &&
                      std::abs(*controller.GetSquareRadius() - 2000.) < 1.e-6,
                  "应用并重新打开后没有保留修改后的半径"))
@@ -500,7 +519,10 @@ bool RunTest(HWND window, const std::filesystem::path& testRoot)
     {
         return false;
     }
-    UiClick(controller, adapter, window, runtime, 148.F, 174.F);
+    if (!ClickElement(controller, runtime, adapter, window, "range-role-exclude"))
+    {
+        return false;
+    }
     UiClick(controller, adapter, window, runtime, 112.F, 214.F);
     MapMessage(controller, adapter, window, runtime, WM_LBUTTONDOWN, {500, 300});
     MapMessage(controller, adapter, window, runtime, WM_MOUSEMOVE, {650, 450});
@@ -592,7 +614,11 @@ bool RunTest(HWND window, const std::filesystem::path& testRoot)
     }
     runtime.resize(1440, 900, 1.F);
     runtime.renderToBgraPixels(layoutPixels.data(), 1440, 900, 1440 * sizeof(uint32_t), 1.F);
-    UiClick(controller, adapter, window, runtime, 35.F, 319.F);
+    if (!ClickElement(controller, runtime, adapter, window,
+                      "range-enable-" + controller.GetRegions().front().GetId()))
+    {
+        return false;
+    }
     if (!Require(!controller.GetRegions()[0].GetEnabled(), "区域启用复选框没有更新模型"))
     {
         return false;
@@ -604,8 +630,13 @@ bool RunTest(HWND window, const std::filesystem::path& testRoot)
         return false;
     }
     UiClick(controller, adapter, window, runtime, 148.F, 214.F);
-    UiClick(controller, adapter, window, runtime, 100.F, 355.F);
-    UiClick(controller, adapter, window, runtime, 255.F, 319.F);
+    if (!ClickElement(controller, runtime, adapter, window,
+                      "range-select-" + controller.GetRegions()[2].GetId()) ||
+        !ClickElement(controller, runtime, adapter, window,
+                      "range-focus-" + controller.GetRegions().front().GetId()))
+    {
+        return false;
+    }
     if (!Require(controller.GetSelectedId() == controller.GetRegions()[0].GetId(),
                  "点击定位按钮没有选中对应区域"))
     {
@@ -624,7 +655,11 @@ bool RunTest(HWND window, const std::filesystem::path& testRoot)
     controller.OpenExportEditor(runtime);
     UiClick(controller, adapter, window, runtime, 210.F, 134.F);
     UiClick(controller, adapter, window, runtime, 40.F, 214.F);
-    UiClick(controller, adapter, window, runtime, 100.F, 425.F);
+    if (!ClickElement(controller, runtime, adapter, window,
+                      "range-select-" + controller.GetRegions()[1].GetId()))
+    {
+        return false;
+    }
     if (!Require(controller.GetSelectedId() == controller.GetRegions()[1].GetId(),
                  "点击区域列表没有选中 GIS 排除区"))
     {
@@ -653,7 +688,11 @@ bool RunTest(HWND window, const std::filesystem::path& testRoot)
     {
         return false;
     }
-    UiClick(controller, adapter, window, runtime, 100.F, 319.F);
+    if (!ClickElement(controller, runtime, adapter, window,
+                      "range-select-" + controller.GetRegions().front().GetId()))
+    {
+        return false;
+    }
     UiClick(controller, adapter, window, runtime, 255.F, 774.F);
     UiClick(controller, adapter, window, runtime, 148.F, 828.F);
     if (!Require(controller.GetExportRegions().size() == 2 && !controller.GetPanelOpen(),
@@ -775,10 +814,11 @@ bool TestCopyUsesActiveRegionRole(HWND window, const std::filesystem::path& test
         {
             return false;
         }
-        const std::array<std::pair<const char*, DownTool::DownloadRegionRole>, 3> targets = {{
+        const std::array<std::pair<const char*, DownTool::DownloadRegionRole>, 4> targets = {{
             {"include", DownTool::DownloadRegionRole::Include},
             {"exclude", DownTool::DownloadRegionRole::ExcludeGis},
             {"terrain", DownTool::DownloadRegionRole::ExcludeTerrain},
+            {"flatten", DownTool::DownloadRegionRole::FlattenTerrain},
         }};
         for (const auto& [action, role] : targets)
         {
@@ -820,7 +860,7 @@ bool TestCopyUsesActiveRegionRole(HWND window, const std::filesystem::path& test
             {
                 return false;
             }
-            if (role != DownTool::DownloadRegionRole::ExcludeTerrain && !click("range-undo"))
+            if (role != DownTool::DownloadRegionRole::FlattenTerrain && !click("range-undo"))
             {
                 return false;
             }
@@ -830,7 +870,7 @@ bool TestCopyUsesActiveRegionRole(HWND window, const std::filesystem::path& test
             !Require(controller.GetRegions().size() == 3 &&
                          controller.GetRegions().back().GetRole() ==
                              DownTool::DownloadRegionRole::Include,
-                     "选中底板排除区后无法复制为下载区域") ||
+                     "选中平整区后无法复制为下载区域") ||
             !click("range-return-export") ||
             !Require(controller.GetExportRegions().size() == 3, "应用范围时丢失复制的区域"))
         {
@@ -928,6 +968,292 @@ bool TestShapefileComponent(HWND window, const std::filesystem::path& testRoot)
                    "SHP 窄窗口界面截图失败") &&
            runtime.scrollIntoViewById("export-act-done-panel") &&
            click("export-act-done-panel");
+}
+
+bool TestPerTileFbxOption(HWND window, const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    using postprocess_test::Require;
+    skui::Runtime runtime;
+    if (!runtime.loadDocument(
+            (std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) / "resources/preview/index.html")
+                .string()))
+    {
+        return false;
+    }
+    RangeController controller;
+    controller.attachRuntime(runtime);
+    skui::win32::Win32EventAdapter adapter(runtime);
+    const auto click = [&](const std::string& id) {
+        return ClickElement(controller, runtime, adapter, window, id);
+    };
+    ExportConfiguration configuration;
+    configuration.centerWgs84 = {116.42, 39.89};
+    configuration.radiusMeters = 1000.;
+    ExportComponent component;
+    component.id = "terrain";
+    component.kind = ExportComponentKind::BasePlate;
+    component.sources.push_back({"google.satellite", "Google 卫星", ExportSourceKind::Imagery,
+                                 testRoot / "per-tile-cache"});
+    ExportContentGroup group;
+    group.id = "g1";
+    group.components = {component};
+    configuration.groups = {group};
+    runtime.resize(1440, 900, 1.F);
+    controller.resizeRuntime(runtime);
+    if (!click("open-export-page"))
+    {
+        return false;
+    }
+    for (const int width : {1440, 700})
+    {
+        runtime.resize(width, width == 1440 ? 900 : 600, 1.F);
+        controller.resizeRuntime(runtime);
+        controller.LoadExport(runtime, configuration);
+        std::string error;
+        auto exported = controller.ReadExport(error);
+        if (!Require(exported && !exported->groups[0].components[0].GetFbxPerTile(),
+                     "新建底板没有默认合并导出") ||
+            !click("export-act-toggle-fbx-per-tile__terrain"))
+        {
+            return false;
+        }
+        exported = controller.ReadExport(error);
+        if (!Require(exported && exported->groups[0].components[0].GetFbxPerTile(),
+                     "独立 FBX 开关没有进入任务配置：" + error) ||
+            !Require(WriteTaskScreenshot(runtime,
+                                         testRoot / (width == 1440 ? "per-tile-fbx-desktop.png"
+                                                                   : "per-tile-fbx-narrow.png")),
+                     "独立 FBX 参数界面截图失败"))
+        {
+            return false;
+        }
+        controller.LoadExport(runtime, *exported);
+        if (!click("export-edit-range") || !click("range-return-export"))
+        {
+            return false;
+        }
+        exported = controller.ReadExport(error);
+        if (!Require(exported && exported->groups[0].components[0].GetFbxPerTile(),
+                     "重开配置或编辑范围丢失了独立 FBX 设置") ||
+            !click("export-act-toggle-fbx-per-tile__terrain"))
+        {
+            return false;
+        }
+        exported = controller.ReadExport(error);
+        if (!Require(exported && !exported->groups[0].components[0].GetFbxPerTile(),
+                     "无法恢复合并 FBX 模式"))
+        {
+            return false;
+        }
+    }
+    configuration.groups.clear();
+    configuration.exportFbx = true;
+    configuration.SetFbxPerTile(true);
+    configuration.satelliteSources = {
+        {"google.satellite", "Google 卫星", testRoot / "per-tile-cache"}};
+    controller.LoadExport(runtime, configuration);
+    std::string error;
+    const auto migrated = controller.ReadExport(error);
+    return Require(migrated && migrated->groups.size() == 1 &&
+                       migrated->groups[0].components[0].GetFbxPerTile(),
+                   "旧任务转为组件配置时丢失了独立 FBX 设置");
+}
+
+bool TestFlattenRegionEditing(HWND window, const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    using postprocess_test::Require;
+    skui::Runtime runtime;
+    if (!runtime.loadDocument(
+            (std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) / "resources/preview/index.html")
+                .string()))
+    {
+        return false;
+    }
+    RangeController controller;
+    controller.attachRuntime(runtime);
+    skui::win32::Win32EventAdapter adapter(runtime);
+    ExportConfiguration configuration;
+    configuration.rangeMode = ExportRangeMode::CustomPolygon;
+    configuration.centerWgs84 = {116.41822112345678, 39.88901312345678};
+    configuration.zoom = 16;
+    configuration.polygonsWgs84 = {
+        {{116.4, 39.87}, {116.44, 39.87}, {116.44, 39.91}, {116.4, 39.91}}};
+    configuration.SetDownloadRegions(DownTool::MakeDownloadRegions(configuration.polygonsWgs84));
+    ExportComponent terrain;
+    terrain.id = "terrain";
+    terrain.kind = ExportComponentKind::BasePlate;
+    terrain.exportElevation = true;
+    terrain.sources.push_back(
+        {"google.satellite", "Google 卫星", ExportSourceKind::Imagery, testRoot / "flatten-cache"});
+    ExportContentGroup group;
+    group.id = "terrain-group";
+    group.name = "地形";
+    group.components = {terrain};
+    configuration.groups = {group};
+    const auto click = [&](const std::string& id) {
+        return ClickElement(controller, runtime, adapter, window, id);
+    };
+    for (const int width : {1440, 700})
+    {
+        runtime.resize(width, width == 1440 ? 900 : 600, 1.F);
+        controller.resizeRuntime(runtime);
+        controller.LoadExport(runtime, configuration);
+        controller.OpenExportEditor(runtime);
+        if (!click("range-role-flatten") || !click("range-tool-rectangle"))
+        {
+            return false;
+        }
+        MapMessage(controller, adapter, window, runtime, WM_LBUTTONDOWN, {420, 220});
+        MapMessage(controller, adapter, window, runtime, WM_MOUSEMOVE, {620, 390});
+        MapMessage(controller, adapter, window, runtime, WM_LBUTTONUP, {620, 390});
+        if (!Require(controller.GetRegions().size() == 2 &&
+                         controller.GetRegions().back().GetRole() ==
+                             DownTool::DownloadRegionRole::FlattenTerrain &&
+                         controller.GetRegions().back().GetName() == "平整区域 1",
+                     "绘制矩形没有生成独立的平整区域") ||
+            !click("range-tool-select"))
+        {
+            return false;
+        }
+        const auto flattenedId = controller.GetRegions().back().GetId();
+        if (!click("range-enable-" + flattenedId) ||
+            !Require(DownTool::GetRegionPolygons(controller.GetRegions(),
+                                                 DownTool::DownloadRegionRole::FlattenTerrain)
+                         .empty(),
+                     "平整区停用后仍参与高程处理") ||
+            !click("range-undo") || !click("range-select-" + flattenedId))
+        {
+            return false;
+        }
+        const auto saved = DownTool::DownloadRegionsToJson(controller.GetRegions());
+        if (!Require(WriteScreenshot(runtime, controller.GetRegions(),
+                                     testRoot / (width == 1440 ? "flatten-region-desktop.png"
+                                                               : "flatten-region-narrow.png"),
+                                     width, runtime.height()),
+                     "平整区域界面截图失败") ||
+            !click("range-return-export"))
+        {
+            return false;
+        }
+        std::string error;
+        const auto applied = controller.ReadExport(error);
+        if (!Require(applied &&
+                         DownTool::DownloadRegionsToJson(applied->GetDownloadRegions()) == saved &&
+                         applied->polygonsWgs84.size() == 1 &&
+                         applied->centerWgs84.lon == configuration.centerWgs84.lon &&
+                         applied->centerWgs84.lat == configuration.centerWgs84.lat,
+                     "平整区域没有保存到任务，或改变了下载范围与模型中心：" + error))
+        {
+            return false;
+        }
+        controller.LoadExport(runtime, *applied);
+        controller.OpenExportEditor(runtime);
+        if (!Require(DownTool::DownloadRegionsToJson(controller.GetRegions()) == saved,
+                     "重新打开配置丢失了平整区域") ||
+            !click("range-cancel-export"))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TestTaskFbxPreviewLoadsEveryTile(HWND window, const std::filesystem::path& testRoot)
+{
+    using postprocess_test::Require;
+    using Json = nlohmann::json;
+    const auto outputRoot = testRoot / "many-fbx-tiles";
+    if (!postprocess_test::ResetDirectory(outputRoot))
+    {
+        return false;
+    }
+    const auto fbxRoot = outputRoot / "terrain/FBX";
+    postprocess_test::TestPostProcessDown tool;
+    tool.Configure(outputRoot / "cache", outputRoot / "XYZ", 18, 32, {131066, 131066, 18},
+                   {131077, 131077, 18}, {0., 0.});
+    tool.SetPostProcessMaxZoomOnlyEnabled(true);
+    tool.SetPostProcessFbxEnabled(true);
+    tool.SetFbxPerTile(true);
+    tool.SetFbxOutputPath(fbxRoot.string());
+    tool.SetFbxTextureSize(64);
+    tool.SetFbxMeshSubdivision(2);
+    tool.SetFbxShape(DownTool::FbxPlanetShape::Plane);
+    if (!postprocess_test::WriteSourceTiles(tool))
+    {
+        return false;
+    }
+    tool.RunPostProcessForTest();
+    size_t fileCount = 0;
+    size_t triangleCount = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(fbxRoot))
+    {
+        if (entry.path().extension() != ".fbx")
+        {
+            continue;
+        }
+        Assimp::Importer importer;
+        const auto* scene = postprocess_test::ReadFbxScene(importer, entry.path());
+        if (!Require(scene && scene->mNumMeshes == 1, "独立底板测试网格生成失败"))
+        {
+            return false;
+        }
+        ++fileCount;
+        triangleCount += scene->mMeshes[0]->mNumFaces;
+    }
+    if (!Require(fileCount > 32, "测试没有生成超过 32 个独立 FBX"))
+    {
+        return false;
+    }
+    const auto recordsPath = testRoot / std::filesystem::u8path("cache/导出任务.json");
+    std::filesystem::create_directories(recordsPath.parent_path());
+    const Json task = {{"id", "many-fbx-tiles"},
+                       {"title", "多块底板预览"},
+                       {"state", "succeeded"},
+                       {"stage", "已完成"},
+                       {"detail", "底板 FBX"},
+                       {"createdAt", "2026-10-22 14:00:00"},
+                       {"outputPath", postprocess_test::PathToUtf8String(outputRoot)}};
+    std::ofstream(recordsPath) << Json({{"version", 1}, {"tasks", Json::array({task})}}).dump(2);
+    skui::Runtime runtime;
+    if (!runtime.loadDocument(
+            (std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) / "resources/preview/index.html")
+                .string()))
+    {
+        return false;
+    }
+    runtime.resize(1440, 900, 1.F);
+    RangeController controller;
+    controller.attachRuntime(runtime);
+    skui::win32::Win32EventAdapter adapter(runtime);
+    if (!ClickElement(controller, runtime, adapter, window, "open-task-page") ||
+        !ClickElement(controller, runtime, adapter, window, "task-preview-many-fbx-tiles"))
+    {
+        return false;
+    }
+    const auto surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(1440, 900));
+    if (!surface)
+    {
+        return false;
+    }
+    std::string stats;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    do
+    {
+        controller.draw(*surface->getCanvas(), 1440, 900, 1.F);
+        stats = runtime.textContentById("fbx-preview-stats").value_or("");
+        if (stats.find("总 DrawCall") != std::string::npos)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    } while (std::chrono::steady_clock::now() < deadline);
+    const bool loadedAll = Require(
+        stats.find("总 DrawCall " + std::to_string(fileCount) + " ·") != std::string::npos &&
+            stats.find("总面数 " + std::to_string(triangleCount) + " ·") != std::string::npos,
+        "任务预览没有加载全部 " + std::to_string(fileCount) + " 块底板：" + stats);
+    return ClickElement(controller, runtime, adapter, window, "fbx-preview-back") && loadedAll;
 }
 
 bool TestTaskActions(HWND window, const std::filesystem::path& testRoot)
@@ -1274,8 +1600,11 @@ int main()
     {
         return 1;
     }
-    const bool passed = RunTest(window, testRoot) && TestCopyUsesActiveRegionRole(window, testRoot) &&
-                        TestShapefileComponent(window, testRoot) && TestTaskActions(window, testRoot);
+    const bool passed =
+        RunTest(window, testRoot) && TestCopyUsesActiveRegionRole(window, testRoot) &&
+        TestFlattenRegionEditing(window, testRoot) && TestShapefileComponent(window, testRoot) &&
+        TestTaskActions(window, testRoot) && TestPerTileFbxOption(window, testRoot) &&
+        TestTaskFbxPreviewLoadsEveryTile(window, testRoot);
     DestroyWindow(window);
     CoUninitialize();
     if (!passed)

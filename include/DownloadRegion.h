@@ -13,7 +13,8 @@ enum class DownloadRegionRole
 {
     Include,
     ExcludeGis,
-    ExcludeTerrain
+    ExcludeTerrain,
+    FlattenTerrain
 };
 
 [[nodiscard]] const char* DownloadRegionRoleName(DownloadRegionRole role);

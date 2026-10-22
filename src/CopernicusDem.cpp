@@ -10,6 +10,8 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <numbers>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
@@ -21,6 +23,7 @@
 #include "curl/curl.h"
 #include "opencv2/core.hpp"
 #include "opencv2/imgcodecs.hpp"
+#include "opencv2/imgproc.hpp"
 
 namespace
 {
@@ -392,6 +395,133 @@ std::optional<double> BilinearSample(const cv::Mat& image, double pixelX, double
     return totalWeight > 0. ?
         std::optional<double>(weightedElevation / totalWeight) : std::nullopt;
 }
+
+class FlattenedDemRegion
+{
+  public:
+    explicit FlattenedDemRegion(const DownTool::Wgs84Ring& polygon)
+        : polygon_(polygon), bounds_(*DownTool::CalculateGeographicBounds({polygon}))
+    {
+    }
+
+    const DownTool::GeographicBounds& GetBounds() const { return bounds_; }
+    const DownTool::Wgs84Ring& GetPolygon() const { return polygon_; }
+    double GetElevation() const { return weightedElevation_ / weight_; }
+
+    bool Contains(const DownTool::LonLat& point) const
+    {
+        return point.lon >= bounds_.west && point.lon <= bounds_.east &&
+               point.lat >= bounds_.south && point.lat <= bounds_.north &&
+               DownTool::GeographicRingContainsPoint(polygon_, point);
+    }
+
+    bool AccumulateTile(const cv::Mat& image, const DemTile& tile,
+                        const DownTool::CopernicusDemOptions& options,
+                        const DownTool::CopernicusDemProgress& progress)
+    {
+        const double west = tile.westDegrees;
+        const double north = tile.southDegrees + 1.;
+        if (bounds_.east < west || bounds_.west > west + 1. || bounds_.north < north - 1. ||
+            bounds_.south > north)
+        {
+            return true;
+        }
+        const int minimumX = std::clamp(
+            static_cast<int>(std::floor((bounds_.west - west) * image.cols)), 0, image.cols - 1);
+        const int maximumX = std::clamp(
+            static_cast<int>(std::ceil((bounds_.east - west) * image.cols)), 1, image.cols);
+        const int minimumY = std::clamp(
+            static_cast<int>(std::floor((north - bounds_.north) * image.rows)), 0, image.rows - 1);
+        const int maximumY = std::clamp(
+            static_cast<int>(std::ceil((north - bounds_.south) * image.rows)), 1, image.rows);
+        const int width = maximumX - minimumX;
+        const int height = maximumY - minimumY;
+        if (width <= 0 || height <= 0)
+        {
+            return true;
+        }
+
+        constexpr int kShift = 8;
+        constexpr double kScale = 1 << kShift;
+        std::vector<cv::Point> vertices;
+        for (const auto& point : polygon_)
+        {
+            vertices.emplace_back(
+                static_cast<int>(
+                    std::lround(((point.lon - west) * image.cols - 0.5 - minimumX) * kScale)),
+                static_cast<int>(
+                    std::lround(((north - point.lat) * image.rows - 0.5 - minimumY) * kScale)));
+        }
+        const std::vector<std::vector<cv::Point>> contours{std::move(vertices)};
+        cv::Mat mask(height, width, CV_8UC1, cv::Scalar(0));
+        cv::Mat boundary(height, width, CV_8UC1, cv::Scalar(0));
+        cv::fillPoly(mask, contours, cv::Scalar(255), cv::LINE_8, kShift);
+        cv::polylines(boundary, contours, true, cv::Scalar(255), 3, cv::LINE_8, kShift);
+        // 栅格化负责大部分内部像元；仅边界像元精确判定，避免逐像元遍历所有多边形边。
+        for (int y = minimumY; y < maximumY; ++y)
+        {
+            if (IsCancellationRequested(options.cancellationRequested))
+            {
+                return false;
+            }
+            const float* elevations = image.ptr<float>(y);
+            const auto* maskRow = mask.ptr<unsigned char>(y - minimumY);
+            const auto* boundaryRow = boundary.ptr<unsigned char>(y - minimumY);
+            const double latitude = north - (y + 0.5) / image.rows;
+            // 各纬度分幅的列数可能不同，按像元面积加权，避免高纬度或跨分幅统计偏重。
+            const double pixelWeight = std::cos(latitude * std::numbers::pi / 180.) /
+                                       (static_cast<double>(image.rows) * image.cols);
+            for (int x = minimumX; x < maximumX; ++x)
+            {
+                const bool inside = boundaryRow[x - minimumX]
+                                        ? Contains({west + (x + 0.5) / image.cols, latitude})
+                                        : maskRow[x - minimumX] != 0;
+                if (!inside)
+                {
+                    continue;
+                }
+                ++coveredPixels_;
+                if (IsValidElevation(elevations[x]))
+                {
+                    weightedElevation_ += elevations[x] * pixelWeight;
+                    weight_ += pixelWeight;
+                }
+            }
+            if (options.progressCallback && (y - minimumY) % 64 == 0)
+            {
+                options.progressCallback({progress.stage,
+                                          progress.completed * 1024 +
+                                              static_cast<uint64_t>(y - minimumY) * 1024 / height,
+                                          progress.total * 1024});
+            }
+        }
+        return true;
+    }
+
+    bool Finish(const std::function<std::optional<double>(const DownTool::LonLat&)>& sample)
+    {
+        if (coveredPixels_ == 0)
+        {
+            // 小于原始 DEM 像元的区域可能没有像元中心，改用原始边界采样。
+            for (const auto& point : polygon_)
+            {
+                if (const auto elevation = sample(point))
+                {
+                    weightedElevation_ += *elevation;
+                    weight_ += 1.;
+                }
+            }
+        }
+        return weight_ > 0.;
+    }
+
+  private:
+    DownTool::Wgs84Ring polygon_;
+    DownTool::GeographicBounds bounds_;
+    double weightedElevation_ = 0.;
+    double weight_ = 0.;
+    uint64_t coveredPixels_ = 0;
+};
 } // namespace
 
 class DownTool::CopernicusDemData::Impl
@@ -400,6 +530,8 @@ class DownTool::CopernicusDemData::Impl
     CopernicusDemBounds bounds;
     std::vector<DemTile> tiles;
     std::vector<std::filesystem::path> sourceFiles;
+    std::vector<FlattenedDemRegion> flattenedRegions;
+    std::vector<TerrainFlattenRegion> flattenResults;
     double minimumElevationMeters = 0.;
     mutable std::mutex cacheMutex;
     mutable std::vector<LoadedDemTile> loadedTiles;
@@ -449,6 +581,22 @@ class DownTool::CopernicusDemData::Impl
         loadedTiles.push_back(LoadedDemTile{tile.id, image, useSequence});
         return image;
     }
+
+    std::optional<double> SampleRaw(const LonLat& lonLat) const
+    {
+        const DemTile* tile = FindTile(lonLat);
+        if (tile == nullptr)
+        {
+            return std::nullopt;
+        }
+        const cv::Mat image = LoadTile(*tile);
+        if (image.empty())
+        {
+            return std::nullopt;
+        }
+        return BilinearSample(image, (lonLat.lon - tile->westDegrees) * image.cols - 0.5,
+                              (tile->southDegrees + 1. - lonLat.lat) * image.rows - 0.5);
+    }
 };
 
 DownTool::CopernicusDemData::CopernicusDemData(std::unique_ptr<Impl> impl)
@@ -481,6 +629,19 @@ std::shared_ptr<DownTool::CopernicusDemData> DownTool::CopernicusDemData::Prepar
     {
         return nullptr;
     }
+    if (!options.GetFlattenPolygonsWgs84().empty() &&
+        !ValidateWgs84Polygons(options.GetFlattenPolygonsWgs84(), error))
+    {
+        return nullptr;
+    }
+    for (const auto& polygon : options.GetFlattenPolygonsWgs84())
+    {
+        if (!IsSimpleWgs84Ring(polygon))
+        {
+            error = "平整区域的边界不能自交。";
+            return nullptr;
+        }
+    }
 
     auto impl = std::make_unique<Impl>();
     if (options.polygonsWgs84.empty())
@@ -505,6 +666,25 @@ std::shared_ptr<DownTool::CopernicusDemData> DownTool::CopernicusDemData::Prepar
     }
     impl->tiles = BuildTiles(
         impl->bounds, options.polygonsWgs84, options.cachePath);
+    std::set<std::pair<int32_t, int32_t>> tileCoordinates;
+    for (const auto& tile : impl->tiles)
+    {
+        tileCoordinates.emplace(tile.westDegrees, tile.southDegrees);
+    }
+    for (const auto& polygon : options.GetFlattenPolygonsWgs84())
+    {
+        impl->flattenedRegions.emplace_back(polygon);
+        const auto& bounds = impl->flattenedRegions.back().GetBounds();
+        // 区域平均值覆盖完整平整区，不随本次下载范围或模型分块改变。
+        for (auto& tile : BuildTiles({bounds.west, bounds.east, bounds.south, bounds.north},
+                                     {polygon}, options.cachePath))
+        {
+            if (tileCoordinates.emplace(tile.westDegrees, tile.southDegrees).second)
+            {
+                impl->tiles.push_back(std::move(tile));
+            }
+        }
+    }
     if (impl->tiles.empty())
     {
         error = "Copernicus DEM 下载范围没有对应分幅。";
@@ -573,6 +753,18 @@ std::shared_ptr<DownTool::CopernicusDemData> DownTool::CopernicusDemData::Prepar
         {
             minimumElevation = std::min(minimumElevation, *tileMinimum);
         }
+        for (size_t regionIndex = 0; regionIndex < impl->flattenedRegions.size(); ++regionIndex)
+        {
+            const size_t regionCount = impl->flattenedRegions.size();
+            if (!impl->flattenedRegions[regionIndex].AccumulateTile(
+                    image, tile, options,
+                    {"计算平整区域平均海拔", index * regionCount + regionIndex,
+                     impl->tiles.size() * regionCount}))
+            {
+                error = "平整区域高程计算已取消。";
+                return nullptr;
+            }
+        }
         impl->sourceFiles.push_back(tile.filePath);
         if (options.progressCallback)
         {
@@ -587,28 +779,35 @@ std::shared_ptr<DownTool::CopernicusDemData> DownTool::CopernicusDemData::Prepar
         return nullptr;
     }
     impl->minimumElevationMeters = minimumElevation;
+    for (auto& region : impl->flattenedRegions)
+    {
+        if (IsCancellationRequested(options.cancellationRequested))
+        {
+            error = "平整区域高程计算已取消。";
+            return nullptr;
+        }
+        if (!region.Finish([&impl](const LonLat& point) { return impl->SampleRaw(point); }))
+        {
+            error = "平整区域内没有有效高程值。";
+            return nullptr;
+        }
+        impl->flattenResults.emplace_back(region.GetPolygon(), region.GetElevation());
+    }
     return std::shared_ptr<CopernicusDemData>(
         new CopernicusDemData(std::move(impl)));
 }
 
 std::optional<double> DownTool::CopernicusDemData::Sample(const LonLat& lonLat) const
 {
-    const DemTile* tile = impl_->FindTile(lonLat);
-    if (tile == nullptr)
+    for (auto region = impl_->flattenedRegions.rbegin(); region != impl_->flattenedRegions.rend();
+         ++region)
     {
-        return std::nullopt;
+        if (region->Contains(lonLat))
+        {
+            return region->GetElevation();
+        }
     }
-    const cv::Mat image = impl_->LoadTile(*tile);
-    if (image.empty())
-    {
-        return std::nullopt;
-    }
-
-    const double pixelX =
-        (lonLat.lon - static_cast<double>(tile->westDegrees)) * image.cols - 0.5;
-    const double pixelY =
-        (static_cast<double>(tile->southDegrees + 1) - lonLat.lat) * image.rows - 0.5;
-    return BilinearSample(image, pixelX, pixelY);
+    return impl_->SampleRaw(lonLat);
 }
 
 double DownTool::CopernicusDemData::GetMinimumElevationMeters() const
@@ -625,4 +824,10 @@ const std::vector<std::filesystem::path>&
 DownTool::CopernicusDemData::GetSourceFiles() const
 {
     return impl_->sourceFiles;
+}
+
+const std::vector<DownTool::TerrainFlattenRegion>& DownTool::CopernicusDemData::
+    GetFlattenedRegions() const
+{
+    return impl_->flattenResults;
 }

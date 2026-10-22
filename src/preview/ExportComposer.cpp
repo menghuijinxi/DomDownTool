@@ -409,12 +409,13 @@ std::string ComponentSummary(const ExportComponent& component)
     case ExportComponentKind::BasePlate:
         if (component.exportElevation)
         {
-            return fmt::format("{} · {} · {} · 高程 {:.0f} 米", names,
-                               ShapeName(component.shape), component.textureSize,
-                               component.elevationSampleMeters);
+            return fmt::format("{} · {} · {} · 高程 {:.0f} 米", names, ShapeName(component.shape),
+                               component.textureSize, component.elevationSampleMeters) +
+                   (component.GetFbxPerTile() ? " · 每块独立 FBX" : "");
         }
         return fmt::format("{} · {} · {}", names, ShapeName(component.shape),
-                           component.textureSize);
+                           component.textureSize) +
+               (component.GetFbxPerTile() ? " · 每块独立 FBX" : "");
     case ExportComponentKind::BuildingModel:
         if (component.roofTextureMode == DownTool::AmapBuildingFbxRoofTextureMode::Satellite)
         {
@@ -556,6 +557,7 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
             component.exportElevation = configuration->exportTerrainHeight;
             component.elevationSampleMeters = configuration->fbxTerrainSampleRateMeters;
             component.SetTerrainMaximumTriangles(configuration->GetTerrainMaximumTriangles());
+            component.SetFbxPerTile(configuration->GetFbxPerTile());
             component.SetDistanceLod(configuration->GetDistanceLod());
             group.components.push_back(std::move(component));
         };
@@ -1064,6 +1066,13 @@ std::string PanelBodyHtml(
             OptionTags({{"png", "PNG"}, {"jpg", "JPG"}}, component.textureFormat));
         html += "</div>";
         html += ShapeSection(component);
+        html +=
+            fmt::format("<label class=\"export-switch-row\" title=\"按贴图分块分别生成 "
+                        "FBX，保留统一的任务坐标原点\">"
+                        "<span>每块单独导出 FBX</span>"
+                        "<input id=\"export-act-toggle-fbx-per-tile__{}\" class=\"export-switch\" "
+                        "type=\"checkbox\"{}></label>",
+                        component.id, component.GetFbxPerTile() ? " checked" : "");
         html += fmt::format(
             "<label class=\"export-switch-row\"><span>导出高度</span>"
             "<input id=\"export-act-toggle-elevation__{}\" class=\"export-switch\" type=\"checkbox\"{}></label>",
@@ -1086,7 +1095,7 @@ std::string PanelBodyHtml(
             subdivisionEnabled ? "" : " is-disabled", component.id, component.meshSubdivision,
             subdivisionEnabled ? "" : " disabled");
         html += ExportDistanceLodHtml(component);
-        html += "<p class=\"export-hint\">零面取范围内最低高程。</p>";
+        html += "<p class=\"export-hint\">高程零面为海拔 0 米。</p>";
     }
     else if (building)
     {
@@ -1379,7 +1388,8 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
         return std::string(1, prefix) + std::to_string(exportComposerSerial_++);
     };
     const bool checkboxVerb = verb == "toggle-group" || verb == "toggle-elevation" ||
-        verb == "toggle-follow-elevation" || verb == "toggle-base-layers" || verb == "toggle-labels";
+                              verb == "toggle-fbx-per-tile" || verb == "toggle-follow-elevation" ||
+                              verb == "toggle-base-layers" || verb == "toggle-labels";
     if (checkboxVerb && !fromChange)
     {
         return true;
@@ -1626,6 +1636,14 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
         if (ExportComponent* component = findComponent(first))
         {
             component->exportElevation = checked;
+        }
+    }
+    else if (verb == "toggle-fbx-per-tile")
+    {
+        if (ExportComponent* component = findComponent(first);
+            component && component->kind == ExportComponentKind::BasePlate)
+        {
+            component->SetFbxPerTile(checked);
         }
     }
     else if (verb == "set-sample")

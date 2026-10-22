@@ -781,7 +781,7 @@ std::vector<std::filesystem::path> findTaskFbxFiles(const ExportTaskRecord& reco
                     root, std::filesystem::directory_options::skip_permission_denied,
                     iteratorError);
                 const std::filesystem::recursive_directory_iterator end;
-                for (; iterator != end && files.size() < 32; iterator.increment(iteratorError))
+                for (; iterator != end; iterator.increment(iteratorError))
                 {
                     if (iteratorError)
                     {
@@ -1083,6 +1083,12 @@ std::optional<ExportConfiguration> loadLegacyTaskConfiguration(
         if (!terrainHeightValue.empty())
         {
             configuration.exportTerrainHeight = terrainHeightValue == "是";
+            continue;
+        }
+        const std::string perTileValue = conversionRecordValue(line, "FBX 每块单独导出: ");
+        if (!perTileValue.empty())
+        {
+            configuration.SetFbxPerTile(perTileValue == "是");
             continue;
         }
         const std::string terrainSampleRateValue = conversionRecordValue(
@@ -1883,7 +1889,7 @@ void DomDownToolPreview::PreviewController::ClearKmlRange(
     rangeEditor_.SetRegions({});
     rangeDraft_.clear();
     renderer_.SetDownloadRegions({});
-    renderer_.SetDraftRegion({}, false, false);
+    renderer_.SetDraftRegion({}, DownTool::DownloadRegionRole::Include, false);
     previewPolygonsWgs84_.clear();
     previewKmlFileName_.clear();
     renderer_.SetExportPolygonsWgs84({});
@@ -4977,23 +4983,33 @@ void DomDownToolPreview::PreviewController::UpdateExportUi(skui::Runtime& runtim
     runtime.setVisibleById("export-kml-field", kmlMode);
     runtime.setTextById(
         "export-kml-name",
-        fmt::format("下载区 {} · GIS 排除区 {} · 底板排除区 {}",
-            exportPolygonsWgs84_.size(),
-            DownTool::GetRegionPolygons(exportDownloadRegions_,
-                DownTool::DownloadRegionRole::ExcludeGis).size(),
-            DownTool::GetRegionPolygons(exportDownloadRegions_,
-                DownTool::DownloadRegionRole::ExcludeTerrain).size()));
+        fmt::format("下载区 {} · GIS 排除区 {} · 底板排除区 {} · 平整区域 {}",
+                    exportPolygonsWgs84_.size(),
+                    DownTool::GetRegionPolygons(exportDownloadRegions_,
+                                                DownTool::DownloadRegionRole::ExcludeGis)
+                        .size(),
+                    DownTool::GetRegionPolygons(exportDownloadRegions_,
+                                                DownTool::DownloadRegionRole::ExcludeTerrain)
+                        .size(),
+                    DownTool::GetRegionPolygons(exportDownloadRegions_,
+                                                DownTool::DownloadRegionRole::FlattenTerrain)
+                        .size()));
     if (kmlMode)
     {
         runtime.setTextById(
             "export-config-summary",
             fmt::format(
-                "自定义范围 · 下载区 {} · GIS 排除区 {} · 底板排除区 {} · z{}",
+                "自定义范围 · 下载区 {} · GIS 排除区 {} · 底板排除区 {} · 平整区域 {} · z{}",
                 exportPolygonsWgs84_.size(),
                 DownTool::GetRegionPolygons(exportDownloadRegions_,
-                    DownTool::DownloadRegionRole::ExcludeGis).size(),
+                                            DownTool::DownloadRegionRole::ExcludeGis)
+                    .size(),
                 DownTool::GetRegionPolygons(exportDownloadRegions_,
-                    DownTool::DownloadRegionRole::ExcludeTerrain).size(),
+                                            DownTool::DownloadRegionRole::ExcludeTerrain)
+                    .size(),
+                DownTool::GetRegionPolygons(exportDownloadRegions_,
+                                            DownTool::DownloadRegionRole::FlattenTerrain)
+                    .size(),
                 exportZoomValue_));
     }
     else
@@ -5400,6 +5416,7 @@ DomDownToolPreview::PreviewController::BuildExportConfiguration(std::string& err
                 configuration.fbxTextureFormat = component.textureFormat;
                 configuration.fbxTerrainSampleRateMeters = component.elevationSampleMeters;
                 configuration.SetTerrainMaximumTriangles(component.GetTerrainMaximumTriangles());
+                configuration.SetFbxPerTile(component.GetFbxPerTile());
                 configuration.SetDistanceLod(component.GetDistanceLod());
                 configuration.exportTerrainHeight = configuration.exportTerrainHeight ||
                     component.exportElevation;

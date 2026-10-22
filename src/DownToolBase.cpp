@@ -21,6 +21,7 @@
 #include <mutex>
 #include <numbers>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <system_error>
 #include <thread>
@@ -1169,17 +1170,10 @@ namespace
 
     std::string BuildFbxManifestJson(
         const std::vector<FbxTextureOutputInfo>& textureInfos,
-        const std::filesystem::path& basePath,
-        const std::string& meshMode,
-        uint32_t textureSize,
-        uint32_t zoom,
-        uint32_t tileSize,
-        const std::string& textureFormat,
-        bool terrainHeightEnabled,
-        double elevationReferenceMeters,
-        double terrainSampleRateMeters,
-        uint32_t terrainMaximumTriangles,
-        const DownTool::FbxDistanceLod& distanceLod)
+        const std::filesystem::path& basePath, const std::string& meshMode, uint32_t textureSize,
+        uint32_t zoom, uint32_t tileSize, const std::string& textureFormat,
+        bool terrainHeightEnabled, double elevationReferenceMeters, double terrainSampleRateMeters,
+        uint32_t terrainMaximumTriangles, const DownTool::FbxDistanceLod& distanceLod, bool perTile)
     {
         Json textures = Json::array();
         for (const FbxTextureOutputInfo& textureInfo : textureInfos)
@@ -1187,22 +1181,22 @@ namespace
             textures.push_back(BuildFbxTextureJson(textureInfo, basePath));
         }
 
-        const Json root = {
-            {"meshmode", meshMode},
-            {"texturecount", static_cast<int>(textureInfos.size())},
-            {"texturecontenttype", FbxTextureContentType(textureFormat)},
-            {"textureformat", textureFormat},
-            {"textures", std::move(textures)},
-            {"texturesize", static_cast<int>(textureSize)},
-            {"tilesize", static_cast<int>(tileSize)},
-			{"terrainheight", terrainHeightEnabled},
-			{"elevationreference", elevationReferenceMeters},
-			{"terrainsamplerate", terrainSampleRateMeters},
-            {"terrainmaximumtriangles", terrainMaximumTriangles},
-            {"distancelod", DownTool::FbxDistanceLodToJson(distanceLod)},
-            {"terrainalgorithm", "hmm-progressive-fixed-boundary"},
-            {"version", 1},
-            {"zoom", static_cast<int>(zoom)}};
+        const Json root = {{"meshmode", meshMode},
+                           {"filemode", perTile ? "per-tile" : "merged"},
+                           {"texturecount", static_cast<int>(textureInfos.size())},
+                           {"texturecontenttype", FbxTextureContentType(textureFormat)},
+                           {"textureformat", textureFormat},
+                           {"textures", std::move(textures)},
+                           {"texturesize", static_cast<int>(textureSize)},
+                           {"tilesize", static_cast<int>(tileSize)},
+                           {"terrainheight", terrainHeightEnabled},
+                           {"elevationreference", elevationReferenceMeters},
+                           {"terrainsamplerate", terrainSampleRateMeters},
+                           {"terrainmaximumtriangles", terrainMaximumTriangles},
+                           {"distancelod", DownTool::FbxDistanceLodToJson(distanceLod)},
+                           {"terrainalgorithm", "hmm-progressive-fixed-boundary"},
+                           {"version", 1},
+                           {"zoom", static_cast<int>(zoom)}};
         return root.dump();
     }
 
@@ -2086,9 +2080,110 @@ namespace
         return true;
     }
 
-	using FbxNormalKey = std::array<int64_t, 2>;
+    struct FbxTerrainFlattenContext
+    {
+        const FbxCoordinateContext& coordinates;
+        DownTool::FbxPlanetShape shape;
+        double elevationReference = 0.;
+    };
 
-	FbxNormalKey MakeFbxNormalKey(const FbxMeshVertex& vertex)
+    class FbxTerrainFlattenRegion
+    {
+      public:
+        bool Initialize(const DownTool::TerrainFlattenRegion& region, std::string& error,
+                        const std::function<bool()>& canceled)
+        {
+            elevation_ = region.GetElevationMeters();
+            return inside_.Initialize({region.GetPolygon()}, {}, error, canceled) &&
+                   outside_.Initialize({}, {region.GetPolygon()}, error, canceled);
+        }
+
+        bool Apply(FbxMeshData& mesh, const FbxTextureOutputInfo& texture,
+                   const FbxTerrainFlattenContext& context, std::string& error) const
+        {
+            bool visible = false;
+            if (!inside_.HasVisibleArea({texture.bounds.west, texture.bounds.east,
+                                         texture.bounds.south, texture.bounds.north},
+                                        visible, error))
+            {
+                return false;
+            }
+            if (!visible)
+            {
+                return true;
+            }
+            FbxMeshData flattened = mesh;
+            if (!ClipFbxTerrainMesh(flattened, texture, inside_, error))
+            {
+                return false;
+            }
+            if (flattened.indices.empty())
+            {
+                return true;
+            }
+            const double south = LatitudeToWebMercatorY(texture.bounds.south);
+            const double north = LatitudeToWebMercatorY(texture.bounds.north);
+            const double west = LongitudeToWebMercatorX(texture.bounds.west);
+            const double east = LongitudeToWebMercatorX(texture.bounds.east);
+            const auto coordinate = [&](const FbxMeshVertex& vertex) {
+                return DownTool::LonLat(
+                    texture.bounds.west + (texture.bounds.east - texture.bounds.west) * vertex.u,
+                    WebMercatorToLonLat(0., south + (north - south) * vertex.v).lat);
+            };
+            const auto key = [&](const FbxMeshVertex& vertex) {
+                return std::pair(
+                    static_cast<int64_t>(std::llround((west + (east - west) * vertex.u) * 100000.)),
+                    static_cast<int64_t>(
+                        std::llround((south + (north - south) * vertex.v) * 100000.)));
+            };
+            std::set<std::pair<int64_t, int64_t>> flattenedPoints;
+            for (const auto& vertex : flattened.vertices)
+            {
+                flattenedPoints.insert(key(vertex));
+            }
+            if (!ClipFbxTerrainMesh(mesh, texture, outside_, error))
+            {
+                return false;
+            }
+            const auto flatten = [&](FbxMeshVertex& vertex) {
+                const auto point = coordinate(vertex);
+                vertex = context.shape == DownTool::FbxPlanetShape::Plane
+                             ? MakePlaneVertex(point, context.coordinates, vertex.u, vertex.v,
+                                               elevation_ - context.elevationReference)
+                             : MakeSphereVertex(point, context.coordinates, vertex.u, vertex.v,
+                                                elevation_ - context.elevationReference);
+            };
+            // 区外三角面连接到同高的边界，避免裁切后出现垂直裂缝。
+            for (auto& vertex : mesh.vertices)
+            {
+                if (flattenedPoints.contains(key(vertex)))
+                {
+                    flatten(vertex);
+                }
+            }
+            for (auto& vertex : flattened.vertices)
+            {
+                flatten(vertex);
+            }
+            const auto offset = static_cast<uint32_t>(mesh.vertices.size());
+            mesh.vertices.insert(mesh.vertices.end(), flattened.vertices.begin(),
+                                 flattened.vertices.end());
+            for (const auto index : flattened.indices)
+            {
+                mesh.indices.push_back(index + offset);
+            }
+            return true;
+        }
+
+      private:
+        double elevation_ = 0.;
+        DownTool::FbxTerrainRegionClipper inside_;
+        DownTool::FbxTerrainRegionClipper outside_;
+    };
+
+    using FbxNormalKey = std::array<int64_t, 2>;
+
+    FbxNormalKey MakeFbxNormalKey(const FbxMeshVertex& vertex)
 	{
 		// 网格边界由相邻瓦片分别计算，浮点坐标可能存在极小误差。
 		// 只按平面位置归并，确保同一地形位置跨瓦片共享法线。
@@ -2259,10 +2354,9 @@ namespace
 		scene.mMetaData->Set(9, "OriginalUnitScaleFactor", 1.);
 	}
 
-	bool ExportAssimpFbx(
-		const std::vector<FbxMeshData>& meshDatas,
-		const std::filesystem::path& fbxPath)
-	{
+    bool ExportAssimpFbx(std::span<const FbxMeshData> meshDatas,
+                         const std::filesystem::path& fbxPath)
+    {
 		if (meshDatas.empty())
 		{
 			return false;
@@ -4591,6 +4685,20 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
         fmt::print("FBX 导出失败：{}\n", regionError);
         return false;
     }
+    std::vector<std::unique_ptr<FbxTerrainFlattenRegion>> flattenRegions;
+    if (FbxTerrainHeightEnabled)
+    {
+        for (const auto& region : fbxFlattenRegions_)
+        {
+            auto flattened = std::make_unique<FbxTerrainFlattenRegion>();
+            if (!flattened->Initialize(region, regionError, [this] { return IsStopRequested(); }))
+            {
+                fmt::print("FBX 平整区域初始化失败：{}\n", regionError);
+                return false;
+            }
+            flattenRegions.push_back(std::move(flattened));
+        }
+    }
     const std::string distanceError = fbxDistanceLod_.Validate();
     if (!distanceError.empty())
     {
@@ -4943,22 +5051,16 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
 	{
 		return false;
 	}
-	if (!WriteTextFile(
-		textureRoot / "manifest.json",
-		BuildFbxManifestJson(
-			textureInfos,
-			textureRoot,
-			FbxShape == FbxPlanetShape::Plane ? "plane" :
-				FbxShape == FbxPlanetShape::Sphere ? "sphere" : "both",
-			FbxTextureSize,
-			Zoom,
-			TileSize,
-			textureFormat,
-			FbxTerrainHeightEnabled,
-			FbxElevationReferenceMeters,
-			FbxTerrainSampleRateMeters,
-            FbxTerrainMaximumTriangles, fbxDistanceLod_)))
-	{
+    if (!WriteTextFile(textureRoot / "manifest.json",
+                       BuildFbxManifestJson(textureInfos, textureRoot,
+                                            FbxShape == FbxPlanetShape::Plane    ? "plane"
+                                            : FbxShape == FbxPlanetShape::Sphere ? "sphere"
+                                                                                 : "both",
+                                            FbxTextureSize, Zoom, TileSize, textureFormat,
+                                            FbxTerrainHeightEnabled, FbxElevationReferenceMeters,
+                                            FbxTerrainSampleRateMeters, FbxTerrainMaximumTriangles,
+                                            fbxDistanceLod_, fbxPerTile_)))
+    {
 		fmt::print("FBX 警告：manifest.json 写入失败。\n");
 	}
 
@@ -5048,43 +5150,77 @@ bool DownTool::DownToolBase::GeneratePostProcessFbx(bool postProcessTilesAvailab
             {
                 continue;
             }
-			meshDatas.push_back(std::move(meshData));
-		}
+            for (const auto& region : flattenRegions)
+            {
+                if (!region->Apply(meshData, textureInfo,
+                                   {coordinateContext, shape, FbxElevationReferenceMeters},
+                                   regionError))
+                {
+                    fmt::print("FBX 平整区域处理失败：{}\n", regionError);
+                    return std::vector<FbxMeshData>{};
+                }
+            }
+            meshDatas.push_back(std::move(meshData));
+        }
 		AssignFbxMeshNormals(meshDatas);
 		return meshDatas;
 	};
 
-	bool meshSuccess = true;
-	if (FbxShape == FbxPlanetShape::Plane || FbxShape == FbxPlanetShape::Both)
+    const auto exportMeshes = [&](FbxPlanetShape shape, std::string_view name) {
+        const auto phaseStartTime = std::chrono::steady_clock::now();
+        const std::vector<FbxMeshData> meshDatas = buildMeshDatas(shape);
+        if (meshDatas.empty() || IsStopRequested())
+        {
+            return false;
+        }
+        if (!fbxPerTile_)
+        {
+            const auto path = outputRoot / fmt::format("{}.fbx", name);
+            if (!ExportAssimpFbx(meshDatas, path))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            // 先统一计算相邻块法线，再拆分文件；各块继续使用任务中心和海拔零面。
+            for (size_t index = 0; index < meshDatas.size(); ++index)
+            {
+                if (IsStopRequested())
+                {
+                    return false;
+                }
+                const auto& mesh = meshDatas[index];
+                const auto path = outputRoot / fmt::format("{}_{}.fbx", name, mesh.name);
+                if (!ExportAssimpFbx(std::span<const FbxMeshData>(&mesh, 1), path))
+                {
+                    return false;
+                }
+                ReportProgress("生成独立底板 FBX", index + 1, meshDatas.size());
+            }
+        }
+        fmt::print("{} FBX 输出：{}，{} 个文件，耗时 {:.2f}s\n", name, PathToUtf8String(outputRoot),
+                   fbxPerTile_ ? meshDatas.size() : 1, SecondsSince(phaseStartTime));
+        return true;
+    };
+
+    bool meshSuccess = true;
+    if (FbxShape == FbxPlanetShape::Plane || FbxShape == FbxPlanetShape::Both)
 	{
 		if (IsStopRequested())
 		{
 			return false;
 		}
-		const std::filesystem::path planePath = outputRoot / "plane.fbx";
-		const auto phaseStartTime = std::chrono::steady_clock::now();
-		const std::vector<FbxMeshData> meshDatas = buildMeshDatas(FbxPlanetShape::Plane);
-		meshSuccess = !meshDatas.empty() && ExportAssimpFbx(meshDatas, planePath) &&
-			meshSuccess;
-		fmt::print("Plane FBX 输出：{}，耗时 {:.2f}s\n",
-			PathToUtf8String(planePath),
-			SecondsSince(phaseStartTime));
-	}
+        meshSuccess = exportMeshes(FbxPlanetShape::Plane, "plane") && meshSuccess;
+    }
 	if (FbxShape == FbxPlanetShape::Sphere || FbxShape == FbxPlanetShape::Both)
 	{
 		if (IsStopRequested())
 		{
 			return false;
 		}
-		const std::filesystem::path spherePath = outputRoot / "sphere.fbx";
-		const auto phaseStartTime = std::chrono::steady_clock::now();
-		const std::vector<FbxMeshData> meshDatas = buildMeshDatas(FbxPlanetShape::Sphere);
-		meshSuccess = !meshDatas.empty() && ExportAssimpFbx(meshDatas, spherePath) &&
-			meshSuccess;
-		fmt::print("Sphere FBX 输出：{}，耗时 {:.2f}s\n",
-			PathToUtf8String(spherePath),
-			SecondsSince(phaseStartTime));
-	}
+        meshSuccess = exportMeshes(FbxPlanetShape::Sphere, "sphere") && meshSuccess;
+    }
 
 	fmt::print("FBX 后处理总耗时：{:.2f}s\n", SecondsSince(totalStartTime));
 	return meshSuccess;

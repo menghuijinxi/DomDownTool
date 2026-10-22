@@ -11,6 +11,7 @@
 
 #include "DataType.h"
 #include "GeographicPolygon.h"
+#include "TerrainFlattenRegion.h"
 
 namespace DownTool
 {
@@ -39,6 +40,12 @@ struct CopernicusDemOptions
     CopernicusDemCancellationCallback cancellationRequested;
     CopernicusDemProgressCallback progressCallback;
     CopernicusDemDownloadCallback downloadCallback;
+
+    const Wgs84Polygons& GetFlattenPolygonsWgs84() const { return flattenPolygonsWgs84_; }
+    void SetFlattenPolygonsWgs84(const Wgs84Polygons& value) { flattenPolygonsWgs84_ = value; }
+
+  protected:
+    Wgs84Polygons flattenPolygonsWgs84_;
 };
 
 struct CopernicusDemBounds
@@ -67,6 +74,7 @@ class CopernicusDemData
     [[nodiscard]] const CopernicusDemBounds& GetBounds() const;
 
     [[nodiscard]] const std::vector<std::filesystem::path>& GetSourceFiles() const;
+    [[nodiscard]] const std::vector<TerrainFlattenRegion>& GetFlattenedRegions() const;
 
   private:
     class Impl;
