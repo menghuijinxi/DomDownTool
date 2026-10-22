@@ -487,6 +487,10 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::Download(
     const AmapVectorDownloadOptions& options) const
 {
     AmapVectorDownloadResult result;
+    if (!options.GetIncludeAmapSource())
+    {
+        return DownloadTiles(options, {});
+    }
     if (!ValidateDownloadOptions(options, result.error))
     {
         return result;
@@ -518,6 +522,10 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadTiles
     const AmapVectorDownloadOptions& options,
     std::vector<AmapVectorTile> selectedTiles) const
 {
+    if (!options.GetShapefiles().empty())
+    {
+        return DownloadWithShapefiles(options, std::move(selectedTiles));
+    }
     AmapVectorDownloadResult result;
     if (!ValidateDownloadOptions(options, result.error))
     {
@@ -755,6 +763,88 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadTiles
     result.downloadedPacketCount = decodedData.packetCount;
     result.featureCount = static_cast<uint32_t>(decodedData.features.size());
     result.decodedData = std::move(decodedData);
+    result.success = true;
+    return result;
+}
+
+DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadWithShapefiles(
+    const AmapVectorDownloadOptions& options, std::vector<AmapVectorTile> selectedTiles) const
+{
+    AmapVectorDownloadResult result;
+    if (options.GetIncludeAmapSource())
+    {
+        auto remote = options;
+        remote.SetShapefiles({});
+        result = DownloadTiles(remote, std::move(selectedTiles));
+        if (!result.success)
+        {
+            return result;
+        }
+    }
+    result.success = false;
+    auto localRange = options.GetGisSpatialRange();
+    if (localRange.GetIncludedPolygons().empty())
+    {
+        if (!options.polygonsWgs84.empty())
+        {
+            localRange.SetIncludedPolygons(options.polygonsWgs84);
+        }
+        else
+        {
+            const auto bounds = CalculateGeographicBounds(options.centerWgs84, options.radiusMeters);
+            if (!bounds)
+            {
+                result.error = "本地 SHP 导出范围无效。";
+                return result;
+            }
+            localRange.SetIncludedPolygons(
+                {{{bounds->west, bounds->south}, {bounds->east, bounds->south},
+                   {bounds->east, bounds->north}, {bounds->west, bounds->north}}});
+        }
+    }
+    for (const auto& source : options.GetShapefiles())
+    {
+        AmapVectorDecodedData imported;
+        if (!Wgs84ShapefileReader::Read(
+                source, imported, result.error, options.cancellationRequested,
+                [&options](size_t completed, size_t total)
+                {
+                    if (options.GetProcessingProgressCallback())
+                    {
+                        options.GetProcessingProgressCallback()(
+                            {GisProcessingStage::Merge, completed, total});
+                    }
+                }))
+        {
+            return result;
+        }
+        if (options.GetFeatureFilter())
+        {
+            std::erase_if(imported.features, [&options](const auto& feature)
+                          { return !options.GetFeatureFilter()(feature); });
+        }
+        if (options.cancellationRequested && options.cancellationRequested())
+        {
+            result.error = "SHP 导入已取消。";
+            return result;
+        }
+        if (!ApplyGisSpatialFilter(imported, localRange, result.error,
+                                  options.cancellationRequested,
+                                  options.GetProcessingProgressCallback()))
+        {
+            return result;
+        }
+        result.decodedData.features.insert(
+            result.decodedData.features.end(),
+            std::make_move_iterator(imported.features.begin()),
+            std::make_move_iterator(imported.features.end()));
+    }
+    result.decodedData.status = true;
+    if (!options.GetIncludeAmapSource())
+    {
+        result.decodedData.version = "WGS84 SHP";
+    }
+    result.featureCount = static_cast<uint32_t>(result.decodedData.features.size());
     result.success = true;
     return result;
 }

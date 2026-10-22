@@ -3,11 +3,22 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "nlohmann/json.hpp"
+
+#include "DataType.h"
+
 namespace DownTool
 {
+    enum class VectorCoordinateSystem
+    {
+        Gcj02,
+        Wgs84
+    };
+
     enum class AmapVectorGeometryType
     {
         Point,
@@ -27,7 +38,7 @@ namespace DownTool
         std::string language;
     };
 
-    // geometryParts 为点、线或面环集合；坐标保持高德 Web 矢量服务使用的 GCJ-02。
+    // 高德数据默认保持 GCJ-02；本地 SHP 保留原始 WGS84，避免往返转换损失精度。
     struct AmapVectorFeature
     {
         AmapVectorGeometryType geometryType = AmapVectorGeometryType::Point;
@@ -48,7 +59,25 @@ namespace DownTool
         uint64_t height = 0;
         std::string buildingIds;
         std::string internalType;
+
+        VectorCoordinateSystem GetCoordinateSystem() const { return coordinateSystem_; }
+        void SetCoordinateSystem(VectorCoordinateSystem value) { coordinateSystem_ = value; }
+        const std::optional<double>& GetHeightMeters() const { return heightMeters_; }
+        void SetHeightMeters(std::optional<double> value) { heightMeters_ = value; }
+        const nlohmann::json& GetSourceProperties() const { return sourceProperties_; }
+        void SetSourceProperties(const nlohmann::json& value) { sourceProperties_ = value; }
+
+    protected:
+        VectorCoordinateSystem coordinateSystem_ = VectorCoordinateSystem::Gcj02;
+        std::optional<double> heightMeters_;
+        nlohmann::json sourceProperties_;
     };
+
+    [[nodiscard]] LonLat VectorCoordinateWgs84(
+        const AmapVectorFeature& feature, const AmapVectorCoordinate& coordinate);
+    [[nodiscard]] double VectorBuildingHeightCentimeters(
+        const AmapVectorFeature& feature, double layerHeightCentimeters);
+    [[nodiscard]] bool HasVectorBuildingHeight(const AmapVectorFeature& feature);
 
     struct AmapVectorDecodedData
     {

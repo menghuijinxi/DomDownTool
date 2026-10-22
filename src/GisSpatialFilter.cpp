@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <exception>
 #include <limits>
+#include <iterator>
 #include <numeric>
 #include <stdexcept>
 #include <utility>
@@ -81,7 +82,8 @@ IntPoint toPoint(double longitude, double latitude)
             static_cast<cInt>(std::llround(latitude * kCoordinateScale))};
 }
 
-Paths toClipPaths(const DownTool::Wgs84Polygons& polygons, const ProcessingContext& context)
+Paths toClipPaths(const DownTool::Wgs84Polygons& polygons, const ProcessingContext& context,
+                 bool wgs84)
 {
     Paths paths;
     for (const auto& ring : polygons)
@@ -94,8 +96,9 @@ Paths toClipPaths(const DownTool::Wgs84Polygons& polygons, const ProcessingConte
             {
                 context.Check();
             }
-            const auto gcj = DownTool::GCJ02GoogleDownBase::WGS84ToGCJ02(coordinate);
-            path.push_back(toPoint(gcj.lon, gcj.lat));
+            const auto position = wgs84 ? coordinate
+                                       : DownTool::GCJ02GoogleDownBase::WGS84ToGCJ02(coordinate);
+            path.push_back(toPoint(position.lon, position.lat));
         }
         if (!Orientation(path))
         {
@@ -503,6 +506,32 @@ bool DownTool::ApplyGisSpatialFilter(AmapVectorDecodedData& decodedData,
         {
             return true;
         }
+        const auto wgs84 = [](const auto& feature)
+        {
+            return feature.GetCoordinateSystem() == VectorCoordinateSystem::Wgs84;
+        };
+        const bool hasWgs84 = std::ranges::any_of(decodedData.features, wgs84);
+        if (hasWgs84 && !std::ranges::all_of(decodedData.features, wgs84))
+        {
+            // 两种坐标的数据分别裁切，避免给本地数据套用高德偏移。
+            AmapVectorDecodedData local;
+            AmapVectorDecodedData remote;
+            for (const auto& feature : decodedData.features)
+            {
+                context.Check();
+                (wgs84(feature) ? local.features : remote.features).push_back(feature);
+            }
+            if (!ApplyGisSpatialFilter(local, range, error, cancellationRequested, progressCallback) ||
+                !ApplyGisSpatialFilter(remote, range, error, cancellationRequested, progressCallback))
+            {
+                return false;
+            }
+            remote.features.insert(remote.features.end(),
+                                   std::make_move_iterator(local.features.begin()),
+                                   std::make_move_iterator(local.features.end()));
+            decodedData.features = std::move(remote.features);
+            return true;
+        }
         if ((!range.GetIncludedPolygons().empty() &&
              !ValidateWgs84Polygons(range.GetIncludedPolygons(), error)) ||
             (!range.GetExcludedPolygons().empty() &&
@@ -510,8 +539,8 @@ bool DownTool::ApplyGisSpatialFilter(AmapVectorDecodedData& decodedData,
         {
             return false;
         }
-        Paths included = toClipPaths(range.GetIncludedPolygons(), context);
-        const Paths excluded = toClipPaths(range.GetExcludedPolygons(), context);
+        Paths included = toClipPaths(range.GetIncludedPolygons(), context, hasWgs84);
+        const Paths excluded = toClipPaths(range.GetExcludedPolygons(), context, hasWgs84);
         if (included.empty())
         {
             included = {{{-18000000000LL, -9000000000LL},

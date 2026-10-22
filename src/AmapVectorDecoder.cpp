@@ -14,6 +14,8 @@
 #include "zlib.h"
 
 #include "amap_vector_tile.pb.h"
+#include "GeographicPolygon.h"
+#include "GisSpatialIndex.h"
 
 namespace
 {
@@ -629,6 +631,100 @@ namespace
         return coordinateArray;
     }
 
+    Json BuildWgs84PolygonGeometry(
+        const DownTool::AmapVectorFeature& feature,
+        const std::function<bool()>& cancellationRequested)
+    {
+        const size_t count = feature.geometryParts.size();
+        std::vector<DownTool::Wgs84Ring> rings(count);
+        std::vector<DownTool::GisSpatialBounds> bounds(count);
+        std::vector<double> areas(count);
+        for (size_t index = 0; index < count; ++index)
+        {
+            for (const auto& point : feature.geometryParts[index])
+            {
+                if (rings[index].size() % 256 == 0 &&
+                    cancellationRequested && cancellationRequested())
+                {
+                    return {};
+                }
+                rings[index].emplace_back(point.longitude, point.latitude);
+                bounds[index].Add(point.longitude, point.latitude);
+            }
+            const auto& ring = rings[index];
+            for (size_t vertex = 1; vertex < ring.size(); ++vertex)
+            {
+                areas[index] += (ring[vertex - 1].lon - ring.front().lon) *
+                                    (ring[vertex].lat - ring.front().lat) -
+                                (ring[vertex].lon - ring.front().lon) *
+                                    (ring[vertex - 1].lat - ring.front().lat);
+            }
+            areas[index] = std::abs(areas[index]);
+        }
+        DownTool::GisSpatialIndex spatialIndex;
+        if (!spatialIndex.Build(std::move(bounds), cancellationRequested))
+        {
+            return {};
+        }
+        std::vector<size_t> parents(count, count);
+        for (size_t index = 0; index < count; ++index)
+        {
+            const auto& point = rings[index].front();
+            std::vector<size_t> candidates;
+            if (!spatialIndex.Query({point.lon, point.lat, point.lon, point.lat},
+                                    candidates, cancellationRequested))
+            {
+                return {};
+            }
+            for (size_t candidate : candidates)
+            {
+                if (areas[candidate] > areas[index] &&
+                    (parents[index] == count || areas[candidate] < areas[parents[index]]) &&
+                    spatialIndex.GetBounds(candidate).Contains(spatialIndex.GetBounds(index)) &&
+                    DownTool::GeographicRingContainsPoint(rings[candidate], point))
+                {
+                    parents[index] = candidate;
+                }
+            }
+        }
+        std::vector<std::vector<size_t>> children(count);
+        for (size_t index = 0; index < count; ++index)
+        {
+            if (parents[index] < count)
+            {
+                children[parents[index]].push_back(index);
+            }
+        }
+        Json multipolygon = Json::array();
+        for (size_t index = 0; index < count; ++index)
+        {
+            if (cancellationRequested && cancellationRequested())
+            {
+                return {};
+            }
+            size_t depth = 0;
+            for (size_t parent = parents[index]; parent < count; parent = parents[parent])
+            {
+                ++depth;
+            }
+            if (depth % 2 != 0)
+            {
+                continue;
+            }
+            Json polygon = Json::array(
+                {BuildCoordinateArray(feature.geometryParts[index], cancellationRequested)});
+            for (size_t hole : children[index])
+            {
+                polygon.push_back(BuildCoordinateArray(
+                    feature.geometryParts[hole], cancellationRequested));
+            }
+            multipolygon.push_back(std::move(polygon));
+        }
+        return multipolygon.size() == 1
+                   ? Json{{"type", "Polygon"}, {"coordinates", multipolygon.front()}}
+                   : Json{{"type", "MultiPolygon"}, {"coordinates", std::move(multipolygon)}};
+    }
+
     Json BuildFeatureJson(
         const DownTool::AmapVectorFeature& feature,
         const std::function<bool()>& cancellationRequested)
@@ -674,22 +770,40 @@ namespace
         {
             properties["internalType"] = feature.internalType;
         }
+        if (feature.GetSourceProperties().is_object())
+        {
+            properties.update(feature.GetSourceProperties());
+        }
+        if (feature.GetHeightMeters())
+        {
+            properties["height_m"] = *feature.GetHeightMeters();
+        }
 
         Json geometry;
         if (feature.geometryType == DownTool::AmapVectorGeometryType::Point)
         {
-            const DownTool::AmapVectorCoordinate& coordinate =
-                feature.geometryParts.front().front();
-            geometry = {{"type", "Point"},
-                        {"coordinates",
-                         Json::array({coordinate.longitude, coordinate.latitude})}};
+            Json points = Json::array();
+            for (const auto& part : feature.geometryParts)
+            {
+                for (const auto& coordinate : part)
+                {
+                    points.push_back({coordinate.longitude, coordinate.latitude});
+                }
+            }
+            geometry = points.size() == 1
+                           ? Json{{"type", "Point"}, {"coordinates", points.front()}}
+                           : Json{{"type", "MultiPoint"}, {"coordinates", std::move(points)}};
         }
         else if (feature.geometryType == DownTool::AmapVectorGeometryType::LineString)
         {
-            geometry = {
-                {"type", "LineString"},
-                {"coordinates", BuildCoordinateArray(
-                    feature.geometryParts.front(), cancellationRequested)}};
+            Json lines = Json::array();
+            for (const auto& part : feature.geometryParts)
+            {
+                lines.push_back(BuildCoordinateArray(part, cancellationRequested));
+            }
+            geometry = lines.size() == 1
+                           ? Json{{"type", "LineString"}, {"coordinates", lines.front()}}
+                           : Json{{"type", "MultiLineString"}, {"coordinates", std::move(lines)}};
         }
         else
         {
@@ -703,6 +817,12 @@ namespace
                 rings.push_back(BuildCoordinateArray(ring, cancellationRequested));
             }
             geometry = {{"type", "Polygon"}, {"coordinates", std::move(rings)}};
+            if (feature.GetCoordinateSystem() == DownTool::VectorCoordinateSystem::Wgs84 &&
+                feature.geometryParts.size() > 1)
+            {
+                // SHP 允许一个记录包含多个外环；GeoJSON 需要按包含关系组织 MultiPolygon。
+                geometry = BuildWgs84PolygonGeometry(feature, cancellationRequested);
+            }
         }
 
         return {{"type", "Feature"},
@@ -790,6 +910,11 @@ bool DownTool::AmapVectorGeoJsonWriter::WriteFile(
         return false;
     }
 
+    const bool outputWgs84 = decodedData.version == "WGS84 SHP" ||
+        std::ranges::any_of(decodedData.features, [](const auto& feature)
+    {
+        return feature.GetCoordinateSystem() == VectorCoordinateSystem::Wgs84;
+    });
     Json features = Json::array();
     for (const AmapVectorFeature& feature : decodedData.features)
     {
@@ -798,7 +923,29 @@ bool DownTool::AmapVectorGeoJsonWriter::WriteFile(
             error = "GeoJSON 导出已取消。";
             return false;
         }
-        features.push_back(BuildFeatureJson(feature, cancellationRequested));
+        if (outputWgs84 && feature.GetCoordinateSystem() != VectorCoordinateSystem::Wgs84)
+        {
+            auto converted = feature;
+            for (auto& part : converted.geometryParts)
+            {
+                for (auto& coordinate : part)
+                {
+                    if (cancellationRequested && cancellationRequested())
+                    {
+                        error = "GeoJSON 导出已取消。";
+                        return false;
+                    }
+                    const auto wgs84 = VectorCoordinateWgs84(feature, coordinate);
+                    coordinate = {wgs84.lon, wgs84.lat};
+                }
+            }
+            converted.SetCoordinateSystem(VectorCoordinateSystem::Wgs84);
+            features.push_back(BuildFeatureJson(converted, cancellationRequested));
+        }
+        else
+        {
+            features.push_back(BuildFeatureJson(feature, cancellationRequested));
+        }
     }
 
     if (cancellationRequested && cancellationRequested())
@@ -809,8 +956,8 @@ bool DownTool::AmapVectorGeoJsonWriter::WriteFile(
 
     const Json root = {
         {"type", "FeatureCollection"},
-        {"coordinateSystem", "GCJ-02"},
-        {"sourceFormat", "AMap web vector tile v2"},
+        {"coordinateSystem", outputWgs84 ? "WGS84" : "GCJ-02"},
+        {"sourceFormat", outputWgs84 ? "GIS vector data" : "AMap web vector tile v2"},
         {"packetCount", static_cast<int>(decodedData.packetCount)},
         {"version", decodedData.version},
         {"features", std::move(features)}};

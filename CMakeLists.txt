@@ -415,6 +415,8 @@ add_domdown_test(AmapVectorGeoJsonTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorGeoJsonTest.cpp)
 add_domdown_test(AmapVectorShapefileTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorShapefileTest.cpp)
+add_domdown_test(Wgs84ShapefileReaderTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/Wgs84ShapefileReaderTest.cpp)
 add_domdown_test(AmapBuildingChunkTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapBuildingChunkTest.cpp)
 add_domdown_test(MapViewportTest

@@ -1927,11 +1927,13 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
 {
     writeSearchTrace("Controller", "runtime_attached");
     runtime_ = &runtime;
+    runtime.setConsumesEventsById("shp-preview-panel", true);
     selectGisColorCategory(gisColorPaletteCategory_);
     runtime.setElementEventCallback(
         [this, &runtime](const skui::ElementEvent& event)
         {
-            if (HandleRangeEditorEvent(runtime, event))
+            if (HandleShapefilePreviewEvent(runtime, event) ||
+                HandleRangeEditorEvent(runtime, event))
             {
                 return;
             }
@@ -2472,7 +2474,8 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 return;
             }
 
-            if (event.id == "open-export-page" || event.id == "tasks-new-export")
+            if (event.id == "open-export-page" || event.id == "shp-preview-export" ||
+                event.id == "tasks-new-export")
             {
                 if (event.id == "tasks-new-export" || !editingExportRange_)
                 {
@@ -2996,6 +2999,10 @@ void DomDownToolPreview::PreviewController::draw(SkCanvas& canvas, int width, in
     if (page_ == Page::Preview)
     {
         renderer_.draw(canvas, width, height, dpiScale);
+        if (runtime_)
+        {
+            UpdateShapefilePreviewUi(*runtime_);
+        }
     }
     else if (page_ == Page::FbxPreview)
     {
@@ -3078,6 +3085,7 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
     {
         const HDROP drop = reinterpret_cast<HDROP>(wParam);
         std::filesystem::path kmlPath;
+        std::vector<std::filesystem::path> shapefiles;
         const UINT fileCount = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
         for (UINT index = 0; index < fileCount; ++index)
         {
@@ -3092,15 +3100,47 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
             if (IsKmlPath(candidate))
             {
                 kmlPath = candidate;
-                break;
+            }
+            else
+            {
+                auto extension = candidate.extension().wstring();
+                std::transform(extension.begin(), extension.end(), extension.begin(),
+                               [](wchar_t value) { return std::towlower(value); });
+                if (extension == L".shp")
+                {
+                    shapefiles.push_back(candidate);
+                }
             }
         }
         DragFinish(drop);
+        if (!shapefiles.empty())
+        {
+            for (const auto& path : shapefiles)
+            {
+                std::string error;
+                if (!ImportShapefile(path, runtime, error))
+                {
+                    if (page_ != Page::Preview)
+                    {
+                        OpenPreviewPage(runtime);
+                    }
+                    shapefilePreviewError_ = error;
+                    UpdateShapefilePreviewUi(runtime);
+                    requestRedraw();
+                    break;
+                }
+            }
+            if (!kmlPath.empty())
+            {
+                LoadKmlRange(kmlPath, runtime);
+            }
+            return true;
+        }
         if (kmlPath.empty())
         {
             MessageBoxW(
                 window,
-                L"拖入的文件中没有 .kml 文件。",
+                L"拖入的文件中没有 .kml 或 .shp 文件。",
                 L"DomDownTool",
                 MB_OK | MB_ICONWARNING);
             return true;
@@ -4514,6 +4554,7 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
     runtime.setVisibleById("preview-radius-control", !previewKmlMode);
     runtime.setVisibleById("preview-kml-control", previewKmlMode);
     UpdateRangeEditorUi(runtime);
+    UpdateShapefilePreviewUi(runtime);
     runtime.setTextsById(
         {{"active-provider", source.name},
          {"coordinate-system", source.coordinateSystem},

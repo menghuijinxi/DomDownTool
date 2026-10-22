@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <exception>
+#include <iterator>
 #include <numbers>
 #include <utility>
 #include <vector>
@@ -12,7 +14,6 @@
 #include <fmt/format.h>
 
 #include "AmapVectorTileGrid.h"
-#include "GCJ02GoogleDownBase.h"
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
@@ -405,7 +406,7 @@ void DomDownToolPreview::GisOverlayRenderer::UpdateContext(
     std::string requestDetail;
     {
         const std::lock_guard lock(mutex_);
-        if (categories_.empty() || stopping_)
+        if (categories_.empty() || stopping_ || localMode_)
         {
             return;
         }
@@ -747,6 +748,45 @@ bool DomDownToolPreview::GisOverlayRenderer::IsLoading() const
     return loading_;
 }
 
+void DomDownToolPreview::GisOverlayRenderer::SetLocalShapefiles(
+    const std::vector<DownTool::ShapefileImportOptions>& sources)
+{
+    // 与远程 GIS 复用工作线程；代次变化会取消旧读取，防止删除后重新出现。
+    {
+        const std::lock_guard lock(mutex_);
+        localMode_ = true;
+        localShapefiles_ = sources;
+        categories_ = sources.empty() ? GisOverlayCategories{} : allGisCategories();
+        preparedData_.reset();
+        renderCache_.reset();
+        dx12Renderer_->Clear();
+        pendingMeshRequest_.reset();
+        readyMeshResult_.reset();
+        loadedContext_.reset();
+        pendingRequest_.reset();
+        loadError_.clear();
+        ++generation_;
+        loading_ = !sources.empty();
+        if (loading_)
+        {
+            LoadRequest request;
+            request.generation = generation_;
+            pendingRequest_ = request;
+        }
+    }
+    condition_.notify_one();
+    if (requestRedraw_)
+    {
+        requestRedraw_();
+    }
+}
+
+std::string DomDownToolPreview::GisOverlayRenderer::GetLoadError() const
+{
+    const std::lock_guard lock(mutex_);
+    return loadError_;
+}
+
 DomDownToolPreview::GisOverlayCategory DomDownToolPreview::GisOverlayRenderer::ClassifyFeature(
     const DownTool::AmapVectorFeature& feature)
 {
@@ -815,13 +855,18 @@ DownTool::AmapVectorColor DomDownToolPreview::GisOverlayRenderer::defaultColor(
     return {0, 0, 0, 0};
 }
 
-std::shared_ptr<const DomDownToolPreview::GisOverlayRenderer::PreparedData>
-DomDownToolPreview::GisOverlayRenderer::prepareData(
-    const DownTool::AmapVectorDecodedData& decodedData)
+std::shared_ptr<const DomDownToolPreview::GisOverlayRenderer::PreparedData> DomDownToolPreview::
+    GisOverlayRenderer::prepareData(const DownTool::AmapVectorDecodedData& decodedData,
+                                    const std::function<bool()>& cancellationRequested)
 {
     auto preparedData = std::make_shared<PreparedData>();
+    size_t coordinateCount = 0;
     for (const DownTool::AmapVectorFeature& sourceFeature : decodedData.features)
     {
+        if (cancellationRequested && cancellationRequested())
+        {
+            return {};
+        }
         const GisOverlayCategory category = ClassifyFeature(sourceFeature);
         if (category == GisOverlayCategory::None || category == GisOverlayCategory::All)
         {
@@ -840,9 +885,13 @@ DomDownToolPreview::GisOverlayRenderer::prepareData(
             part.reserve(sourcePart.size());
             for (const DownTool::AmapVectorCoordinate& sourceCoordinate : sourcePart)
             {
+                if (++coordinateCount % 256 == 0 && cancellationRequested &&
+                    cancellationRequested())
+                {
+                    return {};
+                }
                 const DownTool::LonLat coordinate =
-                    DownTool::GCJ02GoogleDownBase::GCJ02ToWGS84(
-                        {sourceCoordinate.longitude, sourceCoordinate.latitude});
+                    DownTool::VectorCoordinateWgs84(sourceFeature, sourceCoordinate);
                 part.push_back(coordinate);
                 if (!feature.bounds.initialized)
                 {
@@ -879,6 +928,8 @@ void DomDownToolPreview::GisOverlayRenderer::workerLoop()
     while (true)
     {
         LoadRequest request;
+        bool localMode = false;
+        std::vector<DownTool::ShapefileImportOptions> localSources;
         {
             std::unique_lock lock(mutex_);
             condition_.wait(lock, [this] { return stopping_ || pendingRequest_.has_value(); });
@@ -889,8 +940,14 @@ void DomDownToolPreview::GisOverlayRenderer::workerLoop()
             request = *pendingRequest_;
             pendingRequest_.reset();
             activeRequest_ = request;
+            localMode = localMode_;
+            localSources = localShapefiles_;
         }
 
+        const auto cancelled = [this, generation = request.generation] {
+            const std::lock_guard lock(mutex_);
+            return stopping_ || generation != generation_;
+        };
         DownTool::AmapVectorDownloadOptions options;
         options.centerWgs84 = request.centerWgs84;
         options.radiusMeters = request.radiusMeters;
@@ -898,10 +955,42 @@ void DomDownToolPreview::GisOverlayRenderer::workerLoop()
         options.includeBaseLayers = true;
         options.includeLabels = true;
         options.maxConcurrency = 0;
+        options.cancellationRequested = cancelled;
         DownTool::AmapVectorDownloadResult result;
+        std::shared_ptr<const PreparedData> preparedData;
         try
         {
-            result = DownTool::AmapVectorDownloader().Download(options);
+            if (localMode)
+            {
+                result.success = true;
+                for (const auto& source : localSources)
+                {
+                    DownTool::AmapVectorDecodedData decoded;
+                    if (!DownTool::Wgs84ShapefileReader::Read(source, decoded, result.error,
+                                                              cancelled))
+                    {
+                        result.success = false;
+                        break;
+                    }
+                    result.decodedData.features.insert(
+                        result.decodedData.features.end(),
+                        std::make_move_iterator(decoded.features.begin()),
+                        std::make_move_iterator(decoded.features.end()));
+                }
+            }
+            else
+            {
+                result = DownTool::AmapVectorDownloader().Download(options);
+            }
+            if (result.success)
+            {
+                preparedData = prepareData(result.decodedData, cancelled);
+            }
+        }
+        catch (const std::exception& exception)
+        {
+            result.success = false;
+            result.error = std::string("GIS 加载失败：") + exception.what();
         }
         catch (...)
         {
@@ -917,19 +1006,13 @@ void DomDownToolPreview::GisOverlayRenderer::workerLoop()
                                      result.downloadedTaskCount, result.cachedTaskCount,
                                      result.error));
 
-        std::shared_ptr<const PreparedData> preparedData;
-        if (result.success)
+        if (preparedData)
         {
-            const auto prepareStart = std::chrono::steady_clock::now();
-            preparedData = prepareData(result.decodedData);
-            const auto prepareMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - prepareStart);
             writeSearchTrace(
                 "GIS", "prepare_complete",
                 fmt::format(
-                    "elapsed_ms={} road={} water={} green={} highway={} subway={} "
+                    "road={} water={} green={} highway={} subway={} "
                     "building={} point={} boundary={} other={}",
-                    prepareMilliseconds.count(),
                     preparedData->featuresByCategory[categoryIndex(GisOverlayCategory::Road)]
                         .size(),
                     preparedData->featuresByCategory[categoryIndex(GisOverlayCategory::Water)]
@@ -953,14 +1036,14 @@ void DomDownToolPreview::GisOverlayRenderer::workerLoop()
         bool accepted = false;
         {
             const std::lock_guard lock(mutex_);
-            if (activeRequest_.has_value() &&
-                activeRequest_->generation == request.generation)
+            if (activeRequest_.has_value() && activeRequest_->generation == request.generation)
             {
                 activeRequest_.reset();
             }
             if (!stopping_ && request.generation == generation_ && !categories_.empty())
             {
-                if (result.success)
+                loadError_ = result.error;
+                if (result.success && preparedData)
                 {
                     preparedData_ = std::move(preparedData);
                     loadedContext_ = request;
@@ -988,8 +1071,8 @@ void DomDownToolPreview::GisOverlayRenderer::meshWorkerLoop()
         MeshBuildRequest request;
         {
             std::unique_lock lock(mutex_);
-            meshCondition_.wait(
-                lock, [this] { return stopping_ || pendingMeshRequest_ != nullptr; });
+            meshCondition_.wait(lock,
+                                [this] { return stopping_ || pendingMeshRequest_ != nullptr; });
             if (stopping_)
             {
                 return;

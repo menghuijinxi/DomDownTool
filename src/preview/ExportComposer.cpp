@@ -242,8 +242,6 @@ bool AllowsImagery(ExportComponentKind kind)
 bool AllowsGis(ExportComponentKind kind)
 {
     return kind != ExportComponentKind::RawTiles &&
-        kind != ExportComponentKind::BuildingModel &&
-        kind != ExportComponentKind::CesiumBuildings &&
         kind != ExportComponentKind::CesiumTerrain &&
         kind != ExportComponentKind::DemGeoTiff;
 }
@@ -512,6 +510,44 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
     if (configuration != nullptr && !configuration->groups.empty())
     {
         exportContentGroups_ = configuration->groups;
+        for (auto& group : exportContentGroups_)
+        {
+            for (auto& component : group.components)
+            {
+                for (auto& source : component.sources)
+                {
+                    if (source.GetShapefile().GetPath().empty())
+                    {
+                        continue;
+                    }
+                    const auto existing = std::ranges::find_if(
+                        importedShapefileSources_, [&source](const auto& item)
+                        { return item.GetShapefile().GetPath() == source.GetShapefile().GetPath(); });
+                    if (existing != importedShapefileSources_.end())
+                    {
+                        source.id = existing->id;
+                    }
+                    else
+                    {
+                        while (std::ranges::any_of(
+                            importedShapefileSources_,
+                            [&source](const auto& item) { return item.id == source.id; }))
+                        {
+                            source.id += "x";
+                        }
+                        importedShapefileSources_.push_back(source);
+                    }
+                    DownTool::ShapefileInfo info;
+                    std::string ignored;
+                    if (DownTool::Wgs84ShapefileReader::Inspect(
+                            source.GetShapefile().GetPath(), info, ignored))
+                    {
+                        importedShapefileInfo_[source.GetShapefile().GetPath()] = std::move(info);
+                    }
+                }
+            }
+        }
+        SyncShapefilePreview();
     }
     else if (configuration != nullptr)
     {
@@ -681,6 +717,13 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
                 }
             }
         }
+        for (const auto& source : importedShapefileSources_)
+        {
+            if (!hiddenShapefileSourceIds_.contains(source.id))
+            {
+                merged.sources.push_back(source);
+            }
+        }
         if (!merged.sources.empty())
         {
             group.components.push_back(std::move(merged));
@@ -840,6 +883,8 @@ std::string YearOptions(
 std::string SourceBlockHtml(
     const ExportComponent& component, std::string_view openSourceMenu,
     const std::vector<DownTool::TianDiTuMultidateDown::TimelineInfo>& timelines,
+    const std::vector<ExportSourceEntry>& importedSources,
+    const std::map<std::filesystem::path, DownTool::ShapefileInfo>& importedInfo,
     bool allowAdd)
 {
     std::string html = "<div class=\"export-source-list\">";
@@ -856,7 +901,7 @@ std::string SourceBlockHtml(
                 "type=\"color\" value=\"{}\" aria-label=\"图源颜色\">",
                 component.id, index, ColorHex(source.color));
         }
-        const std::string remove = fixedBuilding ? "" : fmt::format(
+        const std::string remove = fmt::format(
             "<button id=\"export-act-remove-source__{}__{}\" class=\"export-icon-button\" "
             "type=\"button\" data-action=\"export-composer\" "
             "aria-label=\"移除图源\">×</button>",
@@ -874,6 +919,38 @@ std::string SourceBlockHtml(
         html += fmt::format(
             "{}{}<span class=\"export-source-name\">{}</span>{}{}</div>",
             rowStart, color, EscapeHtml(source.name), year, remove);
+        if (!source.GetShapefile().GetPath().empty())
+        {
+            std::string categories;
+            for (const auto& item : kGisCatalog)
+            {
+                if (fixedBuilding && item.category != DownTool::AmapVectorRenderCategory::Building)
+                {
+                    continue;
+                }
+                categories += fmt::format("<option value=\"{}\"{}>{}</option>",
+                    item.id, item.category == source.gisCategory ? " selected" : "", item.name);
+            }
+            html += FieldSelect("GIS 类别",
+                fmt::format("export-act-shp-category__{}__{}", component.id, index), categories);
+            std::string fields = fmt::format(
+                "<option value=\"\"{}>自动识别</option>"
+                "<option value=\"-\"{}>不使用高度</option>",
+                source.GetShapefile().GetHeightField().empty() ? " selected" : "",
+                source.GetShapefile().GetHeightField() == "-" ? " selected" : "");
+            const auto info = importedInfo.find(source.GetShapefile().GetPath());
+            if (info != importedInfo.end())
+            {
+                for (const auto& field : info->second.GetNumericFields())
+                {
+                    fields += fmt::format("<option value=\"{}\"{}>{}</option>", EscapeHtml(field),
+                        source.GetShapefile().GetHeightField() == field ? " selected" : "",
+                        EscapeHtml(field));
+                }
+            }
+            html += FieldSelect("高度字段（米）",
+                fmt::format("export-act-shp-height__{}__{}", component.id, index), fields);
+        }
     }
     html += "</div>";
     if (!allowAdd)
@@ -910,6 +987,12 @@ std::string SourceBlockHtml(
     {
         for (const GisCatalogItem& item : kGisCatalog)
         {
+            if ((component.kind == ExportComponentKind::BuildingModel ||
+                 component.kind == ExportComponentKind::CesiumBuildings) &&
+                item.category != DownTool::AmapVectorRenderCategory::Building)
+            {
+                continue;
+            }
             if (ComponentHasSource(component, item.id, {}))
             {
                 continue;
@@ -919,6 +1002,21 @@ std::string SourceBlockHtml(
                 "<button id=\"export-act-add-source__{}__{}\" type=\"button\" "
                 "data-action=\"export-composer\">{}</button>",
                 component.id, item.id, item.name);
+        }
+        for (const auto& source : importedSources)
+        {
+            if (ComponentHasSource(component, source.id, {}) ||
+                ((component.kind == ExportComponentKind::BuildingModel ||
+                  component.kind == ExportComponentKind::CesiumBuildings) &&
+                 source.gisCategory != DownTool::AmapVectorRenderCategory::Building))
+            {
+                continue;
+            }
+            any = true;
+            menu += fmt::format(
+                "<button id=\"export-act-add-source__{}__{}\" type=\"button\" "
+                "data-action=\"export-composer\">{}</button>",
+                component.id, source.id, EscapeHtml(source.name));
         }
     }
     if (!any)
@@ -933,7 +1031,9 @@ std::string SourceBlockHtml(
 std::string PanelBodyHtml(
     const std::vector<ExportContentGroup>& groups, const ExportComponent& component,
     std::string_view openSourceMenu,
-    const std::vector<DownTool::TianDiTuMultidateDown::TimelineInfo>& timelines)
+    const std::vector<DownTool::TianDiTuMultidateDown::TimelineInfo>& timelines,
+    const std::vector<ExportSourceEntry>& importedSources,
+    const std::map<std::filesystem::path, DownTool::ShapefileInfo>& importedInfo)
 {
     std::string html;
     const bool building = component.kind == ExportComponentKind::BuildingModel;
@@ -943,7 +1043,8 @@ std::string PanelBodyHtml(
         component.kind != ExportComponentKind::CesiumTerrain)
     {
         html += "<div class=\"export-panel-section\"><span class=\"export-panel-label\">图源</span>";
-        html += SourceBlockHtml(component, openSourceMenu, timelines, !building && !cesiumBuilding);
+        html += SourceBlockHtml(component, openSourceMenu, timelines,
+                                importedSources, importedInfo, true);
         html += "</div>";
     }
     if (cesium)
@@ -1294,7 +1395,8 @@ void DomDownToolPreview::PreviewController::RenderExportComposer(skui::Runtime& 
             "<div id=\"export-panel-scroll-content\" "
             "class=\"export-panel-scroll-content\">{}</div>",
             PanelBodyHtml(exportContentGroups_, *selected, exportSourceMenuComponentId_,
-                          tianDiTuMultidateTimelines_));
+                          tianDiTuMultidateTimelines_, importedShapefileSources_,
+                          importedShapefileInfo_));
     const std::string panelHtml = selected == nullptr
         ? "<aside id=\"export-param-panel\" class=\"export-param-panel\" style=\"display:none\"></aside>"
         : fmt::format(
@@ -1565,6 +1667,17 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
                     component->sources.push_back(std::move(source));
                 }
             }
+            else
+            {
+                const auto imported = std::ranges::find_if(
+                    importedShapefileSources_, [&second](const auto& source)
+                    { return source.id == second; });
+                if (imported != importedShapefileSources_.end() &&
+                    AllowsGis(component->kind) && !ComponentHasSource(*component, second, {}))
+                {
+                    component->sources.push_back(*imported);
+                }
+            }
         }
         exportSourceMenuComponentId_.clear();
     }
@@ -1572,11 +1685,34 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
     {
         ExportComponent* component = findComponent(first);
         const std::optional<uint32_t> index = ParseUnsigned(second);
-        if (component != nullptr && index.has_value() && *index < component->sources.size() &&
-            component->kind != ExportComponentKind::BuildingModel &&
-            component->kind != ExportComponentKind::CesiumBuildings)
+        if (component != nullptr && index.has_value() && *index < component->sources.size())
         {
             component->sources.erase(component->sources.begin() + static_cast<std::ptrdiff_t>(*index));
+        }
+    }
+    else if ((verb == "shp-category" || verb == "shp-height") && fromChange)
+    {
+        ExportComponent* component = findComponent(first);
+        const auto index = ParseUnsigned(second);
+        if (component != nullptr && index && *index < component->sources.size())
+        {
+            auto& source = component->sources[*index];
+            if (!source.GetShapefile().GetPath().empty())
+            {
+                if (verb == "shp-category")
+                {
+                    if (const auto* category = FindGis(value))
+                    {
+                        source.gisCategory = category->category;
+                    }
+                }
+                else
+                {
+                    auto options = source.GetShapefile();
+                    options.SetHeightField(std::string(value));
+                    source.SetShapefile(options);
+                }
+            }
         }
     }
     else if (verb == "set-format" && fromChange)
@@ -1921,5 +2057,188 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
         UpdateExportUi(runtime);
         requestRedraw();
     }
+    return true;
+}
+
+bool DomDownToolPreview::PreviewController::ImportShapefile(const std::filesystem::path& path,
+                                                            skui::Runtime& runtime,
+                                                            std::string& error)
+{
+    DownTool::ShapefileInfo info;
+    if (!DownTool::Wgs84ShapefileReader::Inspect(path, info, error))
+    {
+        return false;
+    }
+    if (page_ != Page::Preview)
+    {
+        OpenPreviewPage(runtime);
+    }
+    const auto absolute = std::filesystem::absolute(path).lexically_normal();
+    auto found = std::ranges::find_if(importedShapefileSources_, [&absolute](const auto& source) {
+        return source.GetShapefile().GetPath() == absolute;
+    });
+    if (found == importedShapefileSources_.end())
+    {
+        ExportSourceEntry source;
+        source.id = "shp." + std::to_string(importedShapefileSources_.size() + 1);
+        while (std::ranges::any_of(importedShapefileSources_,
+                                   [&source](const auto& item) { return item.id == source.id; }))
+        {
+            source.id += "x";
+        }
+        source.name = PathToUtf8(absolute.stem()) + " (SHP)";
+        source.kind = ExportSourceKind::Gis;
+        source.gisCategory = info.GetGeometryType() == DownTool::AmapVectorGeometryType::Polygon
+                                 ? DownTool::AmapVectorRenderCategory::Building
+                             : info.GetGeometryType() == DownTool::AmapVectorGeometryType::Point
+                                 ? DownTool::AmapVectorRenderCategory::Point
+                                 : DownTool::AmapVectorRenderCategory::Road;
+        source.color = DownTool::GetDefaultAmapVectorRenderColor(source.gisCategory);
+        DownTool::ShapefileImportOptions options;
+        options.SetPath(absolute);
+        source.SetShapefile(options);
+        importedShapefileSources_.push_back(std::move(source));
+        found = std::prev(importedShapefileSources_.end());
+    }
+    importedShapefileInfo_[absolute] = info;
+    hiddenShapefileSourceIds_.erase(found->id);
+    FocusShapefile(*found);
+    if (previewRangeMode_ == ExportRangeMode::CenterRadius &&
+        renderer_.GetExportRadiusMeters() <= 0. && info.GetFeatureCount() > 0)
+    {
+        const auto center = DownTool::GeographicBoundsCenter(info.GetBounds());
+        previewRadiusValue_ = fmt::format(
+            "{:.3f}",
+            std::max(1., DownTool::GeographicBoundsRadiusMeters(info.GetBounds(), center)));
+        renderer_.SetExportRadiusMeters(std::stod(previewRadiusValue_));
+    }
+    shapefilePreviewError_.clear();
+    SyncShapefilePreview();
+    updateUi(runtime);
+    requestRedraw();
+    return true;
+}
+
+void DomDownToolPreview::PreviewController::SyncShapefilePreview()
+{
+    std::vector<ExportSourceEntry> visible;
+    for (const auto& source : importedShapefileSources_)
+    {
+        if (!hiddenShapefileSourceIds_.contains(source.id))
+        {
+            visible.push_back(source);
+        }
+    }
+    DownTool::AmapVectorDownloadOptions options;
+    ConfigureGisVectorSources(options, visible);
+    renderer_.SetLocalShapefiles(options.GetShapefiles());
+}
+
+void DomDownToolPreview::PreviewController::FocusShapefile(const ExportSourceEntry& source)
+{
+    const auto info = importedShapefileInfo_.find(source.GetShapefile().GetPath());
+    if (info == importedShapefileInfo_.end() || info->second.GetFeatureCount() == 0)
+    {
+        return;
+    }
+    const auto& bounds = info->second.GetBounds();
+    const auto center = DownTool::GeographicBoundsCenter(bounds);
+    const double span = std::max(bounds.east - bounds.west, (bounds.north - bounds.south) * 1.5);
+    renderer_.setView(center, std::clamp(std::log2(180. / std::max(span, 0.0001)), 1., 20.));
+}
+
+void DomDownToolPreview::PreviewController::UpdateShapefilePreviewUi(skui::Runtime& runtime)
+{
+    std::string message = shapefilePreviewError_;
+    if (message.empty())
+    {
+        message = renderer_.GetLocalShapefileError();
+    }
+    if (message.empty() && renderer_.IsLocalShapefileLoading())
+    {
+        message = "正在读取 SHP…";
+    }
+    runtime.setVisibleById("shp-preview-panel",
+                           !importedShapefileSources_.empty() || !message.empty());
+    runtime.setTextById("shp-preview-count",
+                        fmt::format("本地图层 ({})", importedShapefileSources_.size()));
+    runtime.setVisibleById("shp-preview-export", !importedShapefileSources_.empty());
+    runtime.setVisibleById("shp-preview-message", !message.empty());
+    runtime.setTextById("shp-preview-message", message);
+    std::string html = "<div id=\"shp-preview-list\" class=\"shp-preview-list\">";
+    for (const auto& source : importedShapefileSources_)
+    {
+        const bool visible = !hiddenShapefileSourceIds_.contains(source.id);
+        const std::string id = EscapeHtml(source.id);
+        html += "<div class=\"shp-preview-row\"><input type=\"checkbox\" id=\"shp-visible-" + id +
+                "\" title=\"显示图层\" aria-label=\"显示图层\"" +
+                (visible ? std::string(" checked") : std::string{}) +
+                "><span class=\"shp-preview-name\" title=\"" +
+                EscapeHtml(PathToUtf8(source.GetShapefile().GetPath())) + "\">" +
+                EscapeHtml(source.name) + "</span><button type=\"button\" id=\"shp-focus-" + id +
+                "\" data-action=\"shapefile-preview\" title=\"定位图层\" "
+                "aria-label=\"定位图层\">&#x2299;</button>"
+                "<button type=\"button\" id=\"shp-remove-" +
+                id + "\" data-action=\"shapefile-preview\" title=\"移除图层\" "
+                "aria-label=\"移除图层\">&times;</button></div>";
+    }
+    html += "</div>";
+    if (html != lastShapefilePreviewHtml_ && runtime.replaceHtmlById("shp-preview-list", html))
+    {
+        lastShapefilePreviewHtml_ = std::move(html);
+    }
+}
+
+bool DomDownToolPreview::PreviewController::HandleShapefilePreviewEvent(
+    skui::Runtime& runtime, const skui::ElementEvent& event)
+{
+    const bool visibility = event.id.starts_with("shp-visible-");
+    const bool focus = event.id.starts_with("shp-focus-");
+    const bool remove = event.id.starts_with("shp-remove-");
+    if ((!visibility && !focus && !remove) ||
+        (visibility ? event.type != skui::ElementEventType::Change
+                    : event.type != skui::ElementEventType::Click))
+    {
+        return false;
+    }
+    const std::string id = event.id.substr(visibility ? 12 : focus ? 10 : 11);
+    const auto source = std::ranges::find(importedShapefileSources_, id, &ExportSourceEntry::id);
+    if (source == importedShapefileSources_.end())
+    {
+        return true;
+    }
+    if (focus)
+    {
+        FocusShapefile(*source);
+    }
+    else
+    {
+        if (remove)
+        {
+            importedShapefileInfo_.erase(source->GetShapefile().GetPath());
+            importedShapefileSources_.erase(source);
+            hiddenShapefileSourceIds_.erase(id);
+            for (auto& group : exportContentGroups_)
+            {
+                for (auto& component : group.components)
+                {
+                    std::erase_if(component.sources,
+                                  [&id](const auto& item) { return item.id == id; });
+                }
+            }
+        }
+        else if (event.checked)
+        {
+            hiddenShapefileSourceIds_.erase(id);
+        }
+        else
+        {
+            hiddenShapefileSourceIds_.insert(id);
+        }
+        shapefilePreviewError_.clear();
+        SyncShapefilePreview();
+    }
+    updateUi(runtime);
+    requestRedraw();
     return true;
 }

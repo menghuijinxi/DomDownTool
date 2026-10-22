@@ -408,7 +408,7 @@ bool DownTool::ExportCesiumBuildings(
             base.centerWgs84.lat, base.centerWgs84.lon, 0.);
         for (const auto& feature : buildings.features)
         {
-            if (!feature.hasHeight || feature.height == 0 ||
+            if (!HasVectorBuildingHeight(feature) ||
                 feature.geometryType != AmapVectorGeometryType::Polygon ||
                 feature.geometryParts.empty() || feature.geometryParts.front().empty())
             {
@@ -419,8 +419,7 @@ bool DownTool::ExportCesiumBuildings(
             GeographicBounds footprint{180., -180., 90., -90.};
             for (const auto& point : feature.geometryParts.front())
             {
-                const auto wgs = GCJ02GoogleDownBase::GCJ02ToWGS84(
-                    LonLat(point.longitude, point.latitude));
+                const auto wgs = VectorCoordinateWgs84(feature, point);
                 footprint.west = std::min(footprint.west, wgs.lon);
                 footprint.east = std::max(footprint.east, wgs.lon);
                 footprint.south = std::min(footprint.south, wgs.lat);

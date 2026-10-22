@@ -3166,6 +3166,7 @@ bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
     options.zoom = configuration.zoom;
     options.includeBaseLayers = true;
     options.includeLabels = false;
+    ConfigureGisVectorSources(options, configuration.GetExecutionVectorSources());
     options.maxConcurrency = 0;
     options.SetFeatureFilter(
         [selected = IsGisCategorySelected(
@@ -3296,6 +3297,7 @@ std::optional<DownTool::AmapVectorDecodedData> DomDownToolPreview::ExportTaskMan
     options.includeBaseLayers = configuration.includeBaseLayersOverride.value_or(true);
     options.includeLabels = configuration.includeLabelsOverride.value_or(
         configuration.gisCategories.contains(DownTool::AmapVectorRenderCategory::Point));
+    ConfigureGisVectorSources(options, configuration.GetExecutionVectorSources());
     options.maxConcurrency = 0;
     options.cancellationRequested = [this] { return IsCancellationRequested(); };
     options.SetProcessingProgressCallback(

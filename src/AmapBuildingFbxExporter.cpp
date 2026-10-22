@@ -453,13 +453,13 @@ namespace
         RecalculateMeshNormals(mesh);
     }
 
-    Point2 ProjectGcj02ToFbxPlane(
+    Point2 ProjectVectorToFbxPlane(
+        const DownTool::AmapVectorFeature& feature,
         const DownTool::AmapVectorCoordinate& coordinate,
         double centerMercatorX,
         double centerMercatorY)
     {
-        const DownTool::LonLat wgs84 = DownTool::GCJ02GoogleDownBase::GCJ02ToWGS84(
-            { coordinate.longitude, coordinate.latitude });
+        const DownTool::LonLat wgs84 = DownTool::VectorCoordinateWgs84(feature, coordinate);
         return {
             (LongitudeToWebMercatorX(wgs84.lon) - centerMercatorX) * 100.,
             (LatitudeToWebMercatorY(wgs84.lat) - centerMercatorY) * 100.
@@ -475,13 +475,6 @@ namespace
             (LongitudeToWebMercatorX(lonLat.lon) - centerMercatorX) * 100.,
             (LatitudeToWebMercatorY(lonLat.lat) - centerMercatorY) * 100.
         };
-    }
-
-    DownTool::LonLat Gcj02CoordinateToWgs84(
-        const DownTool::AmapVectorCoordinate& coordinate)
-    {
-        return DownTool::GCJ02GoogleDownBase::GCJ02ToWGS84(
-            { coordinate.longitude, coordinate.latitude });
     }
 
     double Distance(const Point2& first, const Point2& second)
@@ -528,6 +521,7 @@ namespace
     }
 
     Ring BuildRing(
+        const DownTool::AmapVectorFeature& feature,
         const std::vector<DownTool::AmapVectorCoordinate>& sourceRing,
         double centerMercatorX,
         double centerMercatorY)
@@ -536,7 +530,8 @@ namespace
         ring.reserve(sourceRing.size());
         for (const DownTool::AmapVectorCoordinate& coordinate : sourceRing)
         {
-            const Point2 point = ProjectGcj02ToFbxPlane(
+            const Point2 point = ProjectVectorToFbxPlane(
+                feature,
                 coordinate,
                 centerMercatorX,
                 centerMercatorY);
@@ -654,7 +649,7 @@ namespace
         for (const std::vector<DownTool::AmapVectorCoordinate>& sourceRing :
              feature.geometryParts)
         {
-            Ring ring = BuildRing(sourceRing, centerMercatorX, centerMercatorY);
+            Ring ring = BuildRing(feature, sourceRing, centerMercatorX, centerMercatorY);
             if (ring.size() < 3 || std::abs(SignedArea(ring)) <= 1.e-6)
             {
                 continue;
@@ -709,7 +704,7 @@ namespace
             for (const DownTool::AmapVectorCoordinate& coordinate : sourceRing)
             {
                 const std::optional<double> elevationMeters = options.elevationSampler(
-                    Gcj02CoordinateToWgs84(coordinate));
+                    DownTool::VectorCoordinateWgs84(feature, coordinate));
                 if (!elevationMeters)
                 {
                     continue;
@@ -1336,7 +1331,7 @@ namespace
         const DownTool::AmapBuildingFbxExportOptions& options)
     {
         if (feature.geometryType != DownTool::AmapVectorGeometryType::Polygon ||
-            !feature.hasHeight || feature.height == 0)
+            !DownTool::HasVectorBuildingHeight(feature))
         {
             return std::nullopt;
         }
@@ -1362,7 +1357,8 @@ namespace
             const DownTool::AmapVectorFeature& feature, const BuildingGeometry& geometry)
         {
             const size_t wall = SelectWallTexture(library_.wallTextures, geometry,
-                feature.height, double(feature.height) * options_.layerHeightCentimeters,
+                feature.height,
+                DownTool::VectorBuildingHeightCentimeters(feature, options_.layerHeightCentimeters),
                 options_, wallBucketStates_, randomEngine_);
             std::optional<size_t> roof;
             if (options_.roofTextureMode != DownTool::AmapBuildingFbxRoofTextureMode::Satellite)
@@ -2881,7 +2877,7 @@ DownTool::AmapBuildingFbxExportResult DownTool::ExportAmapBuildingScene(
         auto& roofMeshBuckets = roofChunkBuckets[*chunk];
 
         const double heightCentimeters =
-            static_cast<double>(feature.height) * options.layerHeightCentimeters;
+            DownTool::VectorBuildingHeightCentimeters(feature, options.layerHeightCentimeters);
         const std::optional<std::pair<double, double>> terrainHeightRange =
             SampleBuildingTerrainHeightRange(feature, options);
         const double bottomCentimeters = terrainHeightRange ? terrainHeightRange->first : 0.;

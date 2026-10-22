@@ -300,7 +300,8 @@ DomDownToolPreview::calculateExportGeoBounds(
 DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw)
     : imageCache_(requestRedraw),
       downloadQueue_(requestRedraw),
-      gisOverlay_(std::move(requestRedraw))
+      gisOverlay_(requestRedraw),
+      localGisOverlay_(std::move(requestRedraw))
 {
     auto addSource =
         [this](std::string id, std::string name, std::string coordinateSystem,
@@ -589,6 +590,7 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
         111320. * 0.65;
     gisOverlay_.UpdateContext(viewport_.center(), radiusMeters, viewport_.sourceZoom());
     gisOverlay_.Draw(canvas, viewport_, *source.projection, source.yDirection, kTileSize);
+    localGisOverlay_.Draw(canvas, viewport_, *source.projection, source.yDirection, kTileSize);
 
     drawTileDebugOverlay(canvas);
     drawExportBounds(canvas);
@@ -597,6 +599,22 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
     drawLocationMarker(canvas, width, height);
     renderStats_.cache = imageCache_.stats();
     renderStats_.downloads = downloadQueue_.stats();
+}
+
+void DomDownToolPreview::MapRenderer::SetLocalShapefiles(
+    const std::vector<DownTool::ShapefileImportOptions>& sources)
+{
+    localGisOverlay_.SetLocalShapefiles(sources);
+}
+
+bool DomDownToolPreview::MapRenderer::IsLocalShapefileLoading() const
+{
+    return localGisOverlay_.IsLoading();
+}
+
+std::string DomDownToolPreview::MapRenderer::GetLocalShapefileError() const
+{
+    return localGisOverlay_.GetLoadError();
 }
 
 bool DomDownToolPreview::MapRenderer::panBy(double deltaX, double deltaY)

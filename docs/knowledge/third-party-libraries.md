@@ -422,3 +422,33 @@ Shapelib 自身不负责坐标转换或投影文件生成。
 官方参考：<https://github.com/OSGeo/shapelib/tree/v1.6.3>。
 代码入口：`src/AmapVectorShapefileWriter.cpp`；库源码参考
 `shapefil.h`、`safileio.c`、`shpopen.c`、`dbfopen.c`。
+
+### WGS84 SHP 导入与内部高德坐标边界
+
+日期：2026-10-22。继续复用 Shapelib 1.6.3，不引入 PROJ 或 GDAL。
+
+- 接入风险：原渲染、范围过滤、FBX 和 3D Tiles 都默认 GIS 几何为 GCJ-02；高德高度
+  是内部层数，直接输入 WGS84 或米制高度会造成错位及建筑比例错误。
+- 本地要素显式标记 WGS84，公共坐标转换入口直接返回原始经纬度；米制高度单独保存，
+  不经整数层数换算。范围掩膜按数据坐标系生成，混合数据分别处理后合并。
+- Shapelib 负责 SHP/SHX/DBF 二进制解析，`SHPOpenLL`、`DBFOpenLL` 使用 UTF-8 路径
+  hooks；读取对象用 `SHPDestroyObject` 释放，文件句柄用 `SHPClose`、`DBFClose`
+  的 RAII 包装管理。导入前检查 DBF 记录数，逐记录检查空几何、删除标记、分段和坐标。
+- Shapelib 不提供 PRJ 解释器。本轮明确不增加投影依赖，因此仅对有长度和递归深度限制的
+  WKT 元数据做保守识别：二维地理坐标、WGS84 基准及椭球、度单位、格林尼治零子午线。
+  投影、其他基准、未知定义和缺失 PRJ 全部报“暂不支持”，不根据数值范围猜测坐标系。
+- DBF 按声明编码解码，属性保留到 GeoJSON；重新导出 SHP 时扫描额外字段，为与内置字段
+  重名的原字段分配独立名称，整数 ID 按文本写出。多点、多段线、多外环及孔洞保留。
+- 读取和范围处理在现有导出工作线程运行，逐记录及顶点批次检查取消；窗口拖入只读取
+  元数据。任务仅保存源路径和映射，执行时重新验证源文件，避免在 UI 线程加载整份数据。
+- 地图预览另用一个现有 GIS 叠加器实例，在其工作线程读取本地文件，不请求高德 PBF；
+  预处理也必须经过 `VectorCoordinateWgs84`，避免把本地经纬度再次当作 GCJ-02 转换。
+  删除或隐藏图层时增加请求代次、取消旧读取并立即清理绘制缓存，旧读取和网格结果不能
+  重新挂回地图。预览列表独立于导出组件，只有用户点击导出才构造新任务草稿。
+
+验证入口为 `Wgs84ShapefileReaderTest`、`ExportTaskManagerTest` 和
+`PreviewRangeEditorTest`，覆盖错误 PRJ、缺失 PRJ、中文路径和属性、精确 ID、米制高度、
+无网络读取、范围排除、现有组件执行、配置恢复、真实 `WM_DROPFILES`、地图像素与孔洞、
+异步删除、多文件移除以及窄窗口和高 DPI 布局。
+排查错位先看 `VectorCoordinateWgs84` 和要素坐标标记；排查建筑比例先检查高度字段单位，
+不要调整全局楼层高度来抵消错误。

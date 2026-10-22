@@ -429,7 +429,7 @@ namespace
                 !IsCategorySelected(category, options) ||
                 !IsFeatureVisibleAtZoom(feature, zoom, options.ignoreFeatureZoomRange) ||
                 feature.geometryType != AmapVectorGeometryType::Polygon ||
-                !feature.hasHeight || feature.height == 0)
+                !DownTool::HasVectorBuildingHeight(feature))
             {
                 continue;
             }
@@ -461,8 +461,7 @@ namespace
             for (const DownTool::AmapVectorCoordinate& coordinate : sourcePart)
             {
                 const DownTool::LonLat wgs84Coordinate =
-                    DownTool::GCJ02GoogleDownBase::GCJ02ToWGS84(
-                        { coordinate.longitude, coordinate.latitude });
+                    DownTool::VectorCoordinateWgs84(feature, coordinate);
                 Tile tile;
                 double pixelX = 0.;
                 double pixelY = 0.;
@@ -584,6 +583,14 @@ namespace
 DownTool::AmapVectorRenderCategory DownTool::ClassifyAmapVectorFeature(
     const AmapVectorFeature& feature)
 {
+    if (feature.GetCoordinateSystem() == VectorCoordinateSystem::Wgs84)
+    {
+        if (feature.layerName == "water") { return AmapVectorRenderCategory::Water; }
+        if (feature.layerName == "green") { return AmapVectorRenderCategory::Green; }
+        if (feature.layerName == "highway") { return AmapVectorRenderCategory::Highway; }
+        if (feature.layerName == "subway") { return AmapVectorRenderCategory::Subway; }
+        if (feature.layerName == "boundary") { return AmapVectorRenderCategory::Boundary; }
+    }
     if (IsAmapWaterFeatureCode(feature.mainKey, feature.subKey))
     {
         return AmapVectorRenderCategory::Water;
@@ -622,7 +629,7 @@ DownTool::AmapVectorRenderCategory DownTool::ClassifyAmapVectorFeature(
 bool DownTool::IsAmapVectorBuildingWithHeight(const AmapVectorFeature& feature)
 {
     return feature.geometryType == AmapVectorGeometryType::Polygon &&
-        feature.hasHeight && feature.height != 0 &&
+        HasVectorBuildingHeight(feature) &&
         ClassifyAmapVectorFeature(feature) == AmapVectorRenderCategory::Building;
 }
 
@@ -1081,7 +1088,10 @@ DownTool::AmapVectorPngDownloadResult DownTool::AmapVectorPngDownloader::Downloa
     std::vector<AmapVectorTile> sourceTiles;
     try
     {
-        sourceTiles = SelectSourceTilesForPngOutput(options.vectorDownload);
+        if (options.vectorDownload.GetIncludeAmapSource())
+        {
+            sourceTiles = SelectSourceTilesForPngOutput(options.vectorDownload);
+        }
     }
     catch (const std::exception& exception)
     {

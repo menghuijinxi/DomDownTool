@@ -15,8 +15,11 @@
 #include <vector>
 
 #include <objbase.h>
+#include <shellapi.h>
+#include <shlobj.h>
 
 #include "include/core/SkCanvas.h"
+#include "include/core/SkBitmap.h"
 #include "include/core/SkSurface.h"
 #include "nlohmann/json.hpp"
 #include "opencv2/imgcodecs.hpp"
@@ -24,6 +27,7 @@
 #include "skui_win32_event_adapter.h"
 
 #include "preview/PreviewController.h"
+#include "ShapefileTestSupport.h"
 
 namespace
 {
@@ -970,6 +974,334 @@ bool TestShapefileComponent(HWND window, const std::filesystem::path& testRoot)
            click("export-act-done-panel");
 }
 
+bool TestShapefileMapPreview(const std::filesystem::path& testRoot)
+{
+    using postprocess_test::Require;
+    const auto path = testRoot / "map-preview.shp";
+    if (!Require(shapefile_test::WriteFixture(path), "创建地图预览 SHP 失败"))
+    {
+        return false;
+    }
+    DomDownToolPreview::MapRenderer renderer([] {});
+    renderer.selectSource("none");
+    renderer.setView({116.421, 39.891}, 17.);
+    SkBitmap bitmap;
+    bitmap.allocN32Pixels(800, 600);
+    SkCanvas canvas(bitmap);
+    renderer.draw(canvas, 800, 600, 1.F);
+    const auto point = renderer.ScreenPointForLonLat({116.42025, 39.89025});
+    const auto hole = renderer.ScreenPointForLonLat({116.42125, 39.89125});
+    if (!Require(point && hole, "地图预览坐标定位失败"))
+    {
+        return false;
+    }
+    const auto colorAt = [&bitmap](const auto& position) {
+        return bitmap.getColor(static_cast<int>(position.x), static_cast<int>(position.y));
+    };
+    const SkColor baseline = colorAt(*point);
+    const SkColor holeBaseline = colorAt(*hole);
+    DownTool::ShapefileImportOptions source;
+    source.SetPath(path);
+    const auto waitForRead = [&renderer] {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (renderer.IsLocalShapefileLoading() && std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return !renderer.IsLocalShapefileLoading();
+    };
+    renderer.SetLocalShapefiles({source});
+    if (!Require(waitForRead() && renderer.GetLocalShapefileError().empty(),
+                 "本地 SHP 后台预览读取失败：" + renderer.GetLocalShapefileError()))
+    {
+        return false;
+    }
+    renderer.draw(canvas, 800, 600, 1.F);
+    if (!Require(colorAt(*point) != baseline && colorAt(*hole) == holeBaseline,
+                 "SHP 预览未按 WGS84 原坐标绘制，或丢失面内孔洞") ||
+        !Require(cv::imwrite((testRoot / "shapefile-map-preview.png").string(),
+                             cv::Mat(600, 800, CV_8UC4, bitmap.getPixels())),
+                 "SHP 地图预览截图失败"))
+    {
+        return false;
+    }
+    renderer.SetLocalShapefiles({});
+    renderer.draw(canvas, 800, 600, 1.F);
+    if (!Require(!renderer.IsLocalShapefileLoading() && colorAt(*point) == baseline,
+                 "删除本地图层后地图仍保留几何"))
+    {
+        return false;
+    }
+    for (int index = 0; index < 20; ++index)
+    {
+        renderer.SetLocalShapefiles({source});
+        renderer.SetLocalShapefiles({});
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    renderer.draw(canvas, 800, 600, 1.F);
+    if (!Require(colorAt(*point) == baseline && !renderer.IsLocalShapefileLoading(),
+                 "删除后旧异步任务重新显示了图层"))
+    {
+        return false;
+    }
+    source.SetPath(testRoot / "missing.shp");
+    renderer.SetLocalShapefiles({source});
+    if (!Require(waitForRead() && !renderer.GetLocalShapefileError().empty(),
+                 "SHP 读取失败没有保留用户可见的错误"))
+    {
+        return false;
+    }
+    renderer.SetLocalShapefiles({});
+    return Require(renderer.GetLocalShapefileError().empty(), "删除失败的图层后没有清理错误");
+}
+
+bool TestShapefileDrop(HWND window, const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    using postprocess_test::Require;
+    const auto path = testRoot / std::filesystem::u8path("拖入数据/用户建筑.shp");
+    if (!Require(shapefile_test::WriteFixture(path), "创建拖入 SHP 失败"))
+    {
+        return false;
+    }
+    skui::Runtime runtime;
+    if (!runtime.loadDocument(
+            (std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) / "resources/preview/index.html")
+                .string()))
+    {
+        return false;
+    }
+    runtime.resize(1440, 900, 1.F);
+    RangeController controller;
+    controller.attachRuntime(runtime);
+    const auto readTaskCount = [&testRoot]() -> size_t
+    {
+        std::ifstream input(testRoot / std::filesystem::u8path("cache/导出任务.json"));
+        return input ? nlohmann::json::parse(input).at("tasks").size() : 0;
+    };
+    const auto taskCount = readTaskCount();
+    skui::win32::Win32EventAdapter adapter(runtime);
+    const auto drop = [&] {
+        const auto name = path.wstring();
+        const auto bytes = sizeof(DROPFILES) + (name.size() + 2) * sizeof(wchar_t);
+        const auto memory = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes);
+        if (!memory)
+        {
+            return false;
+        }
+        auto* files = static_cast<DROPFILES*>(GlobalLock(memory));
+        if (!files)
+        {
+            GlobalFree(memory);
+            return false;
+        }
+        files->pFiles = sizeof(DROPFILES);
+        files->fWide = TRUE;
+        auto* buffer = reinterpret_cast<wchar_t*>(reinterpret_cast<char*>(files) + files->pFiles);
+        std::copy(name.begin(), name.end(), buffer);
+        GlobalUnlock(memory);
+        return controller.handleWindowMessage(window, WM_DROPFILES,
+                                              reinterpret_cast<WPARAM>(memory), 0, runtime);
+    };
+    auto prj = path;
+    prj.replace_extension(".prj");
+    shapefile_test::WriteText(prj, "PROJCS[\"Unsupported\"]");
+    if (!Require(drop() &&
+                     runtime.textContentById("shp-preview-message").value_or("").find("暂不支持") !=
+                         std::string::npos,
+                 "拖入其他坐标系时没有显示暂不支持"))
+    {
+        return false;
+    }
+    shapefile_test::WriteText(prj, shapefile_test::kWgs84Prj);
+    std::string error;
+    if (!Require(drop(), "WGS84 SHP 拖入未处理") ||
+        !Require(runtime.textContentById("shp-preview-count") == "本地图层 (1)" &&
+                     !controller.ReadExport(error).has_value() &&
+                     readTaskCount() == taskCount,
+                 "拖入 SHP 应先预览，不应自动创建导出草稿") ||
+        !Require(drop() && runtime.textContentById("shp-preview-count") == "本地图层 (1)",
+                 "重复拖入不应重复创建本地图层") ||
+        !ClickElement(controller, runtime, adapter, window, "shp-focus-shp.1") ||
+        !Require(WriteTaskScreenshot(runtime, testRoot / "shapefile-preview-desktop.png"),
+                 "SHP 预览桌面截图失败"))
+    {
+        return false;
+    }
+    runtime.resize(700, 600, 1.F);
+    controller.resizeRuntime(runtime);
+    if (!Require(WriteTaskScreenshot(runtime, testRoot / "shapefile-preview-narrow.png"),
+                 "SHP 预览窄窗口截图失败") ||
+        !ClickElement(controller, runtime, adapter, window, "shp-visible-shp.1") ||
+        !ClickElement(controller, runtime, adapter, window, "shp-preview-export"))
+    {
+        return false;
+    }
+    const auto hasPath = [&path](const ExportConfiguration& config) {
+        for (const auto& group : config.groups)
+        {
+            for (const auto& component : group.components)
+            {
+                if (std::ranges::any_of(component.sources, [&path](const auto& source) {
+                        return source.GetShapefile().GetPath() == path;
+                    }))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    const auto hiddenConfiguration = controller.ReadExport(error);
+    if (!Require(hiddenConfiguration && !hasPath(*hiddenConfiguration),
+                 "隐藏的本地图层不应默认加入新建导出") ||
+        !ClickElement(controller, runtime, adapter, window, "export-back-preview") ||
+        !ClickElement(controller, runtime, adapter, window, "shp-visible-shp.1") ||
+        !ClickElement(controller, runtime, adapter, window, "shp-preview-export"))
+    {
+        return false;
+    }
+    const auto configuration = controller.ReadExport(error);
+    if (!Require(configuration && !configuration->groups.empty() &&
+                     std::abs(configuration->centerWgs84.lon - 116.431) < 1.e-9 &&
+                     std::abs(configuration->centerWgs84.lat - 39.891) < 1.e-9 &&
+                     configuration->radiusMeters > 900.,
+                 "点击导出后无法从预览生成 SHP 导出配置：" + error))
+    {
+        return false;
+    }
+    const ExportComponent* imported = nullptr;
+    size_t importedSourceIndex = 0;
+    for (const auto& group : configuration->groups)
+    {
+        for (const auto& component : group.components)
+        {
+            const auto source = std::ranges::find_if(component.sources, [&](const auto& entry) {
+                return entry.GetShapefile().GetPath() == path;
+            });
+            if (source != component.sources.end())
+            {
+                imported = &component;
+                importedSourceIndex =
+                    static_cast<size_t>(std::distance(component.sources.begin(), source));
+            }
+        }
+    }
+    if (!Require(imported != nullptr, "拖入 SHP 没有加入组件数据源"))
+    {
+        return false;
+    }
+    const auto id = imported->id;
+    const auto sourceIndex = std::to_string(importedSourceIndex);
+    if (!Require(runtime.textContentById("export-act-shp-height__" + id + "__" + sourceIndex)
+                     .has_value(),
+                 "缺少 SHP 高度字段选择") ||
+        !Require(WriteTaskScreenshot(runtime, testRoot / "shapefile-import-desktop.png"),
+                 "SHP 导入桌面截图失败"))
+    {
+        return false;
+    }
+    runtime.resize(700, 600, 1.F);
+    controller.resizeRuntime(runtime);
+    runtime.scrollIntoViewById("export-param-panel");
+    if (!Require(WriteTaskScreenshot(runtime, testRoot / "shapefile-import-narrow.png"),
+                 "SHP 导入窄窗口截图失败") ||
+        !ClickElement(controller, runtime, adapter, window,
+                      "export-act-remove-source__" + id + "__" + sourceIndex) ||
+        !ClickElement(controller, runtime, adapter, window, "export-act-open-sources__" + id))
+    {
+        return false;
+    }
+    if (!Require(runtime.textContentById("export-act-add-source__" + id + "__shp.1") ==
+                     "用户建筑 (SHP)",
+                 "移除后本地 SHP 没有保留在图源菜单供其他组件选择") ||
+        !ClickElement(controller, runtime, adapter, window,
+                      "export-act-add-source__" + id + "__shp.1"))
+    {
+        return false;
+    }
+    if (!ClickElement(controller, runtime, adapter, window, "export-back-preview") ||
+        !ClickElement(controller, runtime, adapter, window, "shp-remove-shp.1") ||
+        !Require(runtime.textContentById("shp-preview-count") == "本地图层 (0)" &&
+                     std::filesystem::exists(path),
+                 "移除本地图层应清理列表并保留磁盘上的源文件"))
+    {
+        return false;
+    }
+    const auto removedConfiguration = controller.ReadExport(error);
+    if (!Require(removedConfiguration && !hasPath(*removedConfiguration),
+                 "移除本地图层没有清理当前导出草稿引用") ||
+        !Require(drop(), "删除后应允许重新拖入 SHP"))
+    {
+        return false;
+    }
+    const auto secondPath = testRoot / std::filesystem::u8path("另一任务/用户建筑.shp");
+    if (!Require(shapefile_test::WriteFixture(secondPath), "创建另一任务 SHP 失败"))
+    {
+        return false;
+    }
+    auto restored = *configuration;
+    for (auto& group : restored.groups)
+    {
+        for (auto& component : group.components)
+        {
+            for (auto& source : component.sources)
+            {
+                if (source.GetShapefile().GetPath() == path)
+                {
+                    auto options = source.GetShapefile();
+                    options.SetPath(secondPath);
+                    source.SetShapefile(options);
+                }
+            }
+        }
+    }
+    controller.LoadExport(runtime, restored);
+    const auto restoredConfiguration = controller.ReadExport(error);
+    if (!Require(restoredConfiguration.has_value(), "另一任务 SHP 参数恢复失败：" + error))
+    {
+        return false;
+    }
+    for (const auto& group : restoredConfiguration->groups)
+    {
+        for (const auto& component : group.components)
+        {
+            for (const auto& source : component.sources)
+            {
+                if (source.GetShapefile().GetPath() == secondPath)
+                {
+                    if (!Require(source.id != "shp.1", "不同任务的 SHP 图源 ID 冲突"))
+                    {
+                        return false;
+                    }
+                    runtime.resize(1050, 900, 1.5F);
+                    controller.resizeRuntime(runtime);
+                    return Require(
+                               WriteTaskScreenshot(runtime,
+                                                   testRoot / "shapefile-preview-multiple.png"),
+                               "多文件和高 DPI 预览截图失败") &&
+                           ClickElement(controller, runtime, adapter, window,
+                                        "shp-remove-shp.1") &&
+                           Require(runtime.textContentById("shp-preview-count") ==
+                                       "本地图层 (1)",
+                                   "删除第一个文件不应影响另一个本地图层") &&
+                           ClickElement(controller, runtime, adapter, window,
+                                        "shp-focus-" + source.id) &&
+                           ClickElement(controller, runtime, adapter, window,
+                                        "shp-remove-" + source.id) &&
+                           Require(runtime.textContentById("shp-preview-count") ==
+                                           "本地图层 (0)" &&
+                                       std::filesystem::exists(path) &&
+                                       std::filesystem::exists(secondPath) &&
+                                       readTaskCount() == taskCount,
+                                   "多文件移除不应删除源文件或自动提交导出任务");
+                }
+            }
+        }
+    }
+    return Require(false, "恢复参数后丢失另一任务 SHP");
+}
+
 bool TestPerTileFbxOption(HWND window, const std::filesystem::path& testRoot)
 {
     using namespace DomDownToolPreview;
@@ -1603,6 +1935,7 @@ int main()
     const bool passed =
         RunTest(window, testRoot) && TestCopyUsesActiveRegionRole(window, testRoot) &&
         TestFlattenRegionEditing(window, testRoot) && TestShapefileComponent(window, testRoot) &&
+        TestShapefileMapPreview(testRoot) && TestShapefileDrop(window, testRoot) &&
         TestTaskActions(window, testRoot) && TestPerTileFbxOption(window, testRoot) &&
         TestTaskFbxPreviewLoadsEveryTile(window, testRoot);
     DestroyWindow(window);

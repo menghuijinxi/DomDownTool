@@ -132,6 +132,10 @@ class MapRenderer
 
     void ResetGisOverlayColors();
 
+    void SetLocalShapefiles(const std::vector<DownTool::ShapefileImportOptions>& sources);
+    [[nodiscard]] bool IsLocalShapefileLoading() const;
+    [[nodiscard]] std::string GetLocalShapefileError() const;
+
     void SetExportRadiusMeters(double radiusMeters);
 
     void SetExportPolygonsWgs84(const DownTool::Wgs84Polygons& polygons);
@@ -229,6 +233,7 @@ class MapRenderer
     TileImageCache imageCache_;
     TileDownloadQueue downloadQueue_;
     GisOverlayRenderer gisOverlay_;
+    GisOverlayRenderer localGisOverlay_;
     MapRenderStats renderStats_;
     std::vector<TileDebugEntry> tileDebugEntries_;
     std::optional<DownTool::LonLat> locationMarkerWgs84_;

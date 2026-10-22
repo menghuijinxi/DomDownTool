@@ -2906,6 +2906,108 @@
                 min-width: 0;
             }
         }
+        #shp-preview-panel {
+            position: absolute;
+            z-index: 24;
+            display: flex;
+            flex-direction: column;
+            right: 16px;
+            bottom: 44px;
+            width: 296px;
+            max-width: calc(100% - 32px);
+            padding: 10px;
+            border: 1px solid #454b48;
+            border-radius: 5px;
+            background: #252729;
+            color: #edf1ef;
+        }
+
+        .shp-preview-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex: 0 0 auto;
+            height: 30px;
+            margin-bottom: 6px;
+        }
+
+        #shp-preview-count {
+            font-weight: 700;
+        }
+
+        #shp-preview-export {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 52px;
+            width: 52px;
+            min-width: 52px;
+            height: 28px;
+            padding: 0 10px;
+            border: 1px solid #2b726b;
+            border-radius: 4px;
+            background: #253a36;
+            color: #72d5c6;
+            font: inherit;
+        }
+
+        .shp-preview-list {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            max-height: 144px;
+            overflow-y: auto;
+        }
+
+        .shp-preview-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex: 0 0 36px;
+            width: 100%;
+            height: 36px;
+            min-height: 36px;
+        }
+
+        .shp-preview-row input {
+            flex: 0 0 16px;
+            width: 16px;
+            height: 16px;
+            margin: 0;
+        }
+
+        .shp-preview-name {
+            display: block;
+            flex: 1 1 0;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 12px;
+        }
+
+        .shp-preview-row button {
+            flex: 0 0 28px;
+            width: 28px;
+            min-width: 28px;
+            height: 28px;
+            padding: 0;
+            border: 1px solid #454b48;
+            border-radius: 4px;
+            background: #303633;
+            color: #edf1ef;
+            font-size: 18px;
+        }
+
+        #shp-preview-message {
+            margin-top: 6px;
+            max-height: 64px;
+            overflow-y: auto;
+            overflow-wrap: anywhere;
+            font-size: 12px;
+            color: #e6c57c;
+        }
+
         #preview-edit-range {
             position: absolute;
             z-index: 32;
@@ -3229,6 +3331,16 @@
                 <circle cx="21" cy="16" r="2" fill="currentColor"/>
             </svg>
         </button>
+
+        <aside id="shp-preview-panel" style="display: none">
+            <div class="shp-preview-header">
+                <span id="shp-preview-count">本地图层 (0)</span>
+                <button id="shp-preview-export" type="button"
+                        data-action="open-export-config">导出</button>
+            </div>
+            <div id="shp-preview-list" class="shp-preview-list"></div>
+            <div id="shp-preview-message" style="display: none"></div>
+        </aside>
 
         <aside id="range-editor-panel" class="range-editor-panel" style="display: none">
             <div class="range-editor-header">

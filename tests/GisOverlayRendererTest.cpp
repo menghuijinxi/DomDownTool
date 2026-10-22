@@ -52,7 +52,7 @@ bool defaultColorsMatch(const DomDownToolPreview::GisOverlayRenderer& renderer)
                     {54, 55, 56, 255});
 }
 
-bool pointRendersAfterPanningAndColorChange()
+bool pointRendersAfterPanningAndColorChange(bool wgs84)
 {
     const DownTool::LonLat centerWgs84{116.397389, 39.908722};
     const DownTool::LonLat centerGcj02 =
@@ -60,8 +60,13 @@ bool pointRendersAfterPanningAndColorChange()
     DownTool::AmapVectorFeature pointFeature;
     pointFeature.geometryType = DownTool::AmapVectorGeometryType::Point;
     pointFeature.layerName = "poi";
+    const auto coordinate = wgs84 ? centerWgs84 : centerGcj02;
+    if (wgs84)
+    {
+        pointFeature.SetCoordinateSystem(DownTool::VectorCoordinateSystem::Wgs84);
+    }
     pointFeature.geometryParts.push_back(
-        {{{centerGcj02.lon, centerGcj02.lat}}});
+        {{{coordinate.lon, coordinate.lat}}});
 
     DownTool::AmapVectorDecodedData decodedData;
     decodedData.features.push_back(std::move(pointFeature));
@@ -128,7 +133,8 @@ int main()
             throw std::runtime_error("GIS overlay defaults do not match the Preview palette");
         }
 
-        if (!pointRendersAfterPanningAndColorChange())
+        if (!pointRendersAfterPanningAndColorChange(false) ||
+            !pointRendersAfterPanningAndColorChange(true))
         {
             throw std::runtime_error(
                 "point did not render after panning or refresh its color");

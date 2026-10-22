@@ -24,6 +24,59 @@
 
 namespace DomDownToolPreview
 {
+void ConfigureGisVectorSources(DownTool::AmapVectorDownloadOptions& options,
+                               const std::vector<ExportSourceEntry>& sources)
+{
+    if (sources.empty())
+    {
+        return;
+    }
+    bool includeAmap = false;
+    std::set<DownTool::AmapVectorRenderCategory> remoteCategories;
+    std::vector<DownTool::ShapefileImportOptions> shapefiles;
+    for (const auto& source : sources)
+    {
+        if (source.kind != ExportSourceKind::Gis)
+        {
+            continue;
+        }
+        if (source.GetShapefile().GetPath().empty())
+        {
+            includeAmap = true;
+            remoteCategories.insert(source.gisCategory);
+            continue;
+        }
+        auto imported = source.GetShapefile();
+        using Category = DownTool::AmapVectorRenderCategory;
+        switch (source.gisCategory)
+        {
+        case Category::Building: imported.SetLayerName("building"); break;
+        case Category::Road: imported.SetLayerName("road"); break;
+        case Category::Point: imported.SetLayerName("poi"); break;
+        case Category::Water: imported.SetLayerName("water"); break;
+        case Category::Green: imported.SetLayerName("green"); break;
+        case Category::Highway: imported.SetLayerName("highway"); break;
+        case Category::Subway: imported.SetLayerName("subway"); break;
+        case Category::Boundary: imported.SetLayerName("boundary"); break;
+        default: imported.SetLayerName("other"); break;
+        }
+        shapefiles.push_back(std::move(imported));
+    }
+    options.SetIncludeAmapSource(includeAmap);
+    options.SetShapefiles(shapefiles);
+    const auto originalFilter = options.GetFeatureFilter();
+    options.SetFeatureFilter([remoteCategories, originalFilter](const auto& feature)
+    {
+        if (originalFilter && !originalFilter(feature))
+        {
+            return false;
+        }
+        return feature.GetCoordinateSystem() == DownTool::VectorCoordinateSystem::Wgs84 ||
+               remoteCategories.contains(DownTool::AmapVectorRenderCategory::All) ||
+               remoteCategories.contains(DownTool::ClassifyAmapVectorFeature(feature));
+    });
+}
+
 DownTool::GisSpatialRange ExportGisSpatialRange(const ExportConfiguration& configuration)
 {
     DownTool::GisSpatialRange range;
@@ -331,6 +384,12 @@ Json SourceToJson(const ExportSourceEntry& source)
             {"green", source.color.green},
             {"blue", source.color.blue},
             {"alpha", source.color.alpha}};
+        if (!source.GetShapefile().GetPath().empty())
+        {
+            json["shapefile"] = {
+                {"path", PathToUtf8(source.GetShapefile().GetPath())},
+                {"heightField", source.GetShapefile().GetHeightField()}};
+        }
     }
     if (!source.multidateYear.empty())
     {
@@ -377,6 +436,18 @@ std::optional<ExportSourceEntry> SourceFromJson(const Json& json)
     source.multidateKey = JsonString(json, "multidateKey");
     source.multidateGbCode = JsonString(json, "multidateGbCode");
     source.multidateRegionName = JsonString(json, "multidateRegionName");
+    if (const auto imported = json.find("shapefile"); imported != json.end())
+    {
+        if (!imported->is_object() || source.kind != ExportSourceKind::Gis ||
+            JsonString(*imported, "path").empty())
+        {
+            return std::nullopt;
+        }
+        DownTool::ShapefileImportOptions options;
+        options.SetPath(std::filesystem::u8path(JsonString(*imported, "path")));
+        options.SetHeightField(JsonString(*imported, "heightField"));
+        source.SetShapefile(options);
+    }
     return source;
 }
 
@@ -1447,6 +1518,7 @@ bool ExportGroupedRunner::Run(
                 options.vectorDownload.SetGisSpatialRange(
                     ExportGisSpatialRange(queuedExport.configuration));
                 options.vectorDownload.zoom = queuedExport.configuration.zoom;
+                ConfigureGisVectorSources(options.vectorDownload, component.sources);
                 options.vectorDownload.includeBaseLayers = true;
                 options.vectorDownload.includeLabels = GisCategories(component).contains(
                     DownTool::AmapVectorRenderCategory::Point);
@@ -1669,6 +1741,7 @@ bool ExportGroupedRunner::Run(
                 download.polygonsWgs84 = queuedExport.configuration.polygonsWgs84;
                 download.SetGisSpatialRange(ExportGisSpatialRange(queuedExport.configuration));
                 download.zoom = queuedExport.configuration.zoom;
+                ConfigureGisVectorSources(download, component.sources);
                 download.includeBaseLayers = true;
                 download.includeLabels = false;
                 download.SetFeatureFilter(DownTool::IsAmapVectorBuildingWithHeight);
@@ -1753,6 +1826,7 @@ bool ExportGroupedRunner::Run(
         else if (component.kind == ExportComponentKind::BuildingModel)
         {
             ExportTaskManager::QueuedExport step = queuedExport;
+            step.configuration.SetExecutionVectorSources(component.sources);
             step.configuration.exportBuildingFbx = true;
             step.configuration.exportFbx = true;
             step.configuration.gisCategories = {
@@ -1846,6 +1920,7 @@ bool ExportGroupedRunner::Run(
                  component.kind == ExportComponentKind::Shapefile)
         {
             ExportTaskManager::QueuedExport step = queuedExport;
+            step.configuration.SetExecutionVectorSources(component.sources);
             step.configuration.gisCategories = GisCategories(component);
             step.configuration.includeBaseLayersOverride = component.includeBaseLayers;
             step.configuration.includeLabelsOverride = component.includeLabels;

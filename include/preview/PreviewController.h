@@ -256,6 +256,8 @@ class PreviewController
     void requestRedraw() const;
 
 protected:
+    bool ImportShapefile(const std::filesystem::path& path, skui::Runtime& runtime,
+                         std::string& error);
     void InitializeExportDraft(
         skui::Runtime& runtime, const ExportConfiguration* configuration = nullptr);
     [[nodiscard]] std::optional<ExportConfiguration> BuildExportConfiguration(
@@ -273,6 +275,11 @@ protected:
     void CommitRangeRadiusInput(skui::Runtime& runtime);
 
 private:
+    void SyncShapefilePreview();
+    void UpdateShapefilePreviewUi(skui::Runtime& runtime);
+    void FocusShapefile(const ExportSourceEntry& source);
+    bool HandleShapefilePreviewEvent(skui::Runtime& runtime, const skui::ElementEvent& event);
+
     std::atomic<HWND> window_{nullptr};
     skui::Runtime* runtime_ = nullptr;
     TianDiTuMultidateWebViewSession tianDiTuMultidateSession_;
@@ -322,6 +329,11 @@ private:
     std::set<std::string> exportTianDiTuMultidateSelectedValues_ = {"latest"};
     std::string exportValidationMessage_;
     std::vector<ExportContentGroup> exportContentGroups_;
+    std::vector<ExportSourceEntry> importedShapefileSources_;
+    std::map<std::filesystem::path, DownTool::ShapefileInfo> importedShapefileInfo_;
+    std::set<std::string> hiddenShapefileSourceIds_;
+    std::string shapefilePreviewError_;
+    std::string lastShapefilePreviewHtml_;
     std::string exportSelectedComponentId_;
     std::string exportComponentMenuGroupId_;
     std::string exportSourceMenuComponentId_;

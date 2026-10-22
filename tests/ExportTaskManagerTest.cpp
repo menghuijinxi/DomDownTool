@@ -24,6 +24,7 @@
 #include "CopernicusDem.h"
 #include "preview/ExportTaskManager.h"
 #include "preview/ExportImageComposer.h"
+#include "ShapefileTestSupport.h"
 
 namespace
 {
@@ -85,9 +86,10 @@ bool equalPolygons(
 }
 
 bool waitForFinished(DomDownToolPreview::ExportTaskManager& manager,
-                     const std::string& taskId)
+                     const std::string& taskId,
+                     std::chrono::seconds timeout = std::chrono::seconds(2))
 {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline)
     {
         const std::vector<DomDownToolPreview::ExportTaskRecord> records = manager.GetRecords();
@@ -916,6 +918,127 @@ bool verifyRestartAndRename(const std::filesystem::path& testRoot)
                        records.front().outputPath == outputPath &&
                        records.front().configuration->zoom == 16,
                    "重启程序后没有保留重命名和修改后的参数");
+}
+
+bool verifyImportedShapefileTask(const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    using postprocess_test::Require;
+    const auto root = testRoot / "imported-shapefile-task";
+    const auto path = root / std::filesystem::u8path("用户输入/建筑.shp");
+    if (!Require(shapefile_test::WriteFixture(path), "本地 SHP 任务 fixture 创建失败"))
+    {
+        return false;
+    }
+    ExportConfiguration configuration;
+    configuration.centerWgs84 = {116.421, 39.891};
+    configuration.radiusMeters = 300.;
+    configuration.zoom = 16;
+    configuration.outputRoot = root / "output";
+    ExportSourceEntry source;
+    source.id = "shp.1";
+    source.name = "本地建筑";
+    source.kind = ExportSourceKind::Gis;
+    source.gisCategory = DownTool::AmapVectorRenderCategory::Building;
+    DownTool::ShapefileImportOptions imported;
+    imported.SetPath(path);
+    imported.SetHeightField("height_m");
+    source.SetShapefile(imported);
+    ExportComponent shapefile;
+    shapefile.id = "shp";
+    shapefile.kind = ExportComponentKind::Shapefile;
+    shapefile.sources = {source};
+    ExportComponent geojson = shapefile;
+    geojson.id = "json";
+    geojson.kind = ExportComponentKind::GeoJson;
+    ExportComponent image = shapefile;
+    image.id = "image";
+    image.kind = ExportComponentKind::MergedImage;
+    image.maxEdge = 256;
+    ExportComponent xyz = image;
+    xyz.id = "xyz";
+    xyz.kind = ExportComponentKind::StandardXyz;
+    ExportComponent dom = image;
+    dom.id = "dom";
+    dom.kind = ExportComponentKind::DomGeoTiff;
+    ExportComponent base = image;
+    base.id = "base";
+    base.kind = ExportComponentKind::BasePlate;
+    base.shape = DownTool::FbxPlanetShape::Plane;
+    base.textureSize = 256;
+    base.meshSubdivision = 2;
+    const auto walls = root / "walls";
+    const auto roofs = root / "roofs";
+    std::filesystem::create_directories(walls);
+    std::filesystem::create_directories(roofs);
+    if (!Require(cv::imwrite((walls / "wall.png").string(),
+                             cv::Mat(32, 32, CV_8UC3, cv::Scalar(80, 120, 160))) &&
+                     cv::imwrite((roofs / "roof.png").string(),
+                                 cv::Mat(32, 32, CV_8UC3, cv::Scalar(130, 150, 100))),
+                 "创建本地建筑组件贴图失败"))
+    {
+        return false;
+    }
+    ExportComponent buildings = base;
+    buildings.id = "buildings";
+    buildings.kind = ExportComponentKind::BuildingModel;
+    buildings.wallTexturePath = walls;
+    buildings.roofTexturePath = roofs;
+    ExportComponent cesium = buildings;
+    cesium.id = "cesium";
+    cesium.kind = ExportComponentKind::CesiumBuildings;
+    cesium.SetCesiumLodLevels(2);
+    ExportContentGroup group;
+    group.id = "local";
+    group.name = "本地";
+    group.components = {shapefile, geojson, image, xyz, dom, base, buildings, cesium};
+    configuration.groups = {group};
+    std::string taskId;
+    const auto recordsPath = root / "records.json";
+    {
+        ExportTaskManager manager({}, recordsPath);
+        taskId = manager.Enqueue(configuration);
+        if (!Require(waitForFinished(manager, taskId, std::chrono::seconds(30)),
+                     "本地 SHP 完整组件任务没有结束"))
+        {
+            return false;
+        }
+        const auto records = manager.GetRecords();
+        const auto* record = findRecord(records, taskId);
+        const auto output = ExportTaskOutputRoot(configuration, taskId);
+        const auto json = loadJsonFile(output / std::filesystem::u8path("本地/GeoJSON/数据.geojson"));
+        if (!Require(record && record->state == ExportTaskState::Succeeded &&
+                         json["features"].size() == 1 &&
+                         json["coordinateSystem"] == "WGS84" &&
+                         json["features"][0]["properties"]["owner"] == "业主甲" &&
+                         std::filesystem::exists(output /
+                             std::filesystem::u8path("本地/SHP/polygons.shp")) &&
+                         std::filesystem::exists(output /
+                             std::filesystem::u8path("本地/大图/本地建筑.png")) &&
+                         std::filesystem::exists(output /
+                             std::filesystem::u8path("本地/XYZ/本地建筑/meta.json")) &&
+                         std::filesystem::exists(output /
+                             std::filesystem::u8path("本地/DOM GeoTIFF/本地建筑.tif")) &&
+                         std::filesystem::exists(output /
+                             std::filesystem::u8path("本地/底板模型/本地建筑/FBX/plane.fbx")) &&
+                         std::filesystem::exists(output /
+                             std::filesystem::u8path("本地/建筑模型/buildings.fbx")) &&
+                         std::filesystem::exists(output /
+                             std::filesystem::u8path("本地/3D Tiles 建筑/tileset.json")),
+                     "导入 SHP 没有完成现有导出流程：" + (record ? record->error : "任务缺失")))
+        {
+            return false;
+        }
+    }
+    ExportTaskManager restored({}, recordsPath);
+    const auto records = restored.GetRecords();
+    const auto* record = findRecord(records, taskId);
+    return Require(record && record->configuration &&
+                       record->configuration->groups[0].components[0].sources[0]
+                               .GetShapefile().GetPath() == path &&
+                       record->configuration->groups[0].components[0].sources[0]
+                               .GetShapefile().GetHeightField() == "height_m",
+                   "重启程序后丢失本地 SHP 路径或高度映射");
 }
 
 bool verifyShapefileTask(const std::filesystem::path& testRoot)
@@ -2352,7 +2475,8 @@ bool runTest()
     return postprocess_test::Require(
         changeCount.load(std::memory_order_relaxed) >= 3,
         "导出任务状态变化没有通知界面") &&
-        verifySeaLevelExports(testRoot) && verifyShapefileTask(testRoot);
+        verifySeaLevelExports(testRoot) && verifyShapefileTask(testRoot) &&
+        verifyImportedShapefileTask(testRoot);
 }
 } // namespace
 

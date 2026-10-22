@@ -13,6 +13,7 @@
 #include "DataType.h"
 #include "GeographicPolygon.h"
 #include "GisSpatialFilter.h"
+#include "Wgs84ShapefileReader.h"
 
 namespace DownTool
 {
@@ -73,8 +74,14 @@ namespace DownTool
         {
             processingProgressCallback_ = value;
         }
+        const std::vector<ShapefileImportOptions>& GetShapefiles() const { return shapefiles_; }
+        void SetShapefiles(const std::vector<ShapefileImportOptions>& value) { shapefiles_ = value; }
+        bool GetIncludeAmapSource() const { return includeAmapSource_; }
+        void SetIncludeAmapSource(bool value) { includeAmapSource_ = value; }
 
     protected:
+        std::vector<ShapefileImportOptions> shapefiles_;
+        bool includeAmapSource_ = true;
         GisSpatialRange gisSpatialRange_;
         std::function<bool(const AmapVectorFeature&)> featureFilter_;
         GisProcessingProgressCallback processingProgressCallback_;
@@ -98,6 +105,9 @@ namespace DownTool
         friend class AmapVectorPngDownloader;
 
         AmapVectorDownloadResult DownloadTiles(
+            const AmapVectorDownloadOptions& options,
+            std::vector<AmapVectorTile> selectedTiles) const;
+        AmapVectorDownloadResult DownloadWithShapefiles(
             const AmapVectorDownloadOptions& options,
             std::vector<AmapVectorTile> selectedTiles) const;
 

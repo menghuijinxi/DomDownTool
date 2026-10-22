@@ -11,10 +11,12 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "AmapVectorDecoder.h"
 #include "AmapVectorPngDownloader.h"
 #include "DownToolBase.h"
+#include "Wgs84ShapefileReader.h"
 #include "preview/GisMeshBuilder.h"
 #include "preview/MapViewport.h"
 
@@ -79,6 +81,10 @@ class GisOverlayRenderer
 
     [[nodiscard]] bool IsLoading() const;
 
+    void SetLocalShapefiles(const std::vector<DownTool::ShapefileImportOptions>& sources);
+
+    [[nodiscard]] std::string GetLoadError() const;
+
   private:
     friend class GisOverlayRendererTestAccess;
 
@@ -99,7 +105,8 @@ class GisOverlayRenderer
         GisOverlayCategory category);
 
     [[nodiscard]] static std::shared_ptr<const PreparedData> prepareData(
-        const DownTool::AmapVectorDecodedData& decodedData);
+        const DownTool::AmapVectorDecodedData& decodedData,
+        const std::function<bool()>& cancellationRequested = {});
 
     void workerLoop();
 
@@ -123,6 +130,9 @@ class GisOverlayRenderer
     std::chrono::steady_clock::time_point retryAfter_{};
     bool loading_ = false;
     bool stopping_ = false;
+    bool localMode_ = false;
+    std::vector<DownTool::ShapefileImportOptions> localShapefiles_;
+    std::string loadError_;
     std::thread worker_;
     std::thread meshWorker_;
     std::unique_ptr<Dx12GisRenderer> dx12Renderer_;

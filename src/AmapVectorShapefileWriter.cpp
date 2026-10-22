@@ -4,9 +4,12 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cctype>
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <map>
+#include <set>
 #include <string_view>
 #include <system_error>
 #include <tuple>
@@ -26,6 +29,7 @@ using ShapeHandle = std::unique_ptr<std::remove_pointer_t<SHPHandle>, decltype(&
 using AttributeHandle = std::unique_ptr<std::remove_pointer_t<DBFHandle>, decltype(&DBFClose)>;
 using ShapeObject = std::unique_ptr<SHPObject, decltype(&SHPDestroyObject)>;
 using Field = std::tuple<const char*, const char*, DBFFieldType, int>;
+using SourceField = std::tuple<std::string, std::string, DBFFieldType>;
 
 constexpr std::array<Field, 18> kFields = {{
     {"layer", "layer", FTString, 32},
@@ -199,6 +203,85 @@ bool WriteAttributes(DBFHandle handle, int record, const Json& properties)
     return true;
 }
 
+Json SourceProperties(const DownTool::AmapVectorFeature& feature)
+{
+    Json properties = feature.GetSourceProperties().is_object()
+                          ? feature.GetSourceProperties() : Json::object();
+    if (feature.GetHeightMeters())
+    {
+        properties["height_m"] = *feature.GetHeightMeters();
+    }
+    return properties;
+}
+
+std::string FieldIdentity(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return value;
+}
+
+std::vector<SourceField> SourceFields(
+    const DownTool::AmapVectorDecodedData& decoded, DownTool::AmapVectorGeometryType geometry,
+    const std::function<bool()>& cancellationRequested)
+{
+    std::map<std::string, DBFFieldType> types;
+    for (const auto& feature : decoded.features)
+    {
+        if (cancellationRequested && cancellationRequested())
+        {
+            return {};
+        }
+        if (feature.geometryType != geometry)
+        {
+            continue;
+        }
+        if (!feature.GetSourceProperties().is_object() && !feature.GetHeightMeters())
+        {
+            continue;
+        }
+        const auto properties = SourceProperties(feature);
+        for (const auto& [key, value] : properties.items())
+        {
+            if (value.is_null())
+            {
+                types.try_emplace(key, FTInvalid);
+                continue;
+            }
+            const auto type = value.is_boolean() ? FTLogical
+                              : value.is_number_float() ? FTDouble : FTString;
+            auto [entry, inserted] = types.try_emplace(key, type);
+            if (!inserted)
+            {
+                entry->second = entry->second == FTInvalid ? type
+                                : entry->second == type ? type : FTString;
+            }
+        }
+    }
+    std::set<std::string> used;
+    for (const auto& [name, key, type, width] : kFields)
+    {
+        used.insert(FieldIdentity(name));
+    }
+    std::vector<SourceField> fields;
+    for (const auto& [key, type] : types)
+    {
+        std::string name = Utf8Prefix(key, 10);
+        if (used.contains(FieldIdentity(name)))
+        {
+            name = Utf8Prefix("src_" + key, 10);
+        }
+        for (size_t serial = 1; name.empty() || used.contains(FieldIdentity(name)); ++serial)
+        {
+            const std::string suffix = "_" + std::to_string(serial);
+            name = Utf8Prefix(key, 10 - suffix.size()) + suffix;
+        }
+        used.insert(FieldIdentity(name));
+        fields.emplace_back(name, key, type == FTInvalid ? FTString : type);
+    }
+    return fields;
+}
+
 ShapeObject MakeShape(const DownTool::AmapVectorFeature& feature, int shapeType,
                       const std::function<bool()>& cancellationRequested, std::string& error)
 {
@@ -236,8 +319,7 @@ ShapeObject MakeShape(const DownTool::AmapVectorFeature& feature, int shapeType,
                 error = "SHP 要素包含无效经纬度。";
                 return object;
             }
-            const auto wgs84 = DownTool::GCJ02GoogleDownBase::GCJ02ToWGS84(
-                {coordinate.longitude, coordinate.latitude});
+            const auto wgs84 = DownTool::VectorCoordinateWgs84(feature, coordinate);
             longitude.push_back(wgs84.lon);
             latitude.push_back(wgs84.lat);
         }
@@ -282,7 +364,7 @@ class LayerWriter
     {
     }
 
-    bool Open(int shapeType, std::string& error)
+    bool Open(int shapeType, const std::vector<SourceField>& sourceFields, std::string& error)
     {
         SAHooks hooks{};
 #ifdef SHPAPI_UTF8_HOOKS
@@ -316,6 +398,18 @@ class LayerWriter
                 return false;
             }
         }
+        sourceFields_ = sourceFields;
+        for (size_t index = 0; index < sourceFields_.size(); ++index)
+        {
+            const auto& [name, key, type] = sourceFields_[index];
+            const int width = type == FTLogical ? 1 : type == FTDouble ? 32 : 254;
+            if (DBFAddField(attributes_.get(), name.c_str(), type, width,
+                            type == FTDouble ? 12 : 0) != static_cast<int>(kFields.size() + index))
+            {
+                error = "无法创建 SHP 原始属性字段：" + key;
+                return false;
+            }
+        }
         return true;
     }
 
@@ -342,6 +436,39 @@ class LayerWriter
             error = "无法写入 SHP 几何或属性记录。";
             return false;
         }
+        const auto original = sourceFields_.empty() ? Json() : SourceProperties(feature);
+        for (size_t index = 0; index < sourceFields_.size(); ++index)
+        {
+            const auto& [name, key, type] = sourceFields_[index];
+            const int field = static_cast<int>(kFields.size() + index);
+            const auto value = original.find(key);
+            int written = 0;
+            if (value == original.end() || value->is_null())
+            {
+                written = DBFWriteNULLAttribute(attributes_.get(), record, field);
+            }
+            else if (type == FTLogical)
+            {
+                written = DBFWriteLogicalAttribute(attributes_.get(), record, field,
+                                                   value->get<bool>() ? 'T' : 'F');
+            }
+            else if (type == FTDouble)
+            {
+                written = DBFWriteDoubleAttribute(attributes_.get(), record, field,
+                                                  value->get<double>());
+            }
+            else
+            {
+                const auto text = Utf8Prefix(value->is_string() ? value->get<std::string>()
+                                                                : value->dump(), 254);
+                written = DBFWriteStringAttribute(attributes_.get(), record, field, text.c_str());
+            }
+            if (!written)
+            {
+                error = "无法写入 SHP 原始属性字段：" + key;
+                return false;
+            }
+        }
         ++count_;
         return true;
     }
@@ -354,12 +481,22 @@ class LayerWriter
     }
 
     int GetCount() const { return count_; }
+    Json GetSourceFieldNames() const
+    {
+        Json fields = Json::object();
+        for (const auto& [name, key, type] : sourceFields_)
+        {
+            fields[name] = key;
+        }
+        return fields;
+    }
 
   private:
     std::filesystem::path basePath_;
     ShapeHandle shapes_;
     AttributeHandle attributes_;
     int count_ = 0;
+    std::vector<SourceField> sourceFields_;
 };
 } // namespace
 
@@ -404,7 +541,8 @@ bool DownTool::AmapVectorShapefileWriter::WriteDirectory(
             }
             if (!opened)
             {
-                if (!writer.Open(shapeType, error))
+                if (!writer.Open(shapeType, SourceFields(decodedData, geometryType,
+                                                        cancellationRequested), error))
                 {
                     return false;
                 }
@@ -422,7 +560,8 @@ bool DownTool::AmapVectorShapefileWriter::WriteDirectory(
                 return false;
             }
             layers.push_back(
-                {{"file", std::string(name) + ".shp"}, {"featureCount", writer.GetCount()}});
+                {{"file", std::string(name) + ".shp"}, {"featureCount", writer.GetCount()},
+                 {"sourceFields", writer.GetSourceFieldNames()}});
         }
     }
     Json fields = Json::object();
@@ -430,8 +569,18 @@ bool DownTool::AmapVectorShapefileWriter::WriteDirectory(
     {
         fields[name] = key;
     }
+    const bool hasWgs84 = decodedData.version == "WGS84 SHP" ||
+        std::ranges::any_of(decodedData.features, [](const auto& feature)
+        {
+            return feature.GetCoordinateSystem() == DownTool::VectorCoordinateSystem::Wgs84;
+        });
+    const bool hasGcj02 = std::ranges::any_of(decodedData.features, [](const auto& feature)
+    {
+        return feature.GetCoordinateSystem() == DownTool::VectorCoordinateSystem::Gcj02;
+    });
     const Json manifest = {{"coordinateSystem", "EPSG:4326"},
-                           {"sourceCoordinateSystem", "GCJ-02"},
+                           {"sourceCoordinateSystem",
+                            hasWgs84 ? hasGcj02 ? "WGS84 / GCJ-02" : "WGS84" : "GCJ-02"},
                            {"encoding", "UTF-8"},
                            {"version", decodedData.version},
                            {"packetCount", decodedData.packetCount},

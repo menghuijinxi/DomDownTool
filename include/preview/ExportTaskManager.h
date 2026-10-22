@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "AmapVectorPngDownloader.h"
@@ -93,6 +94,17 @@ enum class ExportSourceKind
 
 struct ExportSourceEntry
 {
+    ExportSourceEntry() = default;
+    ExportSourceEntry(std::string sourceId, std::string sourceName, ExportSourceKind sourceKind,
+                      std::filesystem::path sourceCachePath = {},
+                      DownTool::AmapVectorRenderCategory category =
+                          DownTool::AmapVectorRenderCategory::Road,
+                      DownTool::AmapVectorColor sourceColor = {})
+        : id(std::move(sourceId)), name(std::move(sourceName)), kind(sourceKind),
+          cachePath(std::move(sourceCachePath)), gisCategory(category), color(sourceColor)
+    {
+    }
+
     std::string id;
     std::string name;
     ExportSourceKind kind = ExportSourceKind::Imagery;
@@ -106,6 +118,12 @@ struct ExportSourceEntry
     std::string multidateRegionName;
     // 登录态只活在当前进程，任务记录不保存 cookie。
     std::string multidateCookie;
+
+    const DownTool::ShapefileImportOptions& GetShapefile() const { return shapefile_; }
+    void SetShapefile(const DownTool::ShapefileImportOptions& value) { shapefile_ = value; }
+
+protected:
+    DownTool::ShapefileImportOptions shapefile_;
 };
 
 struct ExportComponent
@@ -235,6 +253,14 @@ struct ExportConfiguration
     void SetDistanceLod(const DownTool::FbxDistanceLod& value) { distanceLod_ = value; }
     double GetBuildingChunkSizeMeters() const { return buildingChunkSizeMeters_; }
     void SetBuildingChunkSizeMeters(double value) { buildingChunkSizeMeters_ = value; }
+    const std::vector<ExportSourceEntry>& GetExecutionVectorSources() const
+    {
+        return executionVectorSources_;
+    }
+    void SetExecutionVectorSources(const std::vector<ExportSourceEntry>& value)
+    {
+        executionVectorSources_ = value;
+    }
 
 protected:
     DownTool::DownloadRegions downloadRegions_;
@@ -242,7 +268,12 @@ protected:
     bool fbxPerTile_ = false;
     DownTool::FbxDistanceLod distanceLod_;
     double buildingChunkSizeMeters_ = 2200.;
+    // 仅当前组件执行使用；持久化使用 groups 中的 sources。
+    std::vector<ExportSourceEntry> executionVectorSources_;
 };
+
+void ConfigureGisVectorSources(DownTool::AmapVectorDownloadOptions& options,
+                               const std::vector<ExportSourceEntry>& sources);
 
 [[nodiscard]] DownTool::GisSpatialRange ExportGisSpatialRange(
     const ExportConfiguration& configuration);
