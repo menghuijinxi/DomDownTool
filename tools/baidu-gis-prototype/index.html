@@ -44,7 +44,7 @@
                 </div>
             </form>
             <div class="section">
-                <div class="section-title"><h2>几何图层</h2><label class="compact">
+                <div class="section-title"><h2>业务分类</h2><label class="compact">
                     <input id="all-layers" type="checkbox" checked>全部</label></div>
                 <div id="layers"></div>
             </div>
@@ -57,6 +57,11 @@
                 <label><input id="tile-grid" type="checkbox" checked>瓦片边界</label>
                 <label><input id="style-filter" type="checkbox" checked>按原始显示掩码筛选</label>
                 <label>原始样式<select id="style"><option value="all">全部</option></select></label>
+                <label>几何类型<select id="geometry"><option value="all">全部</option>
+                    <option value="building">建筑</option><option value="polygon">地表面</option>
+                    <option value="overlay">叠加面</option><option value="line">地表线</option>
+                    <option value="elevated">立体线</option><option value="point">地点 / 文字锚点</option>
+                </select></label>
             </div>
             <div class="section">
                 <div class="section-title"><h2>原始图层</h2></div>

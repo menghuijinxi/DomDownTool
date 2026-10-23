@@ -1,4 +1,5 @@
-import { categories, grids, tileAt, tileBounds, normalizeTile, toMercator, fromMercator } from "./protocol.mjs";
+import { grids, tileAt, tileBounds, normalizeTile, toMercator, fromMercator } from "./protocol.mjs";
+import { semanticCategories as categories, classifyFeatures } from "./classification.mjs";
 
 const $ = (id) => document.getElementById(id);
 lucide.createIcons();
@@ -58,6 +59,7 @@ function visibleFeatures() {
         const visible = Boolean((p.visibilityMask >> (7 - (level - grid.start))) & 1);
         return state.selected.has(p.category) && ($("style").value === "all" ||
             String(p.styleId) === $("style").value) &&
+            ($("geometry").value === "all" || p.geometryCategory === $("geometry").value) &&
             (!$("style-filter").checked || visible);
     });
 }
@@ -76,9 +78,12 @@ function updateStatistics() {
     const heights = state.features.filter((f) => f.properties.category === "building")
         .map((f) => f.properties.heightRaw).filter((h) => h > 0);
     const skipped = state.tiles.reduce((sum, tile) => sum + tile.skipped.length, 0);
+    const classified = state.features.filter((f) => f.properties.classificationKnown).length;
     const values = { "数据 / 显示层级": `${state.tiles[0]?.tile.z ?? "-"} / ${map.getZoom()}`,
         "瓦片 / 几何要素": `${state.tiles.length} / ${state.features.length.toLocaleString()}`,
         "当前可见": state.renderedCount.toLocaleString(), "带高度建筑": heights.length,
+        "业务类型已识别": classified.toLocaleString(),
+        "业务类型未分类": (state.features.length - classified).toLocaleString(),
         "高度原值范围": heights.length ? `${Math.min(...heights)}–${Math.max(...heights)}` : "-",
         "未解析图层块": skipped };
     $("statistics").replaceChildren();
@@ -103,7 +108,8 @@ function render() {
         onEachFeature: (feature, layer) => {
             const label = document.createElement("span");
             const p = feature.properties;
-            label.textContent = `${p.name || categories[p.category].name} · 样式 ${p.styleId}` +
+            label.textContent = `${p.name || categories[p.category].name}` +
+                ` · ${p.resolvedFeatureType || "未分类"} · 样式 ${p.styleId}` +
                 (p.heightRaw ? ` · 高度原值 ${p.heightRaw}` : "");
             layer.bindTooltip(label);
             layer.on("click", () => {
@@ -157,7 +163,28 @@ async function load() {
         }));
         if (controller.signal.aborted || current !== sequence) return;
         loaded.sort((a, b) => a.tile.y - b.tile.y || a.tile.x - b.tile.x);
-        state.tiles = loaded; state.features = loaded.flatMap((t) => t.features);
+        const features = loaded.flatMap((t) => t.features);
+        const ids = [...new Set(features.map((f) => f.properties.styleId))].sort((a,b) => a-b);
+        const batches = [];
+        for (let i = 0; i < ids.length; i += 64) batches.push(ids.slice(i, i + 64));
+        const types = {};
+        let nextBatch = 0, completed = 0;
+        status(`核对业务分类 0 / ${ids.length} 个编号…`);
+        await Promise.all(Array.from({ length: Math.min(3, batches.length) }, async () => {
+            while (nextBatch < batches.length) {
+                const batch = batches[nextBatch++];
+                const response = await fetch(`/api/feature-types?ids=${batch.join(",")}`,
+                    { signal: controller.signal });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error);
+                Object.assign(types, data.types);
+                completed += batch.length;
+                if (current === sequence) status(`核对业务分类 ${completed} / ${ids.length} 个编号…`);
+            }
+        }));
+        if (controller.signal.aborted || current !== sequence) return;
+        const classified = classifyFeatures(features, types, metadata);
+        state.tiles = loaded; state.features = classified;
         $("style").replaceChildren(new Option("全部", "all"));
         for (const id of [...new Set(state.features.map((f) => f.properties.styleId))].sort((a,b) => a-b)) {
             $("style").append(new Option(String(id), String(id)));
@@ -171,7 +198,9 @@ async function load() {
         state.loaded = true;
         fit(); render();
         $("tile-status").textContent = `BD09 · 数据 z${center.z} · ${center.x}, ${center.y}`;
-        status(`已加载 ${loaded.length} 个瓦片，${state.features.length.toLocaleString()} 个几何要素`);
+        const unknown = classified.filter((f) => !f.properties.classificationKnown).length;
+        status(`已加载 ${loaded.length} 个瓦片，${classified.length.toLocaleString()} 个要素` +
+            ` · 业务类型未分类 ${unknown.toLocaleString()}`);
         $("export").disabled = false;
     } catch (error) {
         controller.abort();
@@ -194,7 +223,7 @@ for (const id of ["lon","lat"]) $(id).addEventListener("input", () => { $("prese
 $("fit").addEventListener("click", fit);
 $("cancel").addEventListener("click", () => state.controller?.abort());
 $("basemap").addEventListener("change", setBase);
-for (const id of ["tile-grid","height-colors","style-filter","style"]) $(id).addEventListener("change", render);
+for (const id of ["tile-grid","height-colors","style-filter","style","geometry"]) $(id).addEventListener("change", render);
 $("opacity").addEventListener("input", () => { $("opacity-value").textContent = `${$("opacity").value}%`; render(); });
 $("all-layers").addEventListener("change", (event) => {
     state.selected = new Set(event.target.checked ? Object.keys(categories) : []);
@@ -208,7 +237,8 @@ $("export").addEventListener("click", () => {
         return { ...feature, properties };
     });
     const blob = new Blob([JSON.stringify({ type: "FeatureCollection", coordinateSystem: "BD09",
-        provider: "baidu", geometryEncoding: "original-triangle-faces", features })],
+        provider: "baidu", sourceVersion: { version: metadata.version, updateDate: metadata.updateDate },
+        geometryEncoding: "original-triangle-faces", features })],
         { type: "application/json" });
     const anchor = document.createElement("a");
     anchor.href = URL.createObjectURL(blob); anchor.download = "百度矢量_BD09.geojson"; anchor.click();

@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { validateTile, encodeParameters, normalizeTile, grids } from "./protocol.mjs";
+import { decodeFeatureTypes } from "./classification.mjs";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const workspace = path.resolve(root, "../..");
@@ -45,7 +46,9 @@ if (!Array.isArray(levels) || levels.some((z, i) =>
     throw new Error("百度 SDK 原生格网规则改变，需重新验证");
 }
 const metadata = { version, updateDate, coordinateSystem: "BD09",
-    sdkSha256: crypto.createHash("sha256").update(sdk).digest("hex") };
+    sdkSha256: crypto.createHash("sha256").update(sdk).digest("hex"),
+    classificationSource: "official-getfeaturetype",
+    classificationRequiresLogin: false, classificationRequiresAk: false };
 const assets = new Map([
     ["/vendor/leaflet.js", ["https://unpkg.com/leaflet@1.9.4/dist/leaflet.js", "application/javascript"]],
     ["/vendor/leaflet.css", ["https://unpkg.com/leaflet@1.9.4/dist/leaflet.css", "text/css"]],
@@ -55,6 +58,21 @@ for (const [route, [url]] of assets) {
     await remote(url, path.join(cacheRoot, "vendor", path.basename(route)));
 }
 const inFlight = new Map();
+async function featureTypes(ids) {
+    const key = "types/" + ids.join(",");
+    if (inFlight.has(key)) return inFlight.get(key);
+    const request = (async () => {
+        const url = "https://api.map.baidu.com/custom/v2/getfeaturetype" +
+            "?callback=baiduFeatureTypes&feature_ids=" + ids.join(",");
+        const hash = crypto.createHash("sha256").update(key).digest("hex");
+        const bytes = await remote(url, path.join(cacheRoot,
+            `feature-types/v${version}-${updateDate}/${hash}.txt`),
+            (buffer) => decodeFeatureTypes(buffer.toString("utf8"), ids));
+        return decodeFeatureTypes(bytes.toString("utf8"), ids);
+    })();
+    inFlight.set(key, request);
+    try { return await request; } finally { inFlight.delete(key); }
+}
 async function tileBytes(kind, tile) {
     if (kind === "vector") validateTile(tile);
     else if (!Number.isInteger(tile.z) || tile.z < 3 || tile.z > 19 ||
@@ -88,7 +106,7 @@ async function tileBytes(kind, tile) {
     inFlight.set(key, request);
     try { return await request; } finally { inFlight.delete(key); }
 }
-const staticFiles = new Set(["index.html", "app.mjs", "protocol.mjs"]);
+const staticFiles = new Set(["index.html", "app.mjs", "protocol.mjs", "classification.mjs"]);
 const server = http.createServer(async (request, response) => {
     try {
         if (request.method !== "GET") { response.writeHead(405).end(); return; }
@@ -98,6 +116,18 @@ const server = http.createServer(async (request, response) => {
         if (url.pathname === "/api/meta") {
             response.setHeader("Content-Type", "application/json; charset=utf-8");
             response.end(JSON.stringify(metadata));
+            return;
+        }
+        if (url.pathname === "/api/feature-types") {
+            const raw = url.searchParams.get("ids") || "";
+            if (!/^\d{1,9}(,\d{1,9}){0,63}$/.test(raw)) {
+                response.writeHead(400, { "Content-Type": "application/json; charset=utf-8" })
+                    .end(JSON.stringify({ error: "百度分类查询需提供 1 至 64 个整数样式编号" }));
+                return;
+            }
+            const ids = [...new Set(raw.split(",").map(Number))].sort((a, b) => a - b);
+            response.setHeader("Content-Type", "application/json; charset=utf-8");
+            response.end(JSON.stringify({ types: await featureTypes(ids) }));
             return;
         }
         const match = url.pathname.match(/^\/api\/(vector|electronic)\/(\d+)\/(-?\d+)\/(-?\d+)$/);
