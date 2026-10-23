@@ -884,6 +884,98 @@ bool TestCopyUsesActiveRegionRole(HWND window, const std::filesystem::path& test
     return true;
 }
 
+bool TestElectronicMapSources(HWND window, const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    using postprocess_test::Require;
+    MapRenderer renderer([] {});
+    for (const auto& [id, name, coordinates, cache] :
+         {std::array<std::string, 4>{"tencent.electronic", "腾讯电子地图", "GCJ02 / XYZ",
+                                     "cache/腾讯地图/电子地图"},
+          std::array<std::string, 4>{"baidu.electronic", "百度电子地图", "BD09 / Baidu",
+                                     "cache/百度地图/电子地图"}})
+    {
+        if (!Require(renderer.selectSource(id), "无法选择电子地图：" + id))
+        {
+            return false;
+        }
+        const auto selected = renderer.activeSource();
+        if (!Require(selected.name == name && selected.coordinateSystem == coordinates &&
+                         selected.cacheRoot == std::filesystem::u8path(cache),
+                     "电子地图预览的图源或缓存配置错误：" + id))
+        {
+            return false;
+        }
+    }
+
+    skui::Runtime runtime;
+    if (!Require(runtime.loadDocument((std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) /
+                                       "resources/preview/index.html")
+                                          .string()),
+                 "电子地图测试文档加载失败"))
+    {
+        return false;
+    }
+    runtime.resize(1440, 900, 1.F);
+    RangeController controller;
+    controller.attachRuntime(runtime);
+    skui::win32::Win32EventAdapter adapter(runtime);
+    const auto click = [&](const std::string& id) {
+        return ClickElement(controller, runtime, adapter, window, id);
+    };
+    if (!click("open-export-page"))
+    {
+        return false;
+    }
+    ExportConfiguration configuration;
+    configuration.centerWgs84 = {116.42, 39.89};
+    configuration.radiusMeters = 20000.;
+    configuration.zoom = 16;
+    configuration.outputRoot = testRoot / "electronic-output";
+    ExportContentGroup group;
+    group.id = "electronic-group";
+    group.name = "电子地图";
+    ExportComponent component;
+    component.id = "electronic-image";
+    component.kind = ExportComponentKind::MergedImage;
+    group.components.push_back(component);
+    configuration.groups.push_back(group);
+    controller.LoadExport(runtime, configuration);
+    if (!click("export-act-open-params__electronic-image"))
+    {
+        return false;
+    }
+    for (const auto& [id, name] :
+         {std::pair{"tencent.electronic", "腾讯电子"}, std::pair{"baidu.electronic", "百度电子"}})
+    {
+        const std::string action = "export-act-add-source__electronic-image__" + std::string(id);
+        if (!click("export-act-open-sources__electronic-image") ||
+            !Require(runtime.textContentById(action) == name,
+                     "导出菜单缺少电子地图：" + std::string(id)) ||
+            !click(action))
+        {
+            return false;
+        }
+    }
+    std::string error;
+    const auto exported = controller.ReadExport(error);
+    if (!Require(exported && exported->groups.size() == 1 &&
+                     exported->groups[0].components.size() == 1 &&
+                     exported->groups[0].components[0].sources.size() == 2 &&
+                     exported->groups[0].components[0].sources[0].id == "tencent.electronic" &&
+                     exported->groups[0].components[0].sources[1].id == "baidu.electronic",
+                 "电子地图没有进入导出配置：" + error) ||
+        !Require(WriteTaskScreenshot(runtime, testRoot / "electronic-sources-desktop.png"),
+                 "电子地图图源界面截图失败"))
+    {
+        return false;
+    }
+    runtime.resize(700, 600, 1.F);
+    controller.resizeRuntime(runtime);
+    return Require(WriteTaskScreenshot(runtime, testRoot / "electronic-sources-narrow.png"),
+                   "电子地图窄窗口界面截图失败");
+}
+
 bool TestShapefileComponent(HWND window, const std::filesystem::path& testRoot)
 {
     using namespace DomDownToolPreview;
@@ -1937,7 +2029,8 @@ int main()
         TestFlattenRegionEditing(window, testRoot) && TestShapefileComponent(window, testRoot) &&
         TestShapefileMapPreview(testRoot) && TestShapefileDrop(window, testRoot) &&
         TestTaskActions(window, testRoot) && TestPerTileFbxOption(window, testRoot) &&
-        TestTaskFbxPreviewLoadsEveryTile(window, testRoot);
+        TestTaskFbxPreviewLoadsEveryTile(window, testRoot) &&
+        TestElectronicMapSources(window, testRoot);
     DestroyWindow(window);
     CoUninitialize();
     if (!passed)

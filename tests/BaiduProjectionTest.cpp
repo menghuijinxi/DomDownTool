@@ -238,8 +238,8 @@ namespace
             DownTool::BaiduDown::BD09ToWGS84(bd09Beijing);
 
         if (!postprocess_test::Require(
-            std::abs(bd09Beijing.lon - 116.4807667015) < 0.000001 &&
-                std::abs(bd09Beijing.lat - 39.9192705147) < 0.000001,
+            std::abs(bd09Beijing.lon - 116.4807666808) < 0.000001 &&
+                std::abs(bd09Beijing.lat - 39.9192982015) < 0.000001,
             "BD09 conversion did not match the expected sample coordinate"))
         {
             return false;

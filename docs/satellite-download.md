@@ -40,27 +40,37 @@ PNG 大图：
 | 参数值 | 内容 | 默认原始缓存目录 |
 | --- | --- | --- |
 | `gaode` | 高德卫星，也支持电子地图和透明路网 | `cache/高德地图` |
-| `baidu` | 百度卫星 | `cache/百度地图` |
-| `tencent` | 腾讯卫星 | `cache/腾讯地图` |
+| `baidu` | 百度卫星，也支持电子地图 | `cache/百度地图` |
+| `tencent` | 腾讯卫星，也支持电子地图 | `cache/腾讯地图` |
 | `tianditu` | 天地图影像 | `cache/天地图` |
-| `google` | Google 中国卫星图，默认使用项目已有本地代理 | `cache/Google地图` |
+| `google` | Google 中国卫星图，默认直连 | `cache/Google地图` |
 | `bing` | Bing 卫星图 | `cache/Bing地图` |
 | `arcgis` | ArcGIS World Imagery | `cache/ArcGIS地图` |
 
 所有输入中心坐标统一使用 WGS84。百度、高德、腾讯和 Google 中国图层的坐标纠偏仍由
 各自下载器处理。
 
-高德可通过 `--map-type` 切换类型：
+高德、百度和腾讯可通过 `--map-type` 切换类型：
 
 ```powershell
 # 电子地图
 .\DomDownTool.exe --provider gaode --map-type electronic
 
-# 透明路网
+# 腾讯电子地图
+.\DomDownTool.exe --provider tencent --map-type electronic
+
+# 百度电子地图
+.\DomDownTool.exe --provider baidu --map-type electronic
+
+# 高德透明路网
 .\DomDownTool.exe --provider gaode --map-type road-network
 ```
 
-`--map-type` 只适用于高德。其他地图源目前都是固定卫星影像。
+`electronic` 支持高德、百度和腾讯；`road-network` 仅支持高德。
+腾讯和百度电子地图的缓存分别位于 `cache/腾讯地图/电子地图`、
+`cache/百度地图/电子地图`，与卫星图分离。预览顶部的地图列表和导出组件的
+“添加图源”菜单也可直接选择这两种电子地图。电子地图属于带文字标注的栅格底图，
+输出模式与卫星图相同。
 
 ## 输出模式
 
@@ -150,8 +160,7 @@ Web Mercator XYZ。
 .\DomDownTool.exe --provider bing --concurrency 12
 ```
 
-`--concurrency 0` 表示自动。Google 下载器保留项目现有的
-`http://127.0.0.1:10090` 默认代理；可以覆盖或关闭：
+`--concurrency 0` 表示自动。地图源默认直连；可以显式设置或关闭代理：
 
 ```powershell
 .\DomDownTool.exe --provider google --proxy "http://127.0.0.1:7890"
@@ -163,7 +172,7 @@ Web Mercator XYZ。
 | 参数 | 说明 |
 | --- | --- |
 | `--provider <地图源>` | `gaode/baidu/tencent/tianditu/google/bing/arcgis` |
-| `--map-type <类型>` | 高德的 `satellite/electronic/road-network` |
+| `--map-type <类型>` | 高德、百度、腾讯的 `satellite/electronic`；高德另支持 `road-network` |
 | `--lon <经度>` | WGS84 中心经度，默认 116.41 |
 | `--lat <纬度>` | WGS84 中心纬度，默认 39.92 |
 | `--radius <米>` | 下载半径，必须大于 0，默认 2000 |

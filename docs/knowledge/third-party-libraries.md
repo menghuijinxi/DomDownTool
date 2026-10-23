@@ -1,5 +1,43 @@
 # 第三方库与服务接入
 
+## 腾讯和百度电子地图栅格底图
+
+### 接口与坐标边界
+
+2026-10-23 对照两家的官方 JavaScript SDK 并下载真实样本，确认普通电子地图
+可以沿用已有栅格下载、预览和后处理链路，不需要矢量 GIS 解码器或新增依赖。
+
+- 腾讯参考 `https://map.qq.com/api/js?v=2.exp` 返回的 JSAPI 2.4.160 配置，
+  及其 `mods/map.js` 的普通底图请求生成逻辑。电子地图使用
+  `https://rt{s}.map.gtimg.com/tile?z={z}&x={x}&y={y}&styleid=0&scene=0&version=114`。
+  本地仍按 GCJ-02 XYZ 处理，在请求边界转换 `y = 2^z - 1 - xyzY`。
+- 腾讯普通底图样本返回 `application/octet-stream`，内容实际为 256×256 JPEG；
+  不应仅凭 Content-Type 或缓存的 `.png` 扩展名判断无效。复用现有图片解码器识别内容。
+- 百度参考 `https://api.map.baidu.com/api?v=3.0` 和其 `getscript` 中的普通底图逻辑，
+  使用 `https://maponline{s}.bdimg.com/tile/?qt=vtile&x={x}&y={y}&z={z}&styles=pl&scaler=1`。
+  样本为 256×256 PNG。该请求中的 `vtile` 返回栅格图片，不能仅根据参数名推断响应格式。
+- 百度继续使用既有 BD09 经纬度、百度墨卡托和向北递增的源瓦片坐标。
+  负索引按 SDK 规则转换为 `M` 前缀，如 `-2` 转为 `M2`；
+  先扩展为 64 位再取反，避免最小 32 位整数溢出。
+- 电子地图使用各自的 `电子地图` 子缓存目录；原卫星缓存路径保持兼容。
+  百度不使用腾讯的 Y 轴翻转，也不直接套标准 Web Mercator 原始瓦片索引。
+
+### 验证与维护
+
+`TileProviderUrlTest` 覆盖默认卫星 URL、地图类型切换、缓存隔离、腾讯 Y 轴边界
+及百度负索引。`PreviewRangeEditorTest` 验证预览来源、导出菜单选择与配置读取。
+命令行检查覆盖两家的 `electronic` 和其他来源的非法类型组合。
+
+本次 Release 构建及 16 项相关回归通过。两家均使用全新缓存，在北京样区
+z16、半径 300 米条件下完成真实下载、XYZ 金字塔和 512×768 合并 PNG 导出。
+首次联网还暴露了命令行 CURL 全局状态早于下载器销毁的问题，详见
+[命令行 HTTPS 下载完成后退出崩溃](crash-and-exception.md)。
+
+排查空白或错位时，先检查响应是否为可解码图片、请求是否误用了矢量参数、
+源瓦片索引与 Y 轴方向，以及缓存是否混入其他图层。SDK 接口和版本可能变化；
+失效时重新核对官方 SDK，并用真实图片确认，不能只检查 HTTP 200。
+下载和图片后处理继续使用现有 CURL/OpenCV 链路，线程生命周期和取消方式未增加。
+
 ## CDT 约束 Delaunay 三角剖分用于 FBX 地形 TIN
 
 ### 选型与约束

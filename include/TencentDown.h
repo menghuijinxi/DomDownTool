@@ -8,21 +8,33 @@
 
 namespace DownTool
 {
-	class TencentDown : public GCJ02GoogleDownBase
-	{
-	public:
+    enum class TencentMapType
+    {
+        Satellite,
+        Electronic
+    };
 
-		TencentDown();
+    class TencentDown : public GCJ02GoogleDownBase
+    {
+    public:
+        explicit TencentDown(TencentMapType mapType = TencentMapType::Satellite);
 
-		virtual std::string MakeUri(const Tile& tile) override;
+        void SetMapType(TencentMapType mapType);
 
-	protected:
+        TencentMapType GetMapType() const
+        {
+            return mapType_;
+        }
 
-		virtual bool IsUnavailableTileFile(
-			const std::filesystem::path& tilePath, const Tile& tile) const override;
+        virtual std::string MakeUri(const Tile& tile) override;
 
-	private:
+    protected:
+        TencentMapType mapType_ = TencentMapType::Satellite;
 
-		static uint64_t ToTencentY(const Tile& tile);
-	};
+        virtual bool IsUnavailableTileFile(
+            const std::filesystem::path& tilePath, const Tile& tile) const override;
+
+    private:
+        static uint64_t ToTencentY(const Tile& tile);
+    };
 }

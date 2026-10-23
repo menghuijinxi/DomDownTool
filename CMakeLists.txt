@@ -347,12 +347,19 @@ add_test(NAME SatelliteDownloadDryRunTest
 add_test(NAME SatelliteDownloadInvalidProviderTest
     COMMAND DomDownTool --provider ocean)
 add_test(NAME SatelliteDownloadInvalidMapTypeTest
-    COMMAND DomDownTool --provider baidu --map-type electronic)
+    COMMAND DomDownTool --provider baidu --map-type road-network)
+add_test(NAME TencentElectronicDownloadDryRunTest
+    COMMAND DomDownTool --provider tencent --map-type electronic --dry-run)
+add_test(NAME BaiduElectronicDownloadDryRunTest
+    COMMAND DomDownTool --provider baidu --map-type electronic --dry-run)
+add_test(NAME SatelliteDownloadUnsupportedElectronicTest
+    COMMAND DomDownTool --provider bing --map-type electronic --dry-run)
 add_test(NAME SatelliteDownloadInvalidMergedFormatTest
     COMMAND DomDownTool --merged-format bmp)
 set_tests_properties(
     SatelliteDownloadInvalidProviderTest
     SatelliteDownloadInvalidMapTypeTest
+    SatelliteDownloadUnsupportedElectronicTest
     SatelliteDownloadInvalidMergedFormatTest
     PROPERTIES WILL_FAIL TRUE)
 

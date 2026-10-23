@@ -1,11 +1,14 @@
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <string>
 
 #include "ArcGISDown.h"
+#include "BaiduDown.h"
 #include "BingDown.h"
 #include "GaoDeDown.h"
 #include "GoogleDown.h"
+#include "TencentDown.h"
 
 namespace
 {
@@ -47,6 +50,82 @@ namespace
                     expectedApproximateWgs84,
                     1e-10),
                 "GCJ02 to WGS84 calibration failed");
+    }
+
+    bool TestElectronicMapProviders()
+    {
+        DownTool::TencentDown tencent;
+        const DownTool::Tile sample(215872, 99317, 18);
+        if (!Require(tencent.GetMapType() == DownTool::TencentMapType::Satellite &&
+                         tencent.GetCachePath() == "cache/腾讯地图" &&
+                         tencent.MakeUri(sample) ==
+                             "https://p0.map.gtimg.com/sateTiles/18/13492/10176/215872_162826.png",
+                     "Tencent satellite defaults changed"))
+        {
+            return false;
+        }
+        tencent.SetMapType(DownTool::TencentMapType::Electronic);
+        if (!Require(tencent.GetMapType() == DownTool::TencentMapType::Electronic &&
+                         tencent.GetCachePath() == "cache/腾讯地图/电子地图" &&
+                         tencent.MakeUri(sample) ==
+                             "https://rt1.map.gtimg.com/tile?z=18&x=215872&y=162826&"
+                             "styleid=0&scene=0&version=114",
+                     "Tencent electronic tiles must use their own endpoint and cache"))
+        {
+            return false;
+        }
+        DownTool::TencentDown electronicTencent(DownTool::TencentMapType::Electronic);
+        if (!Require(electronicTencent.MakeUri({0, 0, 3}) ==
+                             "https://rt0.map.gtimg.com/tile?z=3&x=0&y=7&"
+                             "styleid=0&scene=0&version=114" &&
+                         electronicTencent.MakeUri({7, 7, 3}) ==
+                             "https://rt1.map.gtimg.com/tile?z=3&x=7&y=0&"
+                             "styleid=0&scene=0&version=114",
+                     "Tencent electronic TMS Y boundaries are inverted"))
+        {
+            return false;
+        }
+        tencent.SetMapType(DownTool::TencentMapType::Satellite);
+        if (!Require(tencent.GetCachePath() == "cache/腾讯地图",
+                     "Tencent satellite cache was not restored"))
+        {
+            return false;
+        }
+
+        DownTool::BaiduDown baidu;
+        if (!Require(baidu.GetMapType() == DownTool::BaiduMapType::Satellite &&
+                         baidu.GetCachePath() == "cache/百度地图" &&
+                         baidu.MakeUri({12666, 4710, 16}) ==
+                             "https://maponline0.bdimg.com/starpic/?qt=satepc&"
+                             "u=x=12666;y=4710;z=16;v=009;type=sate",
+                     "Baidu satellite defaults changed"))
+        {
+            return false;
+        }
+        baidu.SetMapType(DownTool::BaiduMapType::Electronic);
+        if (!Require(baidu.GetMapType() == DownTool::BaiduMapType::Electronic &&
+                         baidu.GetCachePath() == "cache/百度地图/电子地图" &&
+                         baidu.MakeUri({12666, 4710, 16}) ==
+                             "https://maponline1.bdimg.com/tile/?qt=vtile&x=12666&y=4710&"
+                             "z=16&styles=pl&scaler=1",
+                     "Baidu electronic tiles must use their own endpoint and cache"))
+        {
+            return false;
+        }
+        DownTool::BaiduDown electronicBaidu(DownTool::BaiduMapType::Electronic);
+        if (!Require(electronicBaidu.MakeUri({-1, -2, 3}) ==
+                             "https://maponline0.bdimg.com/tile/?qt=vtile&x=M1&y=M2&"
+                             "z=3&styles=pl&scaler=1" &&
+                         electronicBaidu.MakeUri({std::numeric_limits<int32_t>::min(), 0, 3}) ==
+                             "https://maponline1.bdimg.com/tile/?qt=vtile&x=M2147483648&y=0&"
+                             "z=3&styles=pl&scaler=1",
+                     "Baidu negative tile coordinates must use M without overflowing"))
+        {
+            return false;
+        }
+        baidu.SetMapType(DownTool::BaiduMapType::Satellite);
+        return Require(baidu.GetCachePath() == "cache/百度地图",
+                       "Baidu satellite cache was not restored");
     }
 
     bool RunTest()
@@ -107,8 +186,8 @@ namespace
                     "x=215872&y=99317&z=18",
                 "Google URL does not match the compatibility template") ||
             !Require(
-                google.GetProxy() == "http://127.0.0.1:10090",
-                "Google downloads must use the configured local proxy") ||
+                google.GetProxy().empty(),
+                "Google downloads must default to direct connections") ||
             !Require(google.IsTileOffset(), "Google China imagery must use GCJ02 correction"))
         {
             return false;
@@ -150,12 +229,11 @@ namespace
             return false;
         }
 
-        return Require(
-                   google.GetCachePath() != bing.GetCachePath() &&
-                       google.GetCachePath() != arcgis.GetCachePath() &&
-                       bing.GetCachePath() != arcgis.GetCachePath(),
-                   "Provider cache roots must not overlap") &&
-            TestGcj02CoordinateCalibration();
+        return Require(google.GetCachePath() != bing.GetCachePath() &&
+                           google.GetCachePath() != arcgis.GetCachePath() &&
+                           bing.GetCachePath() != arcgis.GetCachePath(),
+                       "Provider cache roots must not overlap") &&
+               TestGcj02CoordinateCalibration() && TestElectronicMapProviders();
     }
 } // namespace
 

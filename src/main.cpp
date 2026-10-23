@@ -320,10 +320,16 @@ namespace
         {
             error = "瓦片层级不能高于 30。";
         }
-        else if (options.provider != MapProvider::GaoDe &&
-            options.mapType != DownTool::GaoDeMapType::Satellite)
+        else if (options.mapType == DownTool::GaoDeMapType::RoadNetworkOverlay &&
+                 options.provider != MapProvider::GaoDe)
         {
-            error = "--map-type 目前只适用于高德地图。";
+            error = "--map-type road-network 目前只适用于高德地图。";
+        }
+        else if (options.mapType == DownTool::GaoDeMapType::Electronic &&
+                 options.provider != MapProvider::GaoDe && options.provider != MapProvider::Baidu &&
+                 options.provider != MapProvider::Tencent)
+        {
+            error = "--map-type electronic 目前只适用于高德、百度和腾讯地图。";
         }
         else if ((options.outputMode == OutputMode::Merged ||
             options.outputMode == OutputMode::Both) &&
@@ -567,9 +573,15 @@ namespace
         case MapProvider::GaoDe:
             return std::make_unique<DownTool::GaoDeDown>(options.mapType);
         case MapProvider::Baidu:
-            return std::make_unique<DownTool::BaiduDown>();
+            return std::make_unique<DownTool::BaiduDown>(
+                options.mapType == DownTool::GaoDeMapType::Electronic
+                    ? DownTool::BaiduMapType::Electronic
+                    : DownTool::BaiduMapType::Satellite);
         case MapProvider::Tencent:
-            return std::make_unique<DownTool::TencentDown>();
+            return std::make_unique<DownTool::TencentDown>(
+                options.mapType == DownTool::GaoDeMapType::Electronic
+                    ? DownTool::TencentMapType::Electronic
+                    : DownTool::TencentMapType::Satellite);
         case MapProvider::TianDiTu:
             return std::make_unique<DownTool::TianDiTuDown>();
         case MapProvider::Google:
@@ -698,9 +710,10 @@ namespace
         std::cout <<
             "地图下载配置：\n"
             "  地图源：" << GetProviderName(options.provider) << '\n';
-        if (options.provider == MapProvider::GaoDe)
+        if (options.provider == MapProvider::GaoDe || options.provider == MapProvider::Baidu ||
+            options.provider == MapProvider::Tencent)
         {
-            std::cout << "  高德类型：" << GetMapTypeName(options.mapType) << '\n';
+            std::cout << "  地图类型：" << GetMapTypeName(options.mapType) << '\n';
         }
         std::cout <<
             "  WGS84 中心：" << options.centerWgs84.lon << ", " <<
@@ -723,7 +736,8 @@ namespace
             "默认：高德卫星、北京中心、半径 2000 米、z16、只输出合并 PNG 大图。\n\n"
             "常用参数：\n"
             "  --provider <地图源>           gaode,baidu,tencent,tianditu,google,bing,arcgis\n"
-            "  --map-type <类型>             高德：satellite,electronic,road-network\n"
+            "  --map-type <类型>             高德/百度/腾讯：satellite,electronic\n"
+            "                                高德另支持 road-network\n"
             "  --lon <经度>                  WGS84 中心经度\n"
             "  --lat <纬度>                  WGS84 中心纬度\n"
             "  --radius <米>                 下载半径\n"
@@ -776,6 +790,14 @@ int main(int argumentCount, char* arguments[])
         return 0;
     }
 
+    // 全局 CURL 状态必须晚于下载器释放，否则关闭 HTTPS 连接时可能访问失效的状态。
+    CurlGlobalContext curlContext;
+    if (!curlContext.IsReady())
+    {
+        std::cerr << "无法初始化 CURL：" << curlContext.GetError() << '\n';
+        return 1;
+    }
+
     std::unique_ptr<DownTool::DownToolBase> downloader = CreateDownloader(options);
     if (!downloader)
     {
@@ -790,13 +812,6 @@ int main(int argumentCount, char* arguments[])
     {
         std::cout << "配置检查完成，未执行下载。\n";
         return 0;
-    }
-
-    CurlGlobalContext curlContext;
-    if (!curlContext.IsReady())
-    {
-        std::cerr << "无法初始化 CURL：" << curlContext.GetError() << '\n';
-        return 1;
     }
 
     downloader->StartDown();

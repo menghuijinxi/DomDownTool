@@ -810,6 +810,10 @@ std::unique_ptr<DownTool::DownToolBase> CreateDownloader(std::string_view source
     {
         return std::make_unique<DownTool::TencentDown>();
     }
+    if (sourceId == "tencent.electronic")
+    {
+        return std::make_unique<DownTool::TencentDown>(DownTool::TencentMapType::Electronic);
+    }
     if (sourceId == "tianditu.satellite")
     {
         return std::make_unique<DownTool::TianDiTuDown>();
@@ -821,6 +825,10 @@ std::unique_ptr<DownTool::DownToolBase> CreateDownloader(std::string_view source
     if (sourceId == "baidu.satellite")
     {
         return std::make_unique<DownTool::BaiduDown>();
+    }
+    if (sourceId == "baidu.electronic")
+    {
+        return std::make_unique<DownTool::BaiduDown>(DownTool::BaiduMapType::Electronic);
     }
     if (sourceId == "google.satellite")
     {

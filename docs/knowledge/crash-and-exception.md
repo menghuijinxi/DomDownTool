@@ -1,5 +1,29 @@
 # 崩溃与异常问题复盘
 
+## 命令行 HTTPS 下载完成后退出崩溃
+
+- 现象：腾讯、百度电子地图首次联网下载已经写出 XYZ 和合并图片，但进程以
+  `0xc0000005` 退出；复用完整缓存时正常。重定向的日志可能因缓冲尚未刷新，
+  停在大图采样或下载前，不能据此认定该阶段崩溃。
+- 影响范围：命令行下载器持有 HTTPS 连接时的退出流程，其他 HTTPS 地图源也有相同风险。
+- 根因：`main` 中 `CurlGlobalContext` 晚于下载器构造，按逆序析构时先调用了
+  `curl_global_cleanup()`。下载器随后执行 `curl_multi_cleanup()`，仍需关闭 TLS
+  连接。本次 libcurl 8.21.0 使用 Windows Schannel，全局清理已将 `Curl_pSecFn`
+  置空，`schannel_shutdown()` 调用 `ApplyControlToken` 时访问了空函数表。
+- 排查路径：对照 WER 故障偏移与相同对象重链接生成的 MAP，定位到
+  `schannel_shutdown`；反汇编中读取的全局地址与 `Curl_pSecFn` 一致。
+  再核对 libcurl `lib/vtls/schannel.c`、`lib/curl_sspi.c` 和入口局部变量顺序。
+  对比首次联网与缓存重跑，确认问题与图片内容、拼接算法无关。
+- 解决方案：先构造全局 CURL 上下文，再创建下载器，让下载器及其连接先销毁，
+  最后清理全局状态。利用 RAII 保证正常返回和异常退出遵守同一顺序。
+- 验证方式：两家电子地图均使用全新空缓存，真实下载并输出 XYZ、合并 PNG，
+  要求进程正常退出；同时运行命令行参数、图源 URL、投影和预览导出回归。
+- 参考：`https://curl.se/libcurl/c/curl_global_cleanup.html` 要求在结束使用
+  libcurl 后执行全局清理；连接和 multi handle 的销毁也属于 libcurl 调用。
+- 快速检查清单：图片已生成但 HTTPS 下载进程退出崩溃时，先检查全局上下文是否
+  比连接、下载器和后台线程活得更久；不要仅凭未刷新完的日志定位，也不要跳过
+  清理或增加空函数表判断来掩盖生命周期错误。复现时必须用新缓存确保真正建立连接。
+
 ## Release 增量构建产生类布局不一致
 
 - 现象：临时 Release 正常，但正式 Release 在 GIS `mesh_build_complete` 后立即退出，日志里没有

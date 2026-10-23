@@ -7,75 +7,87 @@
 
 namespace DownTool
 {
-	class BaiduDown : public GCJ02GoogleDownBase
-	{
-	public:
+    enum class BaiduMapType
+    {
+        Satellite,
+        Electronic
+    };
 
-		BaiduDown();
+    class BaiduDown : public GCJ02GoogleDownBase
+    {
+    public:
+        explicit BaiduDown(BaiduMapType mapType = BaiduMapType::Satellite);
 
-		struct MercatorPoint
-		{
-			double x = 0.;
-			double y = 0.;
-		};
+        void SetMapType(BaiduMapType mapType);
 
-		virtual std::string MakeUri(const Tile& tile) override;
+        BaiduMapType GetMapType() const
+        {
+            return mapType_;
+        }
 
-		virtual TileRange GetOffsetTiles(const Tile& tile) const override;
+        struct MercatorPoint
+        {
+            double x = 0.;
+            double y = 0.;
+        };
 
-		virtual LonLat ConvertTargetLonLatToSourceLonLat(
-			const LonLat& lonLat) const override;
+        virtual std::string MakeUri(const Tile& tile) override;
 
-		virtual LonLat ConvertSourceLonLatToTargetLonLat(
-			const LonLat& lonLat) const override;
+        virtual TileRange GetOffsetTiles(const Tile& tile) const override;
 
-		virtual bool TryGetSourceTilePixelForLonLat(
-			const LonLat& lonLat,
-			uint32_t zoom,
-			Tile& tile,
-			double& pixelX,
-			double& pixelY) const override;
+        virtual LonLat ConvertTargetLonLatToSourceLonLat(
+            const LonLat& lonLat) const override;
 
-		virtual bool TryGetSourceLonLatForTilePixel(
-			const Tile& tile,
-			double pixelX,
-			double pixelY,
-			LonLat& lonLat) const override;
+        virtual LonLat ConvertSourceLonLatToTargetLonLat(
+            const LonLat& lonLat) const override;
 
-		static LonLat BD09ToGCJ02(const LonLat& lonLat);
+        virtual bool TryGetSourceTilePixelForLonLat(
+            const LonLat& lonLat,
+            uint32_t zoom,
+            Tile& tile,
+            double& pixelX,
+            double& pixelY) const override;
 
-		static LonLat GCJ02ToBD09(const LonLat& lonLat);
+        virtual bool TryGetSourceLonLatForTilePixel(
+            const Tile& tile,
+            double pixelX,
+            double pixelY,
+            LonLat& lonLat) const override;
 
-		static LonLat BD09ToWGS84(const LonLat& lonLat);
+        static LonLat BD09ToGCJ02(const LonLat& lonLat);
 
-		static LonLat WGS84ToBD09(const LonLat& lonLat);
+        static LonLat GCJ02ToBD09(const LonLat& lonLat);
 
-	protected:
+        static LonLat BD09ToWGS84(const LonLat& lonLat);
 
-		virtual std::filesystem::path GetTileFilePath(const Tile& tile) const override;
+        static LonLat WGS84ToBD09(const LonLat& lonLat);
 
-		virtual bool IsUnavailableTileFile(
-			const std::filesystem::path& tilePath, const Tile& tile) const override;
+    protected:
+        BaiduMapType mapType_ = BaiduMapType::Satellite;
 
-	private:
+        virtual std::filesystem::path GetTileFilePath(const Tile& tile) const override;
 
-		static double GetBaiduResolution(uint32_t zoom);
+        virtual bool IsUnavailableTileFile(
+            const std::filesystem::path& tilePath, const Tile& tile) const override;
 
-		static MercatorPoint BD09ToMercator(const LonLat& lonLat);
+    private:
+        static double GetBaiduResolution(uint32_t zoom);
 
-		static LonLat MercatorToBD09(const MercatorPoint& point);
+        static MercatorPoint BD09ToMercator(const LonLat& lonLat);
 
-		bool TryGetBaiduTilePixelForBD09LonLat(
-			const LonLat& lonLat,
-			uint32_t zoom,
-			Tile& tile,
-			double& pixelX,
-			double& pixelY) const;
+        static LonLat MercatorToBD09(const MercatorPoint& point);
 
-		bool TryGetBD09LonLatForBaiduTilePixel(
-			const Tile& tile,
-			double pixelX,
-			double pixelY,
-			LonLat& lonLat) const;
-	};
+        bool TryGetBaiduTilePixelForBD09LonLat(
+            const LonLat& lonLat,
+            uint32_t zoom,
+            Tile& tile,
+            double& pixelX,
+            double& pixelY) const;
+
+        bool TryGetBD09LonLatForBaiduTilePixel(
+            const Tile& tile,
+            double pixelX,
+            double pixelY,
+            LonLat& lonLat) const;
+    };
 }

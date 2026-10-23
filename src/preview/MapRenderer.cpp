@@ -336,6 +336,9 @@ DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw
               TileYAxisDirection::Down, 3., 20.);
     addSource("tencent.satellite", "腾讯卫星", "GCJ02 / XYZ",
               std::make_unique<DownTool::TencentDown>(), TileYAxisDirection::Down, 3., 19.);
+    addSource("tencent.electronic", "腾讯电子地图", "GCJ02 / XYZ",
+              std::make_unique<DownTool::TencentDown>(DownTool::TencentMapType::Electronic),
+              TileYAxisDirection::Down, 3., 19.);
     addSource("tianditu.satellite", "天地图影像", "CGCS2000 / XYZ",
               std::make_unique<DownTool::TianDiTuDown>(), TileYAxisDirection::Down, 1., 18.);
     auto multidateProjection = std::make_unique<DownTool::TianDiTuMultidateDown>();
@@ -347,6 +350,9 @@ DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw
               std::move(multidateProjection), TileYAxisDirection::Down, 1., 18.);
     addSource("baidu.satellite", "百度卫星", "BD09 / Baidu",
               std::make_unique<DownTool::BaiduDown>(), TileYAxisDirection::Up, 3., 19.);
+    addSource("baidu.electronic", "百度电子地图", "BD09 / Baidu",
+              std::make_unique<DownTool::BaiduDown>(DownTool::BaiduMapType::Electronic),
+              TileYAxisDirection::Up, 3., 19.);
     addSource("google.satellite", "Google 卫星", "WGS84 / XYZ",
               std::make_unique<DownTool::GoogleDown>(), TileYAxisDirection::Down, 1., 21.);
     addSource("bing.satellite", "Bing 卫星", "WGS84 / XYZ", std::make_unique<DownTool::BingDown>(),

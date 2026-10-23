@@ -157,22 +157,41 @@ namespace
 
 		return std::nullopt;
 	}
+
+    std::string formatBaiduTileIndex(int32_t index)
+    {
+        // 百度电子地图以 M 表示负坐标；先扩展位宽，避免 INT32_MIN 取反溢出。
+        return index < 0 ? "M" + std::to_string(-static_cast<int64_t>(index))
+                         : std::to_string(index);
+    }
 }
 
-DownTool::BaiduDown::BaiduDown()
+DownTool::BaiduDown::BaiduDown(BaiduMapType mapType)
 {
-	ServerRange.DomServerRange = DownTool::IntVector2(0, 3);
-	SetCachePath("cache/百度地图");
+    ServerRange.DomServerRange = DownTool::IntVector2(0, 3);
+    SetMapType(mapType);
+}
+
+void DownTool::BaiduDown::SetMapType(BaiduMapType mapType)
+{
+    mapType_ = mapType;
+    SetCachePath(
+        mapType == BaiduMapType::Electronic ? "cache/百度地图/电子地图" : "cache/百度地图");
 }
 
 std::string DownTool::BaiduDown::MakeUri(const Tile& tile)
 {
-	return fmt::format(
-		"https://maponline{}.bdimg.com/starpic/?qt=satepc&u=x={};y={};z={};v=009;type=sate",
-		ServerRange.GetNextServerIndex(),
-		tile.X,
-		tile.Y,
-		tile.Zoom);
+    if (mapType_ == BaiduMapType::Electronic)
+    {
+        return fmt::format(
+            "https://maponline{}.bdimg.com/tile/?qt=vtile&x={}&y={}&z={}&styles=pl&scaler=1",
+            ServerRange.GetNextServerIndex(), formatBaiduTileIndex(tile.X),
+            formatBaiduTileIndex(tile.Y), tile.Zoom);
+    }
+
+    return fmt::format(
+        "https://maponline{}.bdimg.com/starpic/?qt=satepc&u=x={};y={};z={};v=009;type=sate",
+        ServerRange.GetNextServerIndex(), tile.X, tile.Y, tile.Zoom);
 }
 
 DownTool::TileRange DownTool::BaiduDown::GetOffsetTiles(const Tile& tile) const
