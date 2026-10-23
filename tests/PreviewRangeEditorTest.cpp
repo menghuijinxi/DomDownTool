@@ -1042,6 +1042,9 @@ bool TestTencentGis(HWND window, const std::filesystem::path& testRoot)
     if (!click("export-act-open-params__tencent-json") ||
         !click("export-act-open-sources__tencent-json") ||
         !Require(runtime.textContentById(
+            "export-act-add-source__tencent-json__gis.building") == "高德·建筑",
+            "导出菜单中的高德建筑缺少平台名称") ||
+        !Require(runtime.textContentById(
             "export-act-add-source__tencent-json__gis.tencent.building") == "腾讯·建筑",
             "导出菜单缺少腾讯建筑") ||
         !click("export-act-add-source__tencent-json__gis.tencent.building"))
@@ -1051,6 +1054,7 @@ bool TestTencentGis(HWND window, const std::filesystem::path& testRoot)
     const auto exported = controller.ReadExport(error);
     if (!Require(exported && exported->groups[0].components[0].sources.size() == 2 &&
             exported->groups[0].components[0].sources[0].id == "gis.road" &&
+            exported->groups[0].components[0].sources[0].name == "高德·道路" &&
             exported->groups[0].components[0].sources[1].id == "gis.tencent.building",
             "混合来源没有写入导出配置：" + error) ||
         !Require(WriteTaskScreenshot(runtime, testRoot / "tencent-gis-export-desktop.png"),
@@ -1130,6 +1134,7 @@ bool TestShapefileComponent(HWND window, const std::filesystem::path& testRoot)
                      exported->groups[0].components[0].includeLabels &&
                      exported->groups[0].components[0].includeBaseLayers &&
                      exported->groups[0].components[0].sources.size() == 1 &&
+                     exported->groups[0].components[0].sources[0].name == "高德·建筑" &&
                      exported->groups[0].components[0].sources[0].gisCategory ==
                          DownTool::AmapVectorRenderCategory::Building,
                  "SHP 图源或图层选项没有进入导出配置：" + error) ||

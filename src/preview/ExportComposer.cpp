@@ -132,6 +132,11 @@ bool IsTencent(const GisCatalogItem& item)
     return std::string_view(item.id).starts_with("gis.tencent.");
 }
 
+std::string GisSourceName(const GisCatalogItem& item)
+{
+    return IsTencent(item) ? item.name : std::string("高德·") + item.name;
+}
+
 const GisCatalogItem* FindGis(DownTool::AmapVectorRenderCategory category, bool tencent = false)
 {
     const auto item = std::ranges::find_if(
@@ -498,7 +503,7 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
     {
         ExportSourceEntry source;
         source.id = item.id;
-        source.name = item.name;
+        source.name = GisSourceName(item);
         source.kind = ExportSourceKind::Gis;
         source.gisCategory = item.category;
         source.color = colorFor(item.category);
@@ -539,6 +544,13 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
                 {
                     if (source.GetShapefile().GetPath().empty())
                     {
+                        if (source.kind == ExportSourceKind::Gis)
+                        {
+                            if (const auto* item = FindGis(source.id))
+                            {
+                                source.name = GisSourceName(*item);
+                            }
+                        }
                         continue;
                     }
                     const auto existing = std::ranges::find_if(
@@ -1027,7 +1039,7 @@ std::string SourceBlockHtml(
             menu += fmt::format(
                 "<button id=\"export-act-add-source__{}__{}\" type=\"button\" "
                 "data-action=\"export-composer\">{}</button>",
-                component.id, item.id, item.name);
+                component.id, item.id, GisSourceName(item));
         }
         for (const auto& source : importedSources)
         {
@@ -1610,7 +1622,7 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
                 {
                     ExportSourceEntry source;
                     source.id = item->id;
-                    source.name = item->name;
+                    source.name = GisSourceName(*item);
                     source.kind = ExportSourceKind::Gis;
                     source.gisCategory = item->category;
                     source.color = renderer_.GetGisOverlayColor(item->preview);
@@ -1685,7 +1697,7 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
                 {
                     ExportSourceEntry source;
                     source.id = item->id;
-                    source.name = item->name;
+                    source.name = GisSourceName(*item);
                     source.kind = ExportSourceKind::Gis;
                     source.gisCategory = item->category;
                     const auto saved = exportGisColors_.find(item->category);
