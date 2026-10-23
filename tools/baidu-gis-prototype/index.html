@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>百度矢量 GIS 验证</title>
+    <link rel="stylesheet" href="/vendor/leaflet.css">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header>
+        <h1>百度矢量 GIS <small>协议验证</small></h1>
+        <div class="header-actions">
+            <button id="fit" type="button" title="定位已加载范围"><i data-lucide="scan"></i></button>
+            <button id="export" type="button" title="导出筛选后的 BD09 GeoJSON" disabled>
+                <i data-lucide="download"></i><span>GeoJSON</span>
+            </button>
+        </div>
+    </header>
+    <main>
+        <aside>
+            <form id="query">
+                <label>样区<select id="preset">
+                    <option value="beijing">北京 · 东城</option>
+                    <option value="shandong">济南</option>
+                    <option value="shanghai">上海 · 陆家嘴</option>
+                    <option value="guangzhou">广州 · 珠江</option>
+                    <option value="custom">自定义 BD09</option>
+                </select></label>
+                <div class="two-columns">
+                    <label>BD09 经度<input id="lon" type="number" step="any" value="116.425" required></label>
+                    <label>BD09 纬度<input id="lat" type="number" step="any" value="39.886" required></label>
+                    <label>数据层级<select id="zoom">
+                        <option>3</option><option>5</option><option>7</option><option>9</option>
+                        <option>10</option><option>12</option><option>15</option><option>17</option>
+                        <option selected>19</option>
+                    </select></label>
+                    <label>瓦片范围<select id="grid"><option value="1">1 × 1</option>
+                        <option value="3" selected>3 × 3</option></select></label>
+                </div>
+                <div class="command-row">
+                    <button class="primary" id="load" type="submit"><i data-lucide="refresh-cw"></i>加载范围</button>
+                    <button id="cancel" type="button" title="取消加载" disabled><i data-lucide="square"></i></button>
+                </div>
+            </form>
+            <div class="section">
+                <div class="section-title"><h2>几何图层</h2><label class="compact">
+                    <input id="all-layers" type="checkbox" checked>全部</label></div>
+                <div id="layers"></div>
+            </div>
+            <div class="section settings">
+                <label>底图<select id="basemap"><option value="electronic">百度电子地图</option>
+                    <option value="none">无</option></select></label>
+                <label class="slider-label">矢量不透明度<output id="opacity-value">65%</output>
+                    <input id="opacity" type="range" min="0" max="100" value="65"></label>
+                <label><input id="height-colors" type="checkbox" checked>建筑按高度原值着色</label>
+                <label><input id="tile-grid" type="checkbox" checked>瓦片边界</label>
+                <label><input id="style-filter" type="checkbox" checked>按原始显示掩码筛选</label>
+                <label>原始样式<select id="style"><option value="all">全部</option></select></label>
+            </div>
+            <div class="section">
+                <div class="section-title"><h2>原始图层</h2></div>
+                <dl id="statistics"></dl>
+                <pre id="groups" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px"></pre>
+            </div>
+        </aside>
+        <section class="map-area">
+            <div id="map"></div>
+            <div id="status" role="status">正在读取数据版本…</div>
+            <div id="selection" hidden><div class="section-title"><h2>要素属性</h2>
+                <button id="close-selection" type="button" title="关闭属性"><i data-lucide="x"></i></button>
+                </div><pre id="properties"></pre></div>
+        </section>
+    </main>
+    <footer><span id="source-version">百度地图 · BD09</span>
+        <span id="tile-status">未加载</span><span>© 百度地图</span></footer>
+    <script src="/vendor/leaflet.js"></script>
+    <script src="/vendor/lucide.js"></script>
+    <script type="module" src="/app.mjs"></script>
+</body>
+</html>
