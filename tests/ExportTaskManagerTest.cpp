@@ -20,6 +20,8 @@
 #include "amap_vector_tile.pb.h"
 
 #include "AmapVectorDownloader.h"
+#include "TencentVectorDecoder.h"
+#include "TencentVectorDownloader.h"
 #include "DownToolBase.h"
 #include "CopernicusDem.h"
 #include "preview/ExportTaskManager.h"
@@ -918,6 +920,140 @@ bool verifyRestartAndRename(const std::filesystem::path& testRoot)
                        records.front().outputPath == outputPath &&
                        records.front().configuration->zoom == 16,
                    "重启程序后没有保留重命名和修改后的参数");
+}
+
+bool verifyTencentSources(const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    using namespace DownTool;
+    using postprocess_test::Require;
+    ExportSourceEntry road;
+    road.id = "gis.road";
+    road.kind = ExportSourceKind::Gis;
+    road.gisCategory = AmapVectorRenderCategory::Road;
+    ExportSourceEntry building = road;
+    building.id = "gis.tencent.building";
+    building.name = "腾讯建筑";
+    building.gisCategory = AmapVectorRenderCategory::Building;
+    AmapVectorDownloadOptions options;
+    ConfigureGisVectorSources(options, {road, building});
+    AmapVectorFeature tencent;
+    tencent.geometryType = AmapVectorGeometryType::Polygon;
+    tencent.layerName = "building";
+    tencent.SetCoordinateSystem(VectorCoordinateSystem::Wgs84);
+    tencent.SetDataSource(VectorDataSource::Tencent);
+    tencent.SetSourceProperties({{"provider", "tencent"}});
+    AmapVectorFeature amap;
+    amap.layerName = "road";
+    amap.SetSourceProperties({{"provider", 123}});
+    auto wrongTencent = tencent;
+    wrongTencent.layerName = "road";
+    auto wrongAmap = amap;
+    wrongAmap.layerName = "building";
+    if (!Require(options.GetIncludeAmapSource() && options.GetIncludeTencentSource() &&
+            options.GetFeatureFilter()(tencent) && options.GetFeatureFilter()(amap) &&
+            !options.GetFeatureFilter()(wrongTencent) &&
+            !options.GetFeatureFilter()(wrongAmap), "混合来源的分类筛选串入未选数据"))
+    {
+        return false;
+    }
+    const auto root = testRoot / "tencent-task";
+    std::filesystem::create_directories(root);
+    struct RestoreDirectory
+    {
+        ~RestoreDirectory() { std::filesystem::current_path(previous_); }
+    protected:
+        std::filesystem::path previous_ = std::filesystem::current_path();
+    } restoreDirectory;
+    std::filesystem::current_path(root);
+    const AmapVectorTile tile{215849, 99348, 18};
+    const std::string payload =
+        "{\"ret\":0,\"features\":[[196619,[100,100,20,0,0,20,-20,0],12.5]]}";
+    AmapVectorDecodedData decoded;
+    std::string error;
+    if (!Require(TencentVectorDecoder::DecodeEnvelope(payload, tile, decoded, error), error))
+    {
+        return false;
+    }
+    const auto& point = decoded.features[0].geometryParts[0][0];
+    options.centerWgs84 = {point.longitude, point.latitude};
+    options.radiusMeters = 50.;
+    for (const auto& selected : TencentVectorDownloader::SelectTiles(options))
+    {
+        const auto path = options.GetTencentCachePath() / "v405-style100-compress1" /
+            std::to_string(selected.zoom) / std::to_string(selected.x) /
+            (std::to_string(selected.y) + ".json");
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream output(path, std::ios::binary);
+        output << (selected.x == tile.x && selected.y == tile.y
+            ? payload : "{\"ret\":0,\"features\":[]}");
+    }
+    ExportConfiguration configuration;
+    configuration.centerWgs84 = options.centerWgs84;
+    configuration.radiusMeters = options.radiusMeters;
+    configuration.zoom = 18;
+    configuration.outputRoot = root / "output";
+    ExportContentGroup group;
+    group.id = "tencent";
+    group.name = "腾讯";
+    for (const auto kind : {ExportComponentKind::GeoJson, ExportComponentKind::Shapefile,
+                           ExportComponentKind::MergedImage, ExportComponentKind::BuildingModel,
+                           ExportComponentKind::CesiumBuildings})
+    {
+        ExportComponent component;
+        component.id = std::to_string(static_cast<int>(kind));
+        component.kind = kind;
+        component.sources = {building};
+        component.maxEdge = 256;
+        component.textureSize = 256;
+        component.SetCesiumLodLevels(2);
+        group.components.push_back(component);
+    }
+    const auto walls = root / "walls";
+    const auto roofs = root / "roofs";
+    std::filesystem::create_directories(walls);
+    std::filesystem::create_directories(roofs);
+    cv::imwrite((walls / "wall.png").string(), cv::Mat(16, 16, CV_8UC3, cv::Scalar(60, 80, 100)));
+    cv::imwrite((roofs / "roof.png").string(), cv::Mat(16, 16, CV_8UC3, cv::Scalar(100, 90, 80)));
+    for (auto& component : group.components)
+    {
+        component.wallTexturePath = walls;
+        component.roofTexturePath = roofs;
+    }
+    configuration.groups = {group};
+    const auto recordsPath = root / "records.json";
+    std::string id;
+    {
+        ExportTaskManager manager({}, recordsPath);
+        id = manager.Enqueue(configuration);
+        if (!Require(waitForFinished(manager, id), "腾讯组件导出未结束"))
+        {
+            return false;
+        }
+        const auto records = manager.GetRecords();
+        const auto* record = findRecord(records, id);
+        const auto output = ExportTaskOutputRoot(configuration, id) / std::filesystem::u8path("腾讯");
+        const auto json = loadJsonFile(output / "GeoJSON" / std::filesystem::u8path("数据.geojson"));
+        if (!Require(record && record->state == ExportTaskState::Succeeded,
+                "腾讯组件导出失败：" + (record ? record->error : "无记录")) ||
+            !Require(json["coordinateSystem"] == "WGS84" && json["features"].size() == 1 &&
+                json["features"][0]["properties"]["provider"] == "tencent" &&
+                json["features"][0]["properties"]["height_m"] == 12.5 &&
+                std::filesystem::exists(output / "SHP" / "polygons.shp") &&
+                std::filesystem::exists(output / std::filesystem::u8path("大图/腾讯建筑.png")) &&
+                std::filesystem::exists(output / std::filesystem::u8path("建筑模型/buildings.fbx")) &&
+                std::filesystem::exists(output / std::filesystem::u8path("3D Tiles 建筑/tileset.json")),
+                "腾讯没有完成现有 GIS、图片及模型导出"))
+        {
+            return false;
+        }
+    }
+    ExportTaskManager restored({}, recordsPath);
+    const auto records = restored.GetRecords();
+    const auto* record = findRecord(records, id);
+    return Require(record && record->configuration &&
+        record->configuration->groups[0].components[0].sources[0].id == "gis.tencent.building",
+        "任务恢复后丢失腾讯来源");
 }
 
 bool verifyImportedShapefileTask(const std::filesystem::path& testRoot)
@@ -2475,7 +2611,7 @@ bool runTest()
     return postprocess_test::Require(
         changeCount.load(std::memory_order_relaxed) >= 3,
         "导出任务状态变化没有通知界面") &&
-        verifySeaLevelExports(testRoot) && verifyShapefileTask(testRoot) &&
+        verifySeaLevelExports(testRoot) && verifyTencentSources(testRoot) && verifyShapefileTask(testRoot) &&
         verifyImportedShapefileTask(testRoot);
 }
 } // namespace

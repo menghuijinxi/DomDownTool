@@ -117,6 +117,8 @@ class MapRenderer
     [[nodiscard]] std::optional<ViewportGeoBounds> visibleGeoBounds() const;
 
     void SetGisOverlayCategory(GisOverlayCategory category);
+    void SetUseTencentGis(bool value);
+    [[nodiscard]] bool GetUseTencentGis() const;
 
     [[nodiscard]] GisOverlayCategory GetGisOverlayCategory() const;
 

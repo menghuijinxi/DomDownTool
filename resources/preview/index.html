@@ -247,6 +247,12 @@
             color: #d8dfdc;
         }
 
+        #gis-source-select {
+            width: 170px;
+            height: 30px;
+            margin-bottom: 4px;
+        }
+
         .gis-overlay-option:hover {
             background: #2c3934;
         }
@@ -3443,6 +3449,10 @@
         </section>
 
         <div id="gis-overlay-panel" class="gis-overlay-panel" style="display: none">
+            <select id="gis-source-select" class="provider-select" aria-label="GIS 数据源">
+                <option value="amap">高德 GIS</option>
+                <option value="tencent">腾讯 GIS</option>
+            </select>
             <label class="gis-overlay-option quick-option" for="gis-overlay-none">
                 <input id="gis-overlay-none" type="checkbox" name="gis-overlay" value="none" checked>
                 <span>无</span>

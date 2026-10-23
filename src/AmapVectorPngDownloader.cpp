@@ -583,6 +583,20 @@ namespace
 DownTool::AmapVectorRenderCategory DownTool::ClassifyAmapVectorFeature(
     const AmapVectorFeature& feature)
 {
+    if (feature.GetDataSource() == VectorDataSource::Tencent)
+    {
+        static const std::map<std::string, AmapVectorRenderCategory> categories = {
+            {"water", AmapVectorRenderCategory::Water},
+            {"green", AmapVectorRenderCategory::Green},
+            {"highway", AmapVectorRenderCategory::Highway},
+            {"subway", AmapVectorRenderCategory::Subway},
+            {"boundary", AmapVectorRenderCategory::Boundary},
+            {"road", AmapVectorRenderCategory::Road},
+            {"building", AmapVectorRenderCategory::Building},
+            {"poi", AmapVectorRenderCategory::Point}};
+        const auto category = categories.find(feature.layerName);
+        return category == categories.end() ? AmapVectorRenderCategory::Other : category->second;
+    }
     if (feature.GetCoordinateSystem() == VectorCoordinateSystem::Wgs84)
     {
         if (feature.layerName == "water") { return AmapVectorRenderCategory::Water; }

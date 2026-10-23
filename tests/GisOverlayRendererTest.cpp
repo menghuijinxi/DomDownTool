@@ -248,6 +248,16 @@ int main()
                 "administrative boundary style was not classified as boundary");
         }
 
+        renderer.SetUseTencent(true);
+        if (!renderer.GetUseTencent() || renderer.IsLoading())
+        {
+            throw std::runtime_error("腾讯来源切换没有清除旧请求状态");
+        }
+        renderer.SetUseTencent(false);
+        if (renderer.GetUseTencent())
+        {
+            throw std::runtime_error("无法恢复高德来源");
+        }
         std::cout << "GisOverlayRendererTest passed\n" << std::flush;
         return 0;
     }

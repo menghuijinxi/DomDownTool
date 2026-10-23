@@ -1152,8 +1152,8 @@ bool runTest()
         return false;
     }
 
-    sendMouse(runtime, skui::EventType::MouseDown, 756.F, 124.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 756.F, 124.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 756.F, 158.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 756.F, 158.F);
     if (!postprocess_test::Require(lastChangeId == "gis-overlay-road" &&
                                        lastChangeValue == "road" && lastChangeChecked,
                                    "GIS road checkbox did not receive the popup click"))
@@ -1161,8 +1161,8 @@ bool runTest()
         return false;
     }
 
-    sendMouse(runtime, skui::EventType::MouseDown, 756.F, 152.F);
-    sendMouse(runtime, skui::EventType::MouseUp, 756.F, 152.F);
+    sendMouse(runtime, skui::EventType::MouseDown, 756.F, 186.F);
+    sendMouse(runtime, skui::EventType::MouseUp, 756.F, 186.F);
     if (!postprocess_test::Require(lastChangeId == "gis-overlay-water" &&
                                        lastChangeValue == "water" && lastChangeChecked,
                                    "GIS water checkbox did not support multiple selection"))

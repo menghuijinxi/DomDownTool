@@ -19,6 +19,13 @@ namespace DownTool
         Wgs84
     };
 
+    enum class VectorDataSource
+    {
+        Amap,
+        Tencent,
+        Shapefile
+    };
+
     enum class AmapVectorGeometryType
     {
         Point,
@@ -62,6 +69,8 @@ namespace DownTool
 
         VectorCoordinateSystem GetCoordinateSystem() const { return coordinateSystem_; }
         void SetCoordinateSystem(VectorCoordinateSystem value) { coordinateSystem_ = value; }
+        VectorDataSource GetDataSource() const { return dataSource_; }
+        void SetDataSource(VectorDataSource value) { dataSource_ = value; }
         const std::optional<double>& GetHeightMeters() const { return heightMeters_; }
         void SetHeightMeters(std::optional<double> value) { heightMeters_ = value; }
         const nlohmann::json& GetSourceProperties() const { return sourceProperties_; }
@@ -69,6 +78,7 @@ namespace DownTool
 
     protected:
         VectorCoordinateSystem coordinateSystem_ = VectorCoordinateSystem::Gcj02;
+        VectorDataSource dataSource_ = VectorDataSource::Amap;
         std::optional<double> heightMeters_;
         nlohmann::json sourceProperties_;
     };

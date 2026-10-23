@@ -78,8 +78,18 @@ namespace DownTool
         void SetShapefiles(const std::vector<ShapefileImportOptions>& value) { shapefiles_ = value; }
         bool GetIncludeAmapSource() const { return includeAmapSource_; }
         void SetIncludeAmapSource(bool value) { includeAmapSource_ = value; }
+        bool GetIncludeTencentSource() const { return includeTencentSource_; }
+        void SetIncludeTencentSource(bool value) { includeTencentSource_ = value; }
+        uint32_t GetTencentDataZoom() const { return tencentDataZoom_; }
+        void SetTencentDataZoom(uint32_t value) { tencentDataZoom_ = value; }
+        const std::filesystem::path& GetTencentCachePath() const { return tencentCachePath_; }
+        void SetTencentCachePath(const std::filesystem::path& value) { tencentCachePath_ = value; }
 
     protected:
+        bool includeTencentSource_ = false;
+        uint32_t tencentDataZoom_ = 18;
+        std::filesystem::path tencentCachePath_ =
+            std::filesystem::u8path("cache/腾讯地图/gis数据/vector缓存");
         std::vector<ShapefileImportOptions> shapefiles_;
         bool includeAmapSource_ = true;
         GisSpatialRange gisSpatialRange_;
@@ -107,7 +117,7 @@ namespace DownTool
         AmapVectorDownloadResult DownloadTiles(
             const AmapVectorDownloadOptions& options,
             std::vector<AmapVectorTile> selectedTiles) const;
-        AmapVectorDownloadResult DownloadWithShapefiles(
+        AmapVectorDownloadResult DownloadWithSources(
             const AmapVectorDownloadOptions& options,
             std::vector<AmapVectorTile> selectedTiles) const;
 

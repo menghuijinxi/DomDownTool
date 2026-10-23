@@ -32,7 +32,9 @@ void ConfigureGisVectorSources(DownTool::AmapVectorDownloadOptions& options,
         return;
     }
     bool includeAmap = false;
+    bool includeTencent = false;
     std::set<DownTool::AmapVectorRenderCategory> remoteCategories;
+    std::set<DownTool::AmapVectorRenderCategory> tencentCategories;
     std::vector<DownTool::ShapefileImportOptions> shapefiles;
     for (const auto& source : sources)
     {
@@ -42,8 +44,16 @@ void ConfigureGisVectorSources(DownTool::AmapVectorDownloadOptions& options,
         }
         if (source.GetShapefile().GetPath().empty())
         {
-            includeAmap = true;
-            remoteCategories.insert(source.gisCategory);
+            if (source.id.starts_with("gis.tencent."))
+            {
+                includeTencent = true;
+                tencentCategories.insert(source.gisCategory);
+            }
+            else
+            {
+                includeAmap = true;
+                remoteCategories.insert(source.gisCategory);
+            }
             continue;
         }
         auto imported = source.GetShapefile();
@@ -63,13 +73,19 @@ void ConfigureGisVectorSources(DownTool::AmapVectorDownloadOptions& options,
         shapefiles.push_back(std::move(imported));
     }
     options.SetIncludeAmapSource(includeAmap);
+    options.SetIncludeTencentSource(includeTencent);
     options.SetShapefiles(shapefiles);
     const auto originalFilter = options.GetFeatureFilter();
-    options.SetFeatureFilter([remoteCategories, originalFilter](const auto& feature)
+    options.SetFeatureFilter([remoteCategories, tencentCategories, originalFilter](const auto& feature)
     {
         if (originalFilter && !originalFilter(feature))
         {
             return false;
+        }
+        if (feature.GetDataSource() == DownTool::VectorDataSource::Tencent)
+        {
+            return tencentCategories.contains(DownTool::AmapVectorRenderCategory::All) ||
+                tencentCategories.contains(DownTool::ClassifyAmapVectorFeature(feature));
         }
         return feature.GetCoordinateSystem() == DownTool::VectorCoordinateSystem::Wgs84 ||
                remoteCategories.contains(DownTool::AmapVectorRenderCategory::All) ||
@@ -1744,7 +1760,12 @@ bool ExportGroupedRunner::Run(
                 ConfigureGisVectorSources(download, component.sources);
                 download.includeBaseLayers = true;
                 download.includeLabels = false;
-                download.SetFeatureFilter(DownTool::IsAmapVectorBuildingWithHeight);
+                const auto sourceFilter = download.GetFeatureFilter();
+                download.SetFeatureFilter([sourceFilter](const auto& feature)
+                {
+                    return (!sourceFilter || sourceFilter(feature)) &&
+                        DownTool::IsAmapVectorBuildingWithHeight(feature);
+                });
                 download.cancellationRequested = options.GetCancellation();
                 download.SetProcessingProgressCallback(
                     [&manager, taskId = queuedExport.taskId, stepIndex, stepCount](

@@ -33,6 +33,14 @@ namespace
         bool writePyramid = true;
         bool showHelp = false;
         bool strictWaterCodes = false;
+        bool GetOutputRootOverridden() const { return outputRootOverridden_; }
+        void SetOutputRootOverridden(bool value) { outputRootOverridden_ = value; }
+        bool GetPngCacheOverridden() const { return pngCacheOverridden_; }
+        void SetPngCacheOverridden(bool value) { pngCacheOverridden_ = value; }
+
+    protected:
+        bool outputRootOverridden_ = false;
+        bool pngCacheOverridden_ = false;
     };
 
     class CurlGlobalContext
@@ -246,7 +254,7 @@ namespace
     void PrintDownloadProgress(const DownTool::AmapVectorDownloadProgress& progress)
     {
         std::cout <<
-            "\rPBF 下载：" << progress.completedTaskCount << '/' << progress.totalTaskCount <<
+            "\r矢量下载：" << progress.completedTaskCount << '/' << progress.totalTaskCount <<
             "，缓存 " << progress.cacheHitCount <<
             "，下载 " << progress.downloadedTaskCount <<
             "，失败 " << progress.failedTaskCount << std::flush;
@@ -347,7 +355,17 @@ namespace
             {
                 return false;
             }
-            if (argument == "--lon")
+            if (argument == "--source")
+            {
+                if (value != "amap" && value != "tencent")
+                {
+                    error = "--source 暂支持 amap 或 tencent。";
+                    return false;
+                }
+                options.download.vectorDownload.SetIncludeAmapSource(value == "amap");
+                options.download.vectorDownload.SetIncludeTencentSource(value == "tencent");
+            }
+            else if (argument == "--lon")
             {
                 if (!ParseDouble(value, options.download.vectorDownload.centerWgs84.lon))
                 {
@@ -421,6 +439,7 @@ namespace
             else if (argument == "--output")
             {
                 options.outputRoot = std::filesystem::u8path(value);
+                options.SetOutputRootOverridden(true);
             }
             else if (argument == "--geojson")
             {
@@ -432,10 +451,12 @@ namespace
             {
                 options.download.vectorDownload.rawTileCachePath =
                     std::filesystem::u8path(value);
+                options.download.vectorDownload.SetTencentCachePath(std::filesystem::u8path(value));
             }
             else if (argument == "--png-cache")
             {
                 options.download.render.pngTileCachePath = std::filesystem::u8path(value);
+                options.SetPngCacheOverridden(true);
             }
             else if (argument == "--concurrency")
             {
@@ -481,6 +502,18 @@ namespace
 
     void FinalizeOptions(ApplicationOptions& options)
     {
+        if (options.download.vectorDownload.GetIncludeTencentSource())
+        {
+            if (!options.GetOutputRootOverridden())
+            {
+                options.outputRoot = std::filesystem::u8path("cache/腾讯地图/gis数据/输出");
+            }
+            if (!options.GetPngCacheOverridden())
+            {
+                options.download.render.pngTileCachePath =
+                    std::filesystem::u8path("cache/腾讯地图/gis数据/png缓存");
+            }
+        }
         if (options.strictWaterCodes)
         {
             options.download.render.layerCategories["region"] =
@@ -500,13 +533,14 @@ namespace
     void PrintUsage()
     {
         std::cout <<
-            "AmapGisDownload - 下载高德 GIS 矢量数据、渲染 PNG 并合并大图\n\n"
+            "AmapGisDownload - 下载高德或腾讯 GIS 矢量数据、渲染 PNG 并合并大图\n\n"
             "默认：北京中心、半径 2000 米、z16、只渲染水体。\n\n"
             "参数：\n"
             "  --lon <经度>                  WGS84 中心经度\n"
             "  --lat <纬度>                  WGS84 中心纬度\n"
             "  --radius <米>                 下载半径\n"
-            "  --zoom <层级>                 PNG 显示层级；PBF 按高德规则映射\n"
+            "  --source <amap|tencent>        GIS 数据源，默认高德；腾讯使用 z18 数据\n"
+            "  --zoom <层级>                 PNG 显示层级，与数据层级分开\n"
             "  --types <类型列表>            water,building,road,point,line,transit,other,all\n"
             "  --render-all-zooms           忽略要素 minZoom/maxZoom，强制渲染全部\n"
             "  --building-height-colors     建筑按高度稳定使用不同颜色\n"
@@ -519,9 +553,9 @@ namespace
             "  --geojson <文件>              GeoJSON 输出文件\n"
             "  --no-geojson                  不输出 GeoJSON\n"
             "  --merged-only                只输出合并大图，不生成金字塔目录\n"
-            "  --raw-cache <目录>            原始 PBF 缓存目录\n"
+            "  --raw-cache <目录>            原始矢量瓦片缓存目录\n"
             "  --png-cache <目录>            临时 PNG XYZ 目录（每次重写）\n"
-            "  --concurrency <数量>          PBF/PNG 并发数，默认按硬件线程数，0 表示自动\n"
+            "  --concurrency <数量>          矢量/PNG 并发数，默认按硬件线程数，0 表示自动\n"
             "  --merged-resolution <像素>    合并大图最大边，默认 16384\n"
             "  --merged-format <png|jpg>     合并大图格式，默认 png\n"
             "  -h, --help                    显示帮助\n\n"
@@ -581,7 +615,7 @@ int main(int argumentCount, char* arguments[])
         downloader.DownloadPngTiles(options.download);
     if (!result.success)
     {
-        std::cerr << "高德 GIS 下载或渲染失败：" << result.error << '\n';
+        std::cerr << "GIS 下载或渲染失败：" << result.error << '\n';
         return 1;
     }
 
@@ -589,12 +623,12 @@ int main(int argumentCount, char* arguments[])
         DownTool::AmapVectorTileGrid::ResolveDataZoom(options.download.vectorDownload.zoom) :
         result.vectorDownload.selectedTiles.front().zoom;
     std::cout <<
-        "高德 GIS 处理完成。\n"
+        "GIS 处理完成。\n"
         "显示层级：" << options.download.vectorDownload.zoom << '\n' <<
-        "PBF 数据层级：" << dataZoom << '\n' <<
+        "矢量数据层级：" << dataZoom << '\n' <<
         "要素数量：" << result.vectorDownload.featureCount << '\n' <<
-        "PBF 缓存命中：" << result.vectorDownload.cachedTaskCount << '\n' <<
-        "PBF 实际下载：" << result.vectorDownload.downloadedTaskCount << '\n' <<
+        "矢量缓存命中：" << result.vectorDownload.cachedTaskCount << '\n' <<
+        "矢量实际下载：" << result.vectorDownload.downloadedTaskCount << '\n' <<
         "新渲染 PNG：" << result.render.renderedTileCount << '\n' <<
         "临时 PNG 目录：" << PathToUtf8String(result.render.pngTileCachePath) << '\n' <<
         "大图输出：" << PathToUtf8String(mergedImagePath) << '\n';

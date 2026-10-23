@@ -976,6 +976,95 @@ bool TestElectronicMapSources(HWND window, const std::filesystem::path& testRoot
                    "电子地图窄窗口界面截图失败");
 }
 
+bool TestTencentGis(HWND window, const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    using postprocess_test::Require;
+    skui::Runtime runtime;
+    if (!runtime.loadDocument((std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) /
+            "resources/preview/index.html").string()))
+    {
+        return false;
+    }
+    runtime.resize(1440, 900, 1.F);
+    RangeController controller;
+    controller.attachRuntime(runtime);
+    skui::win32::Win32EventAdapter adapter(runtime);
+    const auto click = [&](const std::string& id)
+    {
+        return ClickElement(controller, runtime, adapter, window, id);
+    };
+    if (!click("gis-overlay-toggle") || !click("gis-source-select"))
+    {
+        return false;
+    }
+    WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_END, 0);
+    WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_RETURN, 0);
+    if (!Require(WriteTaskScreenshot(runtime, testRoot / "tencent-gis-preview-source.png"),
+                 "腾讯预览来源截图失败") ||
+        !click("open-export-page"))
+    {
+        return false;
+    }
+    ExportConfiguration configuration;
+    configuration.centerWgs84 = {116.42, 39.89};
+    configuration.radiusMeters = 20000.;
+    configuration.zoom = 18;
+    configuration.outputRoot = testRoot / "tencent-output";
+    ExportContentGroup group;
+    group.id = "tencent-group";
+    ExportComponent component;
+    component.id = "tencent-json";
+    component.kind = ExportComponentKind::GeoJson;
+    ExportSourceEntry road;
+    road.id = "gis.road";
+    road.name = "道路";
+    road.kind = ExportSourceKind::Gis;
+    road.gisCategory = DownTool::AmapVectorRenderCategory::Road;
+    component.sources = {road};
+    group.components = {component};
+    configuration.groups = {group};
+    controller.LoadExport(runtime, configuration);
+    if (!click("export-act-open-components__tencent-group") ||
+        !click("export-act-add-component__tencent-group__building-model"))
+    {
+        return false;
+    }
+    std::string error;
+    const auto withBuilding = controller.ReadExport(error);
+    if (!Require(withBuilding && withBuilding->groups[0].components.size() == 2 &&
+            withBuilding->groups[0].components[1].sources[0].id == "gis.tencent.building",
+            "GIS 来源切换没有影响新建筑组件：" + error) ||
+        !click("export-act-remove-component__" + withBuilding->groups[0].components[1].id))
+    {
+        return false;
+    }
+    if (!click("export-act-open-params__tencent-json") ||
+        !click("export-act-open-sources__tencent-json") ||
+        !Require(runtime.textContentById(
+            "export-act-add-source__tencent-json__gis.tencent.building") == "腾讯·建筑",
+            "导出菜单缺少腾讯建筑") ||
+        !click("export-act-add-source__tencent-json__gis.tencent.building"))
+    {
+        return false;
+    }
+    const auto exported = controller.ReadExport(error);
+    if (!Require(exported && exported->groups[0].components[0].sources.size() == 2 &&
+            exported->groups[0].components[0].sources[0].id == "gis.road" &&
+            exported->groups[0].components[0].sources[1].id == "gis.tencent.building",
+            "混合来源没有写入导出配置：" + error) ||
+        !Require(WriteTaskScreenshot(runtime, testRoot / "tencent-gis-export-desktop.png"),
+                 "腾讯导出来源截图失败"))
+    {
+        return false;
+    }
+    runtime.resize(700, 600, 1.F);
+    controller.resizeRuntime(runtime);
+    return Require(runtime.scrollIntoViewById("export-param-panel"), "腾讯窄窗口无法定位参数面板") &&
+        Require(WriteTaskScreenshot(runtime, testRoot / "tencent-gis-export-narrow.png"),
+                   "腾讯导出窄窗口截图失败");
+}
+
 bool TestShapefileComponent(HWND window, const std::filesystem::path& testRoot)
 {
     using namespace DomDownToolPreview;
@@ -2030,7 +2119,7 @@ int main()
         TestShapefileMapPreview(testRoot) && TestShapefileDrop(window, testRoot) &&
         TestTaskActions(window, testRoot) && TestPerTileFbxOption(window, testRoot) &&
         TestTaskFbxPreviewLoadsEveryTile(window, testRoot) &&
-        TestElectronicMapSources(window, testRoot);
+        TestElectronicMapSources(window, testRoot) && TestTencentGis(window, testRoot);
     DestroyWindow(window);
     CoUninitialize();
     if (!passed)

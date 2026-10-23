@@ -825,6 +825,10 @@ namespace
             }
         }
 
+        if (feature.geometryParts.empty())
+        {
+            geometry = nullptr;
+        }
         return {{"type", "Feature"},
                 {"properties", std::move(properties)},
                 {"geometry", std::move(geometry)}};
@@ -911,6 +915,7 @@ bool DownTool::AmapVectorGeoJsonWriter::WriteFile(
     }
 
     const bool outputWgs84 = decodedData.version == "WGS84 SHP" ||
+        decodedData.version.find("Tencent") != std::string::npos ||
         std::ranges::any_of(decodedData.features, [](const auto& feature)
     {
         return feature.GetCoordinateSystem() == VectorCoordinateSystem::Wgs84;

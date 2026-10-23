@@ -411,11 +411,15 @@ void DomDownToolPreview::GisOverlayRenderer::UpdateContext(
             return;
         }
 
+        const auto dataZoom = [this](uint32_t displayZoom)
+        {
+            return useTencent_ ? std::clamp(displayZoom, 3u, 18u) :
+                DownTool::AmapVectorTileGrid::ResolveDataZoom(displayZoom);
+        };
         const auto coversVisibleArea = [&](const std::optional<LoadRequest>& request)
         {
             return request.has_value() &&
-                DownTool::AmapVectorTileGrid::ResolveDataZoom(request->zoom) ==
-                    DownTool::AmapVectorTileGrid::ResolveDataZoom(zoom) &&
+                dataZoom(request->zoom) == dataZoom(zoom) &&
                 distanceMeters(request->centerWgs84, centerWgs84) + radiusMeters <=
                     request->radiusMeters;
         };
@@ -742,6 +746,41 @@ void DomDownToolPreview::GisOverlayRenderer::Clear()
     meshCondition_.notify_all();
 }
 
+void DomDownToolPreview::GisOverlayRenderer::SetUseTencent(bool value)
+{
+    {
+        const std::lock_guard lock(mutex_);
+        if (useTencent_ == value)
+        {
+            return;
+        }
+        useTencent_ = value;
+        preparedData_.reset();
+        renderCache_.reset();
+        dx12Renderer_->Clear();
+        pendingRequest_.reset();
+        loadedContext_.reset();
+        pendingMeshRequest_.reset();
+        readyMeshResult_.reset();
+        loadError_.clear();
+        ++generation_;
+        retryAfter_ = {};
+        loading_ = false;
+    }
+    condition_.notify_all();
+    meshCondition_.notify_all();
+    if (requestRedraw_)
+    {
+        requestRedraw_();
+    }
+}
+
+bool DomDownToolPreview::GisOverlayRenderer::GetUseTencent() const
+{
+    const std::lock_guard lock(mutex_);
+    return useTencent_;
+}
+
 bool DomDownToolPreview::GisOverlayRenderer::IsLoading() const
 {
     const std::lock_guard lock(mutex_);
@@ -929,6 +968,7 @@ void DomDownToolPreview::GisOverlayRenderer::workerLoop()
     {
         LoadRequest request;
         bool localMode = false;
+        bool useTencent = false;
         std::vector<DownTool::ShapefileImportOptions> localSources;
         {
             std::unique_lock lock(mutex_);
@@ -941,6 +981,7 @@ void DomDownToolPreview::GisOverlayRenderer::workerLoop()
             pendingRequest_.reset();
             activeRequest_ = request;
             localMode = localMode_;
+            useTencent = useTencent_;
             localSources = localShapefiles_;
         }
 
@@ -955,6 +996,9 @@ void DomDownToolPreview::GisOverlayRenderer::workerLoop()
         options.includeBaseLayers = true;
         options.includeLabels = true;
         options.maxConcurrency = 0;
+        options.SetIncludeAmapSource(!useTencent);
+        options.SetIncludeTencentSource(useTencent);
+        options.SetTencentDataZoom(std::clamp(request.zoom, 3u, 18u));
         options.cancellationRequested = cancelled;
         DownTool::AmapVectorDownloadResult result;
         std::shared_ptr<const PreparedData> preparedData;

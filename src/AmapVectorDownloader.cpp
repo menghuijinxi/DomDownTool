@@ -18,6 +18,7 @@
 #include "nlohmann/json.hpp"
 
 #include "AmapVectorDecoder.h"
+#include "TencentVectorDownloader.h"
 
 namespace
 {
@@ -522,9 +523,9 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadTiles
     const AmapVectorDownloadOptions& options,
     std::vector<AmapVectorTile> selectedTiles) const
 {
-    if (!options.GetShapefiles().empty())
+    if (!options.GetShapefiles().empty() || options.GetIncludeTencentSource())
     {
-        return DownloadWithShapefiles(options, std::move(selectedTiles));
+        return DownloadWithSources(options, std::move(selectedTiles));
     }
     AmapVectorDownloadResult result;
     if (!ValidateDownloadOptions(options, result.error))
@@ -767,7 +768,7 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadTiles
     return result;
 }
 
-DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadWithShapefiles(
+DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadWithSources(
     const AmapVectorDownloadOptions& options, std::vector<AmapVectorTile> selectedTiles) const
 {
     AmapVectorDownloadResult result;
@@ -775,6 +776,7 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadWithS
     {
         auto remote = options;
         remote.SetShapefiles({});
+        remote.SetIncludeTencentSource(false);
         result = DownloadTiles(remote, std::move(selectedTiles));
         if (!result.success)
         {
@@ -782,6 +784,27 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadWithS
         }
     }
     result.success = false;
+    if (options.GetIncludeTencentSource())
+    {
+        auto remote = options;
+        remote.SetShapefiles({});
+        auto tencent = TencentVectorDownloader().Download(remote);
+        if (!tencent.success)
+        {
+            return tencent;
+        }
+        result.selectedTiles.insert(result.selectedTiles.end(),
+            tencent.selectedTiles.begin(), tencent.selectedTiles.end());
+        result.cachedPacketCount += tencent.cachedPacketCount;
+        result.downloadedPacketCount += tencent.downloadedPacketCount;
+        result.cachedTaskCount += tencent.cachedTaskCount;
+        result.downloadedTaskCount += tencent.downloadedTaskCount;
+        result.decodedData.packetCount += tencent.decodedData.packetCount;
+        result.decodedData.features.insert(result.decodedData.features.end(),
+            std::make_move_iterator(tencent.decodedData.features.begin()),
+            std::make_move_iterator(tencent.decodedData.features.end()));
+        result.decodedData.version += options.GetIncludeAmapSource() ? " + Tencent 405" : "Tencent 405";
+    }
     auto localRange = options.GetGisSpatialRange();
     if (localRange.GetIncludedPolygons().empty())
     {
@@ -840,7 +863,7 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadWithS
             std::make_move_iterator(imported.features.end()));
     }
     result.decodedData.status = true;
-    if (!options.GetIncludeAmapSource())
+    if (!options.GetIncludeAmapSource() && !options.GetIncludeTencentSource())
     {
         result.decodedData.version = "WGS84 SHP";
     }

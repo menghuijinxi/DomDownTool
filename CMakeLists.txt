@@ -369,9 +369,11 @@ add_test(NAME AmapGisDownloadInvalidConcurrencyTest
     COMMAND AmapGisDownload --concurrency invalid)
 add_test(NAME AmapGisDownloadInvalidMergedFormatTest
     COMMAND AmapGisDownload --merged-format bmp)
+add_test(NAME AmapGisDownloadInvalidSourceTest COMMAND AmapGisDownload --source baidu)
 set_tests_properties(AmapGisDownloadInvalidTypeTest PROPERTIES WILL_FAIL TRUE)
 set_tests_properties(AmapGisDownloadInvalidConcurrencyTest PROPERTIES WILL_FAIL TRUE)
 set_tests_properties(AmapGisDownloadInvalidMergedFormatTest PROPERTIES WILL_FAIL TRUE)
+set_tests_properties(AmapGisDownloadInvalidSourceTest PROPERTIES WILL_FAIL TRUE)
 
 function(add_domdown_test target_name)
   add_executable(${target_name} ${ARGN})
@@ -420,6 +422,8 @@ add_domdown_test(RealDataFbxIntegrationTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/RealDataFbxIntegrationTest.cpp)
 add_domdown_test(AmapVectorGeoJsonTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorGeoJsonTest.cpp)
+add_domdown_test(TencentVectorTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/TencentVectorTest.cpp)
 add_domdown_test(AmapVectorShapefileTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorShapefileTest.cpp)
 add_domdown_test(Wgs84ShapefileReaderTest

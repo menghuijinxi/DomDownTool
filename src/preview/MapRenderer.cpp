@@ -802,6 +802,16 @@ void DomDownToolPreview::MapRenderer::SetGisOverlayCategory(GisOverlayCategory c
     gisOverlay_.SetCategory(category);
 }
 
+void DomDownToolPreview::MapRenderer::SetUseTencentGis(bool value)
+{
+    gisOverlay_.SetUseTencent(value);
+}
+
+bool DomDownToolPreview::MapRenderer::GetUseTencentGis() const
+{
+    return gisOverlay_.GetUseTencent();
+}
+
 DomDownToolPreview::GisOverlayCategory
 DomDownToolPreview::MapRenderer::GetGisOverlayCategory() const
 {

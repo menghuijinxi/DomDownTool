@@ -70,7 +70,7 @@ constexpr double kSearchPopupHeight = 374.;
 constexpr double kGisOverlayPanelLeft = 735.;
 constexpr double kGisOverlayPanelTop = 48.;
 constexpr double kGisOverlayPanelWidth = 184.;
-constexpr double kGisOverlayPanelHeight = 322.;
+constexpr double kGisOverlayPanelHeight = 358.;
 constexpr double kGisColorPanelLeft = 720.;
 constexpr double kGisColorPanelTop = 48.;
 constexpr double kGisColorPanelWidth = 342.;
@@ -2317,6 +2317,16 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                 return;
             }
 
+            if (event.id == "gis-source-select" && event.type == skui::ElementEventType::Change)
+            {
+                if (event.value == "amap" || event.value == "tencent")
+                {
+                    renderer_.SetUseTencentGis(event.value == "tencent");
+                    updateUi(runtime);
+                    requestRedraw();
+                }
+                return;
+            }
             if (event.type == skui::ElementEventType::Change &&
                 event.id.starts_with("gis-overlay-"))
             {
@@ -4596,6 +4606,7 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
         lastUiGisCategories_ = gisCategories;
     }
     runtime.setVisibleById("gis-overlay-panel", gisOverlayPopupOpen_);
+    runtime.setValueById("gis-source-select", renderer_.GetUseTencentGis() ? "tencent" : "amap");
     runtime.setAttributeById("gis-overlay-toggle", "aria-expanded",
                              gisOverlayPopupOpen_ ? "true" : "false");
 

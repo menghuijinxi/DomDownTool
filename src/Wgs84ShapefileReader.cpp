@@ -642,6 +642,7 @@ bool AssignProperties(const DownTool::ShapefileImportOptions& options, const Jso
                       DownTool::AmapVectorFeature& feature, std::string& error)
 {
     feature.SetSourceProperties(properties);
+    feature.SetDataSource(DownTool::VectorDataSource::Shapefile);
     for (const auto name : {"name", "名称", "名字"})
     {
         const auto* value = FindProperty(properties, name);

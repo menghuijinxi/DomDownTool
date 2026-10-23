@@ -3176,12 +3176,14 @@ bool DomDownToolPreview::ExportTaskManager::RunBuildingFbxExport(
     options.includeLabels = false;
     ConfigureGisVectorSources(options, configuration.GetExecutionVectorSources());
     options.maxConcurrency = 0;
+    const auto sourceFilter = options.GetFeatureFilter();
     options.SetFeatureFilter(
-        [selected = IsGisCategorySelected(
+        [sourceFilter, selected = IsGisCategorySelected(
              configuration.gisCategories, DownTool::AmapVectorRenderCategory::Building)](
             const DownTool::AmapVectorFeature& feature)
         {
-            return selected && DownTool::IsAmapVectorBuildingWithHeight(feature);
+            return selected && (!sourceFilter || sourceFilter(feature)) &&
+                DownTool::IsAmapVectorBuildingWithHeight(feature);
         });
     options.SetProcessingProgressCallback(
         [this, taskId = queuedExport.taskId, stepIndex, stepCount](

@@ -64,7 +64,20 @@ constexpr GisCatalogItem kGisCatalog[] = {
      GisOverlayCategory::Highway},
     {"gis.subway", "地铁", DownTool::AmapVectorRenderCategory::Subway,
      GisOverlayCategory::Subway},
-    {"gis.other", "其他", DownTool::AmapVectorRenderCategory::Other, GisOverlayCategory::Other}};
+    {"gis.other", "其他", DownTool::AmapVectorRenderCategory::Other, GisOverlayCategory::Other},
+    {"gis.tencent.road", "腾讯·道路", DownTool::AmapVectorRenderCategory::Road, GisOverlayCategory::Road},
+    {"gis.tencent.building", "腾讯·建筑", DownTool::AmapVectorRenderCategory::Building,
+     GisOverlayCategory::Building},
+    {"gis.tencent.water", "腾讯·水", DownTool::AmapVectorRenderCategory::Water, GisOverlayCategory::Water},
+    {"gis.tencent.point", "腾讯·点", DownTool::AmapVectorRenderCategory::Point, GisOverlayCategory::Point},
+    {"gis.tencent.green", "腾讯·绿地", DownTool::AmapVectorRenderCategory::Green, GisOverlayCategory::Green},
+    {"gis.tencent.boundary", "腾讯·边界", DownTool::AmapVectorRenderCategory::Boundary,
+     GisOverlayCategory::Boundary},
+    {"gis.tencent.highway", "腾讯·高速", DownTool::AmapVectorRenderCategory::Highway,
+     GisOverlayCategory::Highway},
+    {"gis.tencent.subway", "腾讯·地铁", DownTool::AmapVectorRenderCategory::Subway,
+     GisOverlayCategory::Subway},
+    {"gis.tencent.other", "腾讯·其他", DownTool::AmapVectorRenderCategory::Other, GisOverlayCategory::Other}};
 
 std::string EscapeHtml(std::string_view value)
 {
@@ -114,11 +127,17 @@ const GisCatalogItem* FindGis(std::string_view id)
     return item == std::end(kGisCatalog) ? nullptr : &*item;
 }
 
-const GisCatalogItem* FindGis(DownTool::AmapVectorRenderCategory category)
+bool IsTencent(const GisCatalogItem& item)
+{
+    return std::string_view(item.id).starts_with("gis.tencent.");
+}
+
+const GisCatalogItem* FindGis(DownTool::AmapVectorRenderCategory category, bool tencent = false)
 {
     const auto item = std::ranges::find_if(
         kGisCatalog,
-        [category](const GisCatalogItem& entry) { return entry.category == category; });
+        [category, tencent](const GisCatalogItem& entry)
+        { return entry.category == category && IsTencent(entry) == tencent; });
     return item == std::end(kGisCatalog) ? nullptr : &*item;
 }
 
@@ -570,7 +589,7 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
             DownTool::AmapVectorRenderCategory::All);
         for (const GisCatalogItem& item : kGisCatalog)
         {
-            if (allGis || configuration->gisCategories.contains(item.category))
+            if (!IsTencent(item) && (allGis || configuration->gisCategories.contains(item.category)))
             {
                 gis.push_back(makeGis(item));
             }
@@ -713,7 +732,8 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
         {
             for (const GisCatalogItem& item : kGisCatalog)
             {
-                if (allSelected || selected.contains(item.preview))
+                if (IsTencent(item) == renderer_.GetUseTencentGis() &&
+                    (allSelected || selected.contains(item.preview)))
                 {
                     merged.sources.push_back(makeGis(item));
                 }
@@ -926,6 +946,10 @@ std::string SourceBlockHtml(
             std::string categories;
             for (const auto& item : kGisCatalog)
             {
+                if (IsTencent(item))
+                {
+                    continue;
+                }
                 if (fixedBuilding && item.category != DownTool::AmapVectorRenderCategory::Building)
                 {
                     continue;
@@ -1581,7 +1605,8 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
             if (*kind == ExportComponentKind::BuildingModel ||
                 *kind == ExportComponentKind::CesiumBuildings)
             {
-                if (const GisCatalogItem* item = FindGis(DownTool::AmapVectorRenderCategory::Building))
+                if (const GisCatalogItem* item = FindGis(
+                        DownTool::AmapVectorRenderCategory::Building, renderer_.GetUseTencentGis()))
                 {
                     ExportSourceEntry source;
                     source.id = item->id;
