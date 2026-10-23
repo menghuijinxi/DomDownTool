@@ -14,6 +14,8 @@
 - [瓦片后处理流水线](design/tile-postprocess-pipeline.md)
 - [下载组件模型](design/download-component-model.md)：导出配置改为内容组、输出组件和参数。
 - [高德 Web 矢量瓦片](knowledge/amap-vector-tile.md)
+- [腾讯 Web 矢量瓦片](knowledge/tencent-vector-tile.md)：前端协议验证、
+  坐标与分类规则、建筑高度及正式接入边界。
 
 ## 问题排查
 

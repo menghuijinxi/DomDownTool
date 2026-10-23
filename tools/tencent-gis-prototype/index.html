@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>腾讯矢量 GIS 验证</title>
+    <link rel="stylesheet" href="/vendor/leaflet.css">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header>
+        <h1>腾讯矢量 GIS <small>协议验证</small></h1>
+        <div class="header-actions">
+            <button id="fit" type="button" title="定位已加载范围"><i data-lucide="scan"></i></button>
+            <button id="export" type="button" title="导出当前筛选 GeoJSON" disabled>
+                <i data-lucide="download"></i><span>GeoJSON</span>
+            </button>
+        </div>
+    </header>
+    <main>
+        <aside>
+            <form id="query">
+                <label>样区<select id="preset">
+                    <option value="beijing">北京 · 东城</option>
+                    <option value="shandong">济南 · 山东校准区</option>
+                    <option value="shanghai">上海 · 陆家嘴</option>
+                    <option value="guangzhou">广州 · 珠江</option>
+                    <option value="custom">自定义 GCJ-02</option>
+                </select></label>
+                <div class="two-columns">
+                    <label>经度<input id="lon" type="number" step="any" value="116.425" required></label>
+                    <label>纬度<input id="lat" type="number" step="any" value="39.886" required></label>
+                    <label>数据层级<select id="zoom">
+                        <option>12</option><option>14</option><option>15</option>
+                        <option selected>16</option><option>17</option><option>18</option>
+                    </select></label>
+                    <label>瓦片范围<select id="grid"><option value="1">1 × 1</option>
+                        <option value="3" selected>3 × 3</option></select></label>
+                </div>
+                <div class="command-row">
+                    <button class="primary" id="load" type="submit"><i data-lucide="refresh-cw"></i>加载范围</button>
+                    <button id="cancel" type="button" title="取消加载" disabled><i data-lucide="square"></i></button>
+                </div>
+            </form>
+            <div class="section">
+                <div class="section-title"><h2>图层</h2><label class="compact">
+                    <input id="all-layers" type="checkbox" checked>全部</label></div>
+                <div id="layers"></div>
+            </div>
+            <div class="section settings">
+                <label>底图<select id="basemap"><option value="electronic">腾讯电子地图</option>
+                    <option value="satellite">腾讯卫星</option><option value="none">无</option></select></label>
+                <label class="slider-label">矢量不透明度<output id="opacity-value">65%</output>
+                    <input id="opacity" type="range" min="0" max="100" value="65"></label>
+                <label><input id="height-colors" type="checkbox" checked>建筑按高度着色</label>
+                <label><input id="tile-grid" type="checkbox" checked>瓦片边界</label>
+                <label><input id="style-filter" type="checkbox">按 SDK 显示层级筛选</label>
+            </div>
+            <div class="section">
+                <div class="section-title"><h2>协议核对</h2>
+                    <button id="compare" type="button" title="对比压缩和未压缩几何" disabled>
+                        <i data-lucide="git-compare-arrows"></i>对比</button></div>
+                <dl id="statistics"></dl>
+                <p id="comparison">尚未对比</p>
+            </div>
+        </aside>
+        <section class="map-area">
+            <div id="map"></div>
+            <div id="status" role="status">正在读取官方样式…</div>
+            <div id="selection" hidden><div class="section-title"><h2>要素属性</h2>
+                <button id="close-selection" type="button" title="关闭属性"><i data-lucide="x"></i></button>
+                </div><pre id="properties"></pre></div>
+        </section>
+    </main>
+    <footer><span id="source-version">腾讯地图 · GCJ-02</span>
+        <span id="tile-status">未加载</span><span>© 腾讯地图</span></footer>
+    <script src="/vendor/leaflet.js"></script>
+    <script src="/vendor/lucide.js"></script>
+    <script type="module" src="/app.mjs"></script>
+</body>
+</html>
