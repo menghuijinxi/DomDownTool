@@ -84,8 +84,18 @@ namespace DownTool
         void SetTencentDataZoom(uint32_t value) { tencentDataZoom_ = value; }
         const std::filesystem::path& GetTencentCachePath() const { return tencentCachePath_; }
         void SetTencentCachePath(const std::filesystem::path& value) { tencentCachePath_ = value; }
+        bool GetIncludeBaiduSource() const { return includeBaiduSource_; }
+        void SetIncludeBaiduSource(bool value) { includeBaiduSource_ = value; }
+        uint32_t GetBaiduDataZoom() const { return baiduDataZoom_; }
+        void SetBaiduDataZoom(uint32_t value) { baiduDataZoom_ = value; }
+        const std::filesystem::path& GetBaiduCachePath() const { return baiduCachePath_; }
+        void SetBaiduCachePath(const std::filesystem::path& value) { baiduCachePath_ = value; }
 
     protected:
+        bool includeBaiduSource_ = false;
+        uint32_t baiduDataZoom_ = 19;
+        std::filesystem::path baiduCachePath_ =
+            std::filesystem::u8path("cache/百度地图/gis数据/vector缓存");
         bool includeTencentSource_ = false;
         uint32_t tencentDataZoom_ = 18;
         std::filesystem::path tencentCachePath_ =

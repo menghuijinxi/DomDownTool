@@ -2319,9 +2319,11 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
 
             if (event.id == "gis-source-select" && event.type == skui::ElementEventType::Change)
             {
-                if (event.value == "amap" || event.value == "tencent")
+                if (event.value == "amap" || event.value == "tencent" || event.value == "baidu")
                 {
-                    renderer_.SetUseTencentGis(event.value == "tencent");
+                    renderer_.SetGisSource(event.value == "baidu" ? DownTool::VectorDataSource::Baidu :
+                        event.value == "tencent" ? DownTool::VectorDataSource::Tencent :
+                        DownTool::VectorDataSource::Amap);
                     updateUi(runtime);
                     requestRedraw();
                 }
@@ -4606,7 +4608,9 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
         lastUiGisCategories_ = gisCategories;
     }
     runtime.setVisibleById("gis-overlay-panel", gisOverlayPopupOpen_);
-    runtime.setValueById("gis-source-select", renderer_.GetUseTencentGis() ? "tencent" : "amap");
+    runtime.setValueById("gis-source-select",
+        renderer_.GetGisSource() == DownTool::VectorDataSource::Baidu ? "baidu" :
+        renderer_.GetGisSource() == DownTool::VectorDataSource::Tencent ? "tencent" : "amap");
     runtime.setAttributeById("gis-overlay-toggle", "aria-expanded",
                              gisOverlayPopupOpen_ ? "true" : "false");
 

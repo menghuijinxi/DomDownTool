@@ -1,4 +1,5 @@
 #include "preview/GisOverlayRenderer.h"
+#include "BaiduVectorTileGrid.h"
 
 #include <algorithm>
 #include <array>
@@ -413,7 +414,12 @@ void DomDownToolPreview::GisOverlayRenderer::UpdateContext(
 
         const auto dataZoom = [this](uint32_t displayZoom)
         {
-            return useTencent_ ? std::clamp(displayZoom, 3u, 18u) :
+            if (dataSource_ == DownTool::VectorDataSource::Baidu)
+            {
+                return DownTool::BaiduVectorTileGrid::ResolveDataZoom(displayZoom);
+            }
+            return dataSource_ == DownTool::VectorDataSource::Tencent ?
+                std::clamp(displayZoom, 3u, 18u) :
                 DownTool::AmapVectorTileGrid::ResolveDataZoom(displayZoom);
         };
         const auto coversVisibleArea = [&](const std::optional<LoadRequest>& request)
@@ -748,13 +754,22 @@ void DomDownToolPreview::GisOverlayRenderer::Clear()
 
 void DomDownToolPreview::GisOverlayRenderer::SetUseTencent(bool value)
 {
+    SetDataSource(value ? DownTool::VectorDataSource::Tencent : DownTool::VectorDataSource::Amap);
+}
+
+void DomDownToolPreview::GisOverlayRenderer::SetDataSource(DownTool::VectorDataSource source)
+{
+    if (source == DownTool::VectorDataSource::Shapefile)
+    {
+        return;
+    }
     {
         const std::lock_guard lock(mutex_);
-        if (useTencent_ == value)
+        if (dataSource_ == source)
         {
             return;
         }
-        useTencent_ = value;
+        dataSource_ = source;
         preparedData_.reset();
         renderCache_.reset();
         dx12Renderer_->Clear();
@@ -777,8 +792,13 @@ void DomDownToolPreview::GisOverlayRenderer::SetUseTencent(bool value)
 
 bool DomDownToolPreview::GisOverlayRenderer::GetUseTencent() const
 {
+    return GetDataSource() == DownTool::VectorDataSource::Tencent;
+}
+
+DownTool::VectorDataSource DomDownToolPreview::GisOverlayRenderer::GetDataSource() const
+{
     const std::lock_guard lock(mutex_);
-    return useTencent_;
+    return dataSource_;
 }
 
 bool DomDownToolPreview::GisOverlayRenderer::IsLoading() const
@@ -968,7 +988,7 @@ void DomDownToolPreview::GisOverlayRenderer::workerLoop()
     {
         LoadRequest request;
         bool localMode = false;
-        bool useTencent = false;
+        auto dataSource = DownTool::VectorDataSource::Amap;
         std::vector<DownTool::ShapefileImportOptions> localSources;
         {
             std::unique_lock lock(mutex_);
@@ -981,7 +1001,7 @@ void DomDownToolPreview::GisOverlayRenderer::workerLoop()
             pendingRequest_.reset();
             activeRequest_ = request;
             localMode = localMode_;
-            useTencent = useTencent_;
+            dataSource = dataSource_;
             localSources = localShapefiles_;
         }
 
@@ -996,8 +1016,10 @@ void DomDownToolPreview::GisOverlayRenderer::workerLoop()
         options.includeBaseLayers = true;
         options.includeLabels = true;
         options.maxConcurrency = 0;
-        options.SetIncludeAmapSource(!useTencent);
-        options.SetIncludeTencentSource(useTencent);
+        options.SetIncludeAmapSource(dataSource == DownTool::VectorDataSource::Amap);
+        options.SetIncludeTencentSource(dataSource == DownTool::VectorDataSource::Tencent);
+        options.SetIncludeBaiduSource(dataSource == DownTool::VectorDataSource::Baidu);
+        options.SetBaiduDataZoom(DownTool::BaiduVectorTileGrid::ResolveDataZoom(request.zoom));
         options.SetTencentDataZoom(std::clamp(request.zoom, 3u, 18u));
         options.cancellationRequested = cancelled;
         DownTool::AmapVectorDownloadResult result;

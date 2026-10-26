@@ -583,7 +583,8 @@ namespace
 DownTool::AmapVectorRenderCategory DownTool::ClassifyAmapVectorFeature(
     const AmapVectorFeature& feature)
 {
-    if (feature.GetDataSource() == VectorDataSource::Tencent)
+    if (feature.GetDataSource() == VectorDataSource::Tencent ||
+        feature.GetDataSource() == VectorDataSource::Baidu)
     {
         static const std::map<std::string, AmapVectorRenderCategory> categories = {
             {"water", AmapVectorRenderCategory::Water},

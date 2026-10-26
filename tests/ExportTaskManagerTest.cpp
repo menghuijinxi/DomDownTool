@@ -22,6 +22,7 @@
 #include "AmapVectorDownloader.h"
 #include "TencentVectorDecoder.h"
 #include "TencentVectorDownloader.h"
+#include "BaiduVectorTestSupport.h"
 #include "DownToolBase.h"
 #include "CopernicusDem.h"
 #include "preview/ExportTaskManager.h"
@@ -1054,6 +1055,119 @@ bool verifyTencentSources(const std::filesystem::path& testRoot)
     return Require(record && record->configuration &&
         record->configuration->groups[0].components[0].sources[0].id == "gis.tencent.building",
         "任务恢复后丢失腾讯来源");
+}
+
+bool verifyBaiduSources(const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    using namespace DownTool;
+    using postprocess_test::Require;
+    ExportSourceEntry road;
+    road.id = "gis.baidu.road";
+    road.name = "百度道路";
+    road.kind = ExportSourceKind::Gis;
+    road.gisCategory = AmapVectorRenderCategory::Road;
+    ExportSourceEntry tencent = road;
+    tencent.id = "gis.tencent.building";
+    tencent.gisCategory = AmapVectorRenderCategory::Building;
+    AmapVectorDownloadOptions options;
+    ConfigureGisVectorSources(options, {road, tencent});
+    AmapVectorFeature feature;
+    feature.SetDataSource(VectorDataSource::Baidu);
+    feature.SetCoordinateSystem(VectorCoordinateSystem::Wgs84);
+    feature.layerName = "road";
+    auto wrong = feature;
+    wrong.layerName = "building";
+    auto otherSource = feature;
+    otherSource.SetDataSource(VectorDataSource::Tencent);
+    if (!Require(!options.GetIncludeAmapSource() && options.GetIncludeBaiduSource() &&
+            options.GetIncludeTencentSource() && options.GetFeatureFilter()(feature) &&
+            !options.GetFeatureFilter()(wrong) && !options.GetFeatureFilter()(otherSource),
+            "百度 WGS84 数据绕过来源分类筛选"))
+    {
+        return false;
+    }
+    const auto root = testRoot / "baidu-task";
+    std::filesystem::create_directories(root);
+    struct RestoreDirectory
+    {
+        ~RestoreDirectory() { std::filesystem::current_path(previous_); }
+      protected:
+        std::filesystem::path previous_ = std::filesystem::current_path();
+    } restoreDirectory;
+    std::filesystem::current_path(root);
+    const BaiduVectorTile tile(25313, 9417, 19);
+    ConfigureGisVectorSources(options, {road});
+    options.centerWgs84 = BaiduVectorTileGrid::LocalToWgs84(tile, 50, 50);
+    options.radiusMeters = 150.;
+    baidu_vector_test::SeedCache(options, tile);
+    ExportConfiguration configuration;
+    configuration.centerWgs84 = options.centerWgs84;
+    configuration.radiusMeters = options.radiusMeters;
+    configuration.zoom = 19;
+    configuration.outputRoot = root / "output";
+    ExportContentGroup group;
+    group.id = "baidu";
+    group.name = "百度";
+    for (const auto kind : {ExportComponentKind::GeoJson, ExportComponentKind::Shapefile,
+        ExportComponentKind::MergedImage})
+    {
+        ExportComponent component;
+        component.id = std::to_string(static_cast<int>(kind));
+        component.kind = kind;
+        component.sources = {road};
+        component.maxEdge = 256;
+        group.components.push_back(component);
+    }
+    configuration.groups = {group};
+    const auto recordsPath = root / "records.json";
+    std::string id;
+    {
+        ExportTaskManager manager({}, recordsPath);
+        id = manager.Enqueue(configuration);
+        if (!Require(waitForFinished(manager, id), "百度组件导出未结束"))
+        {
+            return false;
+        }
+        const auto records = manager.GetRecords();
+        const auto* record = findRecord(records, id);
+        if (!Require(record && record->state == ExportTaskState::Succeeded,
+            "百度组件导出失败：" + (record ? record->error : "无记录")))
+        {
+            return false;
+        }
+        const auto output = ExportTaskOutputRoot(configuration, id) / std::filesystem::u8path("百度");
+        const auto json = loadJsonFile(output / "GeoJSON" / std::filesystem::u8path("数据.geojson"));
+        if (!Require(json["coordinateSystem"] == "WGS84" && json["features"].size() == 1 &&
+            json["features"][0]["properties"]["provider"] == "baidu" &&
+            json["features"][0]["properties"]["classificationSource"] == "verified-road-surface" &&
+            json["features"][0]["geometry"]["coordinates"].size() == 2 &&
+            std::filesystem::exists(output / "SHP" / "polygons.shp") &&
+            std::filesystem::exists(output / std::filesystem::u8path("大图/百度道路.png")),
+            "百度 GeoJSON、SHP 或图片导出不完整"))
+        {
+            return false;
+        }
+    }
+    ExportTaskManager restored({}, recordsPath);
+    const auto records = restored.GetRecords();
+    const auto* record = findRecord(records, id);
+    if (!Require(record && record->configuration &&
+        record->configuration->groups[0].components[0].sources[0].id == "gis.baidu.road",
+        "任务恢复后丢失百度来源"))
+    {
+        return false;
+    }
+    for (const auto kind : {ExportComponentKind::BuildingModel, ExportComponentKind::CesiumBuildings})
+    {
+        configuration.groups[0].components[0].kind = kind;
+        if (!Require(GroupedExportError(configuration).find("百度建筑高度") != std::string::npos,
+            "百度原始高度单位未确认时未拒绝模型导出"))
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool verifyImportedShapefileTask(const std::filesystem::path& testRoot)
@@ -2611,7 +2725,8 @@ bool runTest()
     return postprocess_test::Require(
         changeCount.load(std::memory_order_relaxed) >= 3,
         "导出任务状态变化没有通知界面") &&
-        verifySeaLevelExports(testRoot) && verifyTencentSources(testRoot) && verifyShapefileTask(testRoot) &&
+        verifySeaLevelExports(testRoot) && verifyTencentSources(testRoot) &&
+        verifyBaiduSources(testRoot) && verifyShapefileTask(testRoot) &&
         verifyImportedShapefileTask(testRoot);
 }
 } // namespace
@@ -2674,6 +2789,12 @@ bool runRealCesiumTask()
 
 int main(int argc, char** argv)
 {
+    if (argc > 1 && std::string(argv[1]) == "--baidu-vector-task")
+    {
+        return postprocess_test::RunGuarded([] {
+            return verifyBaiduSources(postprocess_test::MakeTestRoot("baidu-vector-task"));
+        });
+    }
     return postprocess_test::RunGuarded(
         argc > 1 && std::string(argv[1]) == "--real-cesium-task" ? runRealCesiumTask : runTest);
 }

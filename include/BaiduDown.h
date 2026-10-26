@@ -62,6 +62,10 @@ namespace DownTool
 
         static LonLat WGS84ToBD09(const LonLat& lonLat);
 
+        static MercatorPoint BD09ToMercator(const LonLat& lonLat);
+
+        static LonLat MercatorToBD09(const MercatorPoint& point);
+
     protected:
         BaiduMapType mapType_ = BaiduMapType::Satellite;
 
@@ -72,10 +76,6 @@ namespace DownTool
 
     private:
         static double GetBaiduResolution(uint32_t zoom);
-
-        static MercatorPoint BD09ToMercator(const LonLat& lonLat);
-
-        static LonLat MercatorToBD09(const MercatorPoint& point);
 
         bool TryGetBaiduTilePixelForBD09LonLat(
             const LonLat& lonLat,

@@ -23,7 +23,8 @@ namespace DownTool
     {
         Amap,
         Tencent,
-        Shapefile
+        Shapefile,
+        Baidu
     };
 
     enum class AmapVectorGeometryType

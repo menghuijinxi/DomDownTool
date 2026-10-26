@@ -812,6 +812,16 @@ bool DomDownToolPreview::MapRenderer::GetUseTencentGis() const
     return gisOverlay_.GetUseTencent();
 }
 
+void DomDownToolPreview::MapRenderer::SetGisSource(DownTool::VectorDataSource source)
+{
+    gisOverlay_.SetDataSource(source);
+}
+
+DownTool::VectorDataSource DomDownToolPreview::MapRenderer::GetGisSource() const
+{
+    return gisOverlay_.GetDataSource();
+}
+
 DomDownToolPreview::GisOverlayCategory
 DomDownToolPreview::MapRenderer::GetGisOverlayCategory() const
 {

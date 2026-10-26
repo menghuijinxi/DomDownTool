@@ -916,6 +916,7 @@ bool DownTool::AmapVectorGeoJsonWriter::WriteFile(
 
     const bool outputWgs84 = decodedData.version == "WGS84 SHP" ||
         decodedData.version.find("Tencent") != std::string::npos ||
+        decodedData.version.find("Baidu") != std::string::npos ||
         std::ranges::any_of(decodedData.features, [](const auto& feature)
     {
         return feature.GetCoordinateSystem() == VectorCoordinateSystem::Wgs84;

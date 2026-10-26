@@ -369,7 +369,7 @@ add_test(NAME AmapGisDownloadInvalidConcurrencyTest
     COMMAND AmapGisDownload --concurrency invalid)
 add_test(NAME AmapGisDownloadInvalidMergedFormatTest
     COMMAND AmapGisDownload --merged-format bmp)
-add_test(NAME AmapGisDownloadInvalidSourceTest COMMAND AmapGisDownload --source baidu)
+add_test(NAME AmapGisDownloadInvalidSourceTest COMMAND AmapGisDownload --source unknown)
 set_tests_properties(AmapGisDownloadInvalidTypeTest PROPERTIES WILL_FAIL TRUE)
 set_tests_properties(AmapGisDownloadInvalidConcurrencyTest PROPERTIES WILL_FAIL TRUE)
 set_tests_properties(AmapGisDownloadInvalidMergedFormatTest PROPERTIES WILL_FAIL TRUE)
@@ -424,6 +424,8 @@ add_domdown_test(AmapVectorGeoJsonTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorGeoJsonTest.cpp)
 add_domdown_test(TencentVectorTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/TencentVectorTest.cpp)
+add_domdown_test(BaiduVectorTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/BaiduVectorTest.cpp)
 add_domdown_test(AmapVectorShapefileTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/AmapVectorShapefileTest.cpp)
 add_domdown_test(Wgs84ShapefileReaderTest
@@ -570,6 +572,7 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     target_compile_options(ExportTaskManagerTest PRIVATE /EHsc /permissive-)
   endif()
   add_test(NAME ExportTaskManagerTest COMMAND ExportTaskManagerTest)
+  add_test(NAME BaiduVectorTaskTest COMMAND ExportTaskManagerTest --baidu-vector-task)
 
   add_executable(GeoTiffTaskTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/GeoTiffTaskTest.cpp

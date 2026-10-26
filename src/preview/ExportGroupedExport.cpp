@@ -33,8 +33,10 @@ void ConfigureGisVectorSources(DownTool::AmapVectorDownloadOptions& options,
     }
     bool includeAmap = false;
     bool includeTencent = false;
+    bool includeBaidu = false;
     std::set<DownTool::AmapVectorRenderCategory> remoteCategories;
     std::set<DownTool::AmapVectorRenderCategory> tencentCategories;
+    std::set<DownTool::AmapVectorRenderCategory> baiduCategories;
     std::vector<DownTool::ShapefileImportOptions> shapefiles;
     for (const auto& source : sources)
     {
@@ -48,6 +50,11 @@ void ConfigureGisVectorSources(DownTool::AmapVectorDownloadOptions& options,
             {
                 includeTencent = true;
                 tencentCategories.insert(source.gisCategory);
+            }
+            else if (source.id.starts_with("gis.baidu."))
+            {
+                includeBaidu = true;
+                baiduCategories.insert(source.gisCategory);
             }
             else
             {
@@ -74,9 +81,11 @@ void ConfigureGisVectorSources(DownTool::AmapVectorDownloadOptions& options,
     }
     options.SetIncludeAmapSource(includeAmap);
     options.SetIncludeTencentSource(includeTencent);
+    options.SetIncludeBaiduSource(includeBaidu);
     options.SetShapefiles(shapefiles);
     const auto originalFilter = options.GetFeatureFilter();
-    options.SetFeatureFilter([remoteCategories, tencentCategories, originalFilter](const auto& feature)
+    options.SetFeatureFilter([remoteCategories, tencentCategories, baiduCategories,
+        originalFilter](const auto& feature)
     {
         if (originalFilter && !originalFilter(feature))
         {
@@ -86,6 +95,11 @@ void ConfigureGisVectorSources(DownTool::AmapVectorDownloadOptions& options,
         {
             return tencentCategories.contains(DownTool::AmapVectorRenderCategory::All) ||
                 tencentCategories.contains(DownTool::ClassifyAmapVectorFeature(feature));
+        }
+        if (feature.GetDataSource() == DownTool::VectorDataSource::Baidu)
+        {
+            return baiduCategories.contains(DownTool::AmapVectorRenderCategory::All) ||
+                baiduCategories.contains(DownTool::ClassifyAmapVectorFeature(feature));
         }
         return feature.GetCoordinateSystem() == DownTool::VectorCoordinateSystem::Wgs84 ||
                remoteCategories.contains(DownTool::AmapVectorRenderCategory::All) ||
@@ -888,6 +902,16 @@ std::string GroupedExportError(const ExportConfiguration& configuration)
             }
             const bool imagery = HasImagery(component);
             const bool gis = HasGis(component);
+            if ((component.kind == ExportComponentKind::BuildingModel ||
+                 component.kind == ExportComponentKind::CesiumBuildings) &&
+                std::ranges::any_of(component.sources, [](const auto& source) {
+                    return source.kind == ExportSourceKind::Gis &&
+                        source.id.starts_with("gis.baidu.");
+                }))
+            {
+                return "百度建筑高度单位尚未确认，暂不支持建筑模型和 3D Tiles；"
+                       "请使用 GeoJSON、SHP 或图片导出。";
+            }
             switch (component.kind)
             {
             case ExportComponentKind::MergedImage:

@@ -998,7 +998,8 @@ bool TestTencentGis(HWND window, const std::filesystem::path& testRoot)
     {
         return false;
     }
-    WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_END, 0);
+    WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_HOME, 0);
+    WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_DOWN, 0);
     WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_RETURN, 0);
     if (!Require(WriteTaskScreenshot(runtime, testRoot / "tencent-gis-preview-source.png"),
                  "腾讯预览来源截图失败") ||
@@ -1067,6 +1068,110 @@ bool TestTencentGis(HWND window, const std::filesystem::path& testRoot)
     return Require(runtime.scrollIntoViewById("export-param-panel"), "腾讯窄窗口无法定位参数面板") &&
         Require(WriteTaskScreenshot(runtime, testRoot / "tencent-gis-export-narrow.png"),
                    "腾讯导出窄窗口截图失败");
+}
+
+bool TestBaiduGis(HWND window, const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    using postprocess_test::Require;
+    skui::Runtime runtime;
+    if (!runtime.loadDocument((std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) /
+        "resources/preview/index.html").string()))
+    {
+        return false;
+    }
+    runtime.resize(1440, 900, 1.F);
+    RangeController controller;
+    controller.attachRuntime(runtime);
+    skui::win32::Win32EventAdapter adapter(runtime);
+    const auto click = [&](const std::string& id) {
+        return ClickElement(controller, runtime, adapter, window, id);
+    };
+    if (!click("gis-overlay-toggle") || !click("gis-source-select"))
+    {
+        return false;
+    }
+    WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_END, 0);
+    WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_RETURN, 0);
+    if (!click("gis-overlay-road") ||
+        !Require(WriteTaskScreenshot(runtime, testRoot / "baidu-gis-preview-source.png"),
+        "百度预览来源截图失败") || !click("open-export-page"))
+    {
+        return false;
+    }
+    if (!click("export-config-radius"))
+    {
+        return false;
+    }
+    skui::Event selectAll;
+    selectAll.type = skui::EventType::KeyDown;
+    selectAll.key = 'A';
+    selectAll.ctrlKey = true;
+    runtime.handleEvent(selectAll);
+    for (const wchar_t character : std::wstring(L"300"))
+    {
+        WindowMessage(controller, adapter, window, runtime, WM_CHAR, character, 0);
+    }
+    std::string error;
+    const auto preview = controller.ReadExport(error);
+    bool hasBaidu = false;
+    if (preview)
+    {
+        for (const auto& group : preview->groups)
+        {
+            for (const auto& component : group.components)
+            {
+                for (const auto& source : component.sources)
+                {
+                    hasBaidu |= source.id.starts_with("gis.baidu.");
+                }
+            }
+        }
+    }
+    if (!Require(hasBaidu, "当前预览导出没有使用百度来源：" + error))
+    {
+        return false;
+    }
+    ExportConfiguration configuration;
+    configuration.centerWgs84 = {116.42, 39.89};
+    configuration.radiusMeters = 300.;
+    configuration.zoom = 19;
+    configuration.outputRoot = testRoot / "baidu-output";
+    ExportContentGroup group;
+    group.id = "baidu-group";
+    ExportComponent component;
+    component.id = "baidu-json";
+    component.kind = ExportComponentKind::GeoJson;
+    ExportSourceEntry source;
+    source.id = "gis.road";
+    source.kind = ExportSourceKind::Gis;
+    source.gisCategory = DownTool::AmapVectorRenderCategory::Road;
+    component.sources = {source};
+    group.components = {component};
+    configuration.groups = {group};
+    controller.LoadExport(runtime, configuration);
+    if (!click("export-act-open-params__baidu-json") ||
+        !click("export-act-open-sources__baidu-json") ||
+        !Require(runtime.textContentById("export-act-add-source__baidu-json__gis.baidu.road") ==
+            "百度·道路", "导出菜单缺少百度道路") ||
+        !click("export-act-add-source__baidu-json__gis.baidu.road"))
+    {
+        return false;
+    }
+    const auto exported = controller.ReadExport(error);
+    if (!Require(exported && exported->groups[0].components[0].sources.size() == 2 &&
+        exported->groups[0].components[0].sources[1].id == "gis.baidu.road",
+        "百度混合来源没有写入导出配置：" + error) ||
+        !Require(WriteTaskScreenshot(runtime, testRoot / "baidu-gis-export-desktop.png"),
+            "百度导出桌面截图失败"))
+    {
+        return false;
+    }
+    runtime.resize(700, 600, 1.F);
+    controller.resizeRuntime(runtime);
+    return Require(runtime.scrollIntoViewById("export-param-panel"), "百度窄窗口无法定位参数面板") &&
+        Require(WriteTaskScreenshot(runtime, testRoot / "baidu-gis-export-narrow.png"),
+            "百度导出窄窗口截图失败");
 }
 
 bool TestShapefileComponent(HWND window, const std::filesystem::path& testRoot)
@@ -2124,7 +2229,8 @@ int main()
         TestShapefileMapPreview(testRoot) && TestShapefileDrop(window, testRoot) &&
         TestTaskActions(window, testRoot) && TestPerTileFbxOption(window, testRoot) &&
         TestTaskFbxPreviewLoadsEveryTile(window, testRoot) &&
-        TestElectronicMapSources(window, testRoot) && TestTencentGis(window, testRoot);
+        TestElectronicMapSources(window, testRoot) && TestTencentGis(window, testRoot) &&
+        TestBaiduGis(window, testRoot);
     DestroyWindow(window);
     CoUninitialize();
     if (!passed)

@@ -63,6 +63,8 @@ class GisOverlayRenderer
     [[nodiscard]] GisOverlayCategories GetCategories() const;
     void SetUseTencent(bool value);
     [[nodiscard]] bool GetUseTencent() const;
+    void SetDataSource(DownTool::VectorDataSource source);
+    [[nodiscard]] DownTool::VectorDataSource GetDataSource() const;
 
     [[nodiscard]] static GisOverlayCategory ClassifyFeature(
         const DownTool::AmapVectorFeature& feature);
@@ -135,7 +137,7 @@ class GisOverlayRenderer
     bool localMode_ = false;
 
   protected:
-    bool useTencent_ = false;
+    DownTool::VectorDataSource dataSource_ = DownTool::VectorDataSource::Amap;
 
   private:
     std::vector<DownTool::ShapefileImportOptions> localShapefiles_;

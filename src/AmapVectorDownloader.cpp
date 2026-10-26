@@ -19,6 +19,7 @@
 
 #include "AmapVectorDecoder.h"
 #include "TencentVectorDownloader.h"
+#include "BaiduVectorDownloader.h"
 
 namespace
 {
@@ -523,7 +524,8 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadTiles
     const AmapVectorDownloadOptions& options,
     std::vector<AmapVectorTile> selectedTiles) const
 {
-    if (!options.GetShapefiles().empty() || options.GetIncludeTencentSource())
+    if (!options.GetShapefiles().empty() || options.GetIncludeTencentSource() ||
+        options.GetIncludeBaiduSource())
     {
         return DownloadWithSources(options, std::move(selectedTiles));
     }
@@ -777,6 +779,7 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadWithS
         auto remote = options;
         remote.SetShapefiles({});
         remote.SetIncludeTencentSource(false);
+        remote.SetIncludeBaiduSource(false);
         result = DownloadTiles(remote, std::move(selectedTiles));
         if (!result.success)
         {
@@ -804,6 +807,25 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadWithS
             std::make_move_iterator(tencent.decodedData.features.begin()),
             std::make_move_iterator(tencent.decodedData.features.end()));
         result.decodedData.version += options.GetIncludeAmapSource() ? " + Tencent 405" : "Tencent 405";
+    }
+    if (options.GetIncludeBaiduSource())
+    {
+        auto baidu = BaiduVectorDownloader().Download(options);
+        if (!baidu.success)
+        {
+            return baidu;
+        }
+        result.cachedPacketCount += baidu.cachedPacketCount;
+        result.downloadedPacketCount += baidu.downloadedPacketCount;
+        result.cachedTaskCount += baidu.cachedTaskCount;
+        result.downloadedTaskCount += baidu.downloadedTaskCount;
+        result.decodedData.packetCount += baidu.decodedData.packetCount;
+        result.decodedData.features.insert(result.decodedData.features.end(),
+            std::make_move_iterator(baidu.decodedData.features.begin()),
+            std::make_move_iterator(baidu.decodedData.features.end()));
+        result.decodedData.version +=
+            result.decodedData.version.empty() ? baidu.decodedData.version :
+                " + " + baidu.decodedData.version;
     }
     auto localRange = options.GetGisSpatialRange();
     if (localRange.GetIncludedPolygons().empty())
@@ -863,7 +885,8 @@ DownTool::AmapVectorDownloadResult DownTool::AmapVectorDownloader::DownloadWithS
             std::make_move_iterator(imported.features.end()));
     }
     result.decodedData.status = true;
-    if (!options.GetIncludeAmapSource() && !options.GetIncludeTencentSource())
+    if (!options.GetIncludeAmapSource() && !options.GetIncludeTencentSource() &&
+        !options.GetIncludeBaiduSource())
     {
         result.decodedData.version = "WGS84 SHP";
     }

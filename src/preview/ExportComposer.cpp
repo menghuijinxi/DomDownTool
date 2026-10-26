@@ -77,7 +77,20 @@ constexpr GisCatalogItem kGisCatalog[] = {
      GisOverlayCategory::Highway},
     {"gis.tencent.subway", "腾讯·地铁", DownTool::AmapVectorRenderCategory::Subway,
      GisOverlayCategory::Subway},
-    {"gis.tencent.other", "腾讯·其他", DownTool::AmapVectorRenderCategory::Other, GisOverlayCategory::Other}};
+    {"gis.tencent.other", "腾讯·其他", DownTool::AmapVectorRenderCategory::Other, GisOverlayCategory::Other},
+    {"gis.baidu.road", "百度·道路", DownTool::AmapVectorRenderCategory::Road, GisOverlayCategory::Road},
+    {"gis.baidu.building", "百度·建筑", DownTool::AmapVectorRenderCategory::Building,
+     GisOverlayCategory::Building},
+    {"gis.baidu.water", "百度·水", DownTool::AmapVectorRenderCategory::Water, GisOverlayCategory::Water},
+    {"gis.baidu.point", "百度·点", DownTool::AmapVectorRenderCategory::Point, GisOverlayCategory::Point},
+    {"gis.baidu.green", "百度·绿地", DownTool::AmapVectorRenderCategory::Green, GisOverlayCategory::Green},
+    {"gis.baidu.boundary", "百度·边界", DownTool::AmapVectorRenderCategory::Boundary,
+     GisOverlayCategory::Boundary},
+    {"gis.baidu.highway", "百度·高速", DownTool::AmapVectorRenderCategory::Highway,
+     GisOverlayCategory::Highway},
+    {"gis.baidu.subway", "百度·地铁", DownTool::AmapVectorRenderCategory::Subway,
+     GisOverlayCategory::Subway},
+    {"gis.baidu.other", "百度·其他", DownTool::AmapVectorRenderCategory::Other, GisOverlayCategory::Other}};
 
 std::string EscapeHtml(std::string_view value)
 {
@@ -127,22 +140,27 @@ const GisCatalogItem* FindGis(std::string_view id)
     return item == std::end(kGisCatalog) ? nullptr : &*item;
 }
 
-bool IsTencent(const GisCatalogItem& item)
+DownTool::VectorDataSource GisDataSource(const GisCatalogItem& item)
 {
-    return std::string_view(item.id).starts_with("gis.tencent.");
+    const std::string_view id(item.id);
+    return id.starts_with("gis.tencent.") ? DownTool::VectorDataSource::Tencent :
+        id.starts_with("gis.baidu.") ? DownTool::VectorDataSource::Baidu :
+        DownTool::VectorDataSource::Amap;
 }
 
 std::string GisSourceName(const GisCatalogItem& item)
 {
-    return IsTencent(item) ? item.name : std::string("高德·") + item.name;
+    return GisDataSource(item) == DownTool::VectorDataSource::Amap ?
+        std::string("高德·") + item.name : item.name;
 }
 
-const GisCatalogItem* FindGis(DownTool::AmapVectorRenderCategory category, bool tencent = false)
+const GisCatalogItem* FindGis(DownTool::AmapVectorRenderCategory category,
+    DownTool::VectorDataSource source = DownTool::VectorDataSource::Amap)
 {
     const auto item = std::ranges::find_if(
         kGisCatalog,
-        [category, tencent](const GisCatalogItem& entry)
-        { return entry.category == category && IsTencent(entry) == tencent; });
+        [category, source](const GisCatalogItem& entry)
+        { return entry.category == category && GisDataSource(entry) == source; });
     return item == std::end(kGisCatalog) ? nullptr : &*item;
 }
 
@@ -601,7 +619,8 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
             DownTool::AmapVectorRenderCategory::All);
         for (const GisCatalogItem& item : kGisCatalog)
         {
-            if (!IsTencent(item) && (allGis || configuration->gisCategories.contains(item.category)))
+            if (GisDataSource(item) == DownTool::VectorDataSource::Amap &&
+                (allGis || configuration->gisCategories.contains(item.category)))
             {
                 gis.push_back(makeGis(item));
             }
@@ -744,7 +763,7 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
         {
             for (const GisCatalogItem& item : kGisCatalog)
             {
-                if (IsTencent(item) == renderer_.GetUseTencentGis() &&
+                if (GisDataSource(item) == renderer_.GetGisSource() &&
                     (allSelected || selected.contains(item.preview)))
                 {
                     merged.sources.push_back(makeGis(item));
@@ -958,7 +977,7 @@ std::string SourceBlockHtml(
             std::string categories;
             for (const auto& item : kGisCatalog)
             {
-                if (IsTencent(item))
+                if (GisDataSource(item) != DownTool::VectorDataSource::Amap)
                 {
                     continue;
                 }
@@ -1618,7 +1637,7 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
                 *kind == ExportComponentKind::CesiumBuildings)
             {
                 if (const GisCatalogItem* item = FindGis(
-                        DownTool::AmapVectorRenderCategory::Building, renderer_.GetUseTencentGis()))
+                        DownTool::AmapVectorRenderCategory::Building, renderer_.GetGisSource()))
                 {
                     ExportSourceEntry source;
                     source.id = item->id;

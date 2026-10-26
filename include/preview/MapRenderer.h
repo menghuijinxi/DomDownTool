@@ -119,6 +119,8 @@ class MapRenderer
     void SetGisOverlayCategory(GisOverlayCategory category);
     void SetUseTencentGis(bool value);
     [[nodiscard]] bool GetUseTencentGis() const;
+    void SetGisSource(DownTool::VectorDataSource source);
+    [[nodiscard]] DownTool::VectorDataSource GetGisSource() const;
 
     [[nodiscard]] GisOverlayCategory GetGisOverlayCategory() const;
 

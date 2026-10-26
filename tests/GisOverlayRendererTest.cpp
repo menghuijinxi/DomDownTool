@@ -258,6 +258,13 @@ int main()
         {
             throw std::runtime_error("无法恢复高德来源");
         }
+        renderer.SetDataSource(DownTool::VectorDataSource::Baidu);
+        if (renderer.GetDataSource() != DownTool::VectorDataSource::Baidu ||
+            renderer.GetUseTencent() || renderer.IsLoading())
+        {
+            throw std::runtime_error("百度来源切换没有清除旧请求状态");
+        }
+        renderer.SetDataSource(DownTool::VectorDataSource::Amap);
         std::cout << "GisOverlayRendererTest passed\n" << std::flush;
         return 0;
     }

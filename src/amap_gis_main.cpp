@@ -357,13 +357,14 @@ namespace
             }
             if (argument == "--source")
             {
-                if (value != "amap" && value != "tencent")
+                if (value != "amap" && value != "tencent" && value != "baidu")
                 {
-                    error = "--source 暂支持 amap 或 tencent。";
+                    error = "--source 暂支持 amap、tencent 或 baidu。";
                     return false;
                 }
                 options.download.vectorDownload.SetIncludeAmapSource(value == "amap");
                 options.download.vectorDownload.SetIncludeTencentSource(value == "tencent");
+                options.download.vectorDownload.SetIncludeBaiduSource(value == "baidu");
             }
             else if (argument == "--lon")
             {
@@ -452,6 +453,7 @@ namespace
                 options.download.vectorDownload.rawTileCachePath =
                     std::filesystem::u8path(value);
                 options.download.vectorDownload.SetTencentCachePath(std::filesystem::u8path(value));
+                options.download.vectorDownload.SetBaiduCachePath(std::filesystem::u8path(value));
             }
             else if (argument == "--png-cache")
             {
@@ -502,6 +504,18 @@ namespace
 
     void FinalizeOptions(ApplicationOptions& options)
     {
+        if (options.download.vectorDownload.GetIncludeBaiduSource())
+        {
+            if (!options.GetOutputRootOverridden())
+            {
+                options.outputRoot = std::filesystem::u8path("cache/百度地图/gis数据/输出");
+            }
+            if (!options.GetPngCacheOverridden())
+            {
+                options.download.render.pngTileCachePath =
+                    std::filesystem::u8path("cache/百度地图/gis数据/png缓存");
+            }
+        }
         if (options.download.vectorDownload.GetIncludeTencentSource())
         {
             if (!options.GetOutputRootOverridden())
@@ -533,13 +547,13 @@ namespace
     void PrintUsage()
     {
         std::cout <<
-            "AmapGisDownload - 下载高德或腾讯 GIS 矢量数据、渲染 PNG 并合并大图\n\n"
+            "AmapGisDownload - 下载高德、腾讯或百度 GIS 矢量数据、渲染 PNG 并合并大图\n\n"
             "默认：北京中心、半径 2000 米、z16、只渲染水体。\n\n"
             "参数：\n"
             "  --lon <经度>                  WGS84 中心经度\n"
             "  --lat <纬度>                  WGS84 中心纬度\n"
             "  --radius <米>                 下载半径\n"
-            "  --source <amap|tencent>        GIS 数据源，默认高德；腾讯使用 z18 数据\n"
+            "  --source <amap|tencent|baidu>  GIS 数据源，默认高德；腾讯 z18，百度原生 z19\n"
             "  --zoom <层级>                 PNG 显示层级，与数据层级分开\n"
             "  --types <类型列表>            water,building,road,point,line,transit,other,all\n"
             "  --render-all-zooms           忽略要素 minZoom/maxZoom，强制渲染全部\n"
@@ -619,7 +633,9 @@ int main(int argumentCount, char* arguments[])
         return 1;
     }
 
-    const uint32_t dataZoom = result.vectorDownload.selectedTiles.empty() ?
+    const uint32_t dataZoom = options.download.vectorDownload.GetIncludeBaiduSource() ?
+        options.download.vectorDownload.GetBaiduDataZoom() :
+        result.vectorDownload.selectedTiles.empty() ?
         DownTool::AmapVectorTileGrid::ResolveDataZoom(options.download.vectorDownload.zoom) :
         result.vectorDownload.selectedTiles.front().zoom;
     std::cout <<
