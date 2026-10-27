@@ -413,17 +413,6 @@ bool runTest()
     }
     if (!postprocess_test::Require(
             postprocess_test::ContainsText(
-                mapRendererPath,
-                "std::move(multidateProjection), TileYAxisDirection::Down, 1., 18.)") &&
-                !postprocess_test::ContainsText(
-                    mapRendererPath,
-                    "std::move(multidateProjection), TileYAxisDirection::Down, 17., 18.)"),
-            "天地图多时相预览不应把卫星缩放层级限制到 17 以上"))
-    {
-        return false;
-    }
-    if (!postprocess_test::Require(
-            postprocess_test::ContainsText(
                 controllerPath, "if (selectHtml != lastTianDiTuMultidateSelectHtml_)") &&
                 postprocess_test::ContainsText(
                     controllerPath,

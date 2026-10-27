@@ -1,0 +1,14 @@
+diff --git a/src/skui/core/skui_utils.cpp b/src/skui/core/skui_utils.cpp
+--- a/src/skui/core/skui_utils.cpp
++++ b/src/skui/core/skui_utils.cpp
+@@ -972,7 +972,9 @@ bool selectOptionAt(Node& select, size_t optionIndex) {
+     }
+     select.selectedOptionIndex = optionIndex;
+     select.selectedOptionIndices = {optionIndex};
+-    select.highlightedOptionIndex = optionIndex;
++    if (changed || !select.selectOpen) {
++        select.highlightedOptionIndex = optionIndex;
++    }
+     select.selectAnchorOptionIndex = optionIndex;
+     select.value = nextValue;
+     return changed;

@@ -1,5 +1,31 @@
 # 第三方库与服务接入
 
+## SkiaUI 下拉菜单被界面刷新拉回选中项
+
+2026-10-27 修复地图来源菜单滚动后立即回跳、需要先选择末项才能继续滚动的问题。
+影响所有在菜单展开期间执行界面刷新的标准单选框。
+
+- 使用版本：SkiaUI 0.1.15，提交 `854bab8ea619e3767b588de823b20ac4a81c4f6d`。
+  标准菜单仍使用 `select` / `option` 和 Win32EventAdapter，无自绘菜单或新增依赖。
+- 根因：`setVisibleById()` 即使可见性未变，也调用 `finishDocumentMutation()`，
+  后者同步整棵 DOM 的选择状态；`selectOptionAt()` 又把展开菜单的高亮项重设为
+  当前选中项。`selectPopupGeometry()` 保证高亮项可见，于是滚动位置被拉回。
+  重复 `setValueById()` 也会走到同一处，只减少业务层选中值写入不足以修复。
+- 排查：`PreviewRangeEditorTest` 通过实际 Win32 消息向菜单发送滚轮事件，
+  每次穿插 `resizeRuntime()` 刷新。对比刷新前后渲染，确认滚轮已被菜单消费，
+  滚动成功后才发生回跳，地图层级未变。
+- 修复：`cmake/vcpkg-overlays/skiaui/preserve-open-select-scroll.patch` 在选中值未变、
+  菜单仍展开时保留原高亮状态；真实选择变化仍更新高亮。补丁固定原版本构建，
+  避免仅修改本机安装目录导致其他机器复现失败。
+- 验证：回归覆盖从首项滚动到末项、从末项滚回首项，并检查菜单滚轮不会缩放地图；
+  既有 `PreviewSearchUiTest` 覆盖其他菜单和不同窗口布局。
+
+维护时先核对安装包的 `vcpkg.spdx.json` 中的源码提交，不要仅查看相邻源码目录的
+最新版。参考上游 `docs/skui_integration_guide.md` 的标准选择控件说明，以及
+`src/skui/core/skui_runtime.cpp`、`skui_utils.cpp`。所有 Runtime 操作仍在界面线程执行，
+控件由 Runtime 持有，API 的失败返回和生命周期约束不变。后续升级 SkiaUI 时，应先
+确认上游是否已经修复这条状态同步路径，再移除覆盖补丁并重跑回归。
+
 ## 腾讯和百度电子地图栅格底图
 
 ### 接口与坐标边界

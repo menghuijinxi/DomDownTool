@@ -111,9 +111,9 @@ class MapViewport
     bool panBy(double deltaX, double deltaY, const DownTool::DownToolBase& projection,
                TileYAxisDirection yDirection, uint32_t tileSize = 256);
 
-    bool zoomAt(double screenX, double screenY, double zoomDelta, double minimumZoom,
-                double maximumZoom, const DownTool::DownToolBase& projection,
-                TileYAxisDirection yDirection, uint32_t tileSize = 256);
+    bool zoomAt(double screenX, double screenY, double zoomDelta,
+                const DownTool::DownToolBase& projection, TileYAxisDirection yDirection,
+                uint32_t tileSize = 256);
 
     [[nodiscard]] std::optional<DownTool::LonLat> lonLatAt(double screenX, double screenY,
                                                            const DownTool::DownToolBase& projection,

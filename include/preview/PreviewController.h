@@ -201,6 +201,8 @@ class PreviewController
 
     void submitCenterCoordinate(skui::Runtime& runtime, std::string_view value);
 
+    void CommitViewSpanInput(skui::Runtime& runtime, std::string_view value);
+
     void scheduleImmediateMapRedraw(HWND window);
 
     void scheduleImmediateFbxRedraw(HWND window, bool throttle = true);
@@ -393,6 +395,7 @@ private:
     std::string lastUiTileDebugHtml_;
     std::string lastCenterCoordinate_;
     std::string lastZoomValue_;
+    std::optional<std::string> viewSpanInput_;
     FbxPreviewInteractionSettings fbxInteractionSettings_;
     bool dragging_ = false;
     FbxDragMode fbxDragMode_ = FbxDragMode::None;

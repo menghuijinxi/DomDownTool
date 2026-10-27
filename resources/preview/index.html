@@ -753,10 +753,32 @@
         }
 
         #view-span-value {
-            min-width: 68px;
+            width: 36px;
+            min-width: 36px;
+            height: 24px;
+            padding: 0;
+            border: none;
+            outline: none;
+            background: transparent;
             color: #d7ddda;
+            font: 11px "Consolas", monospace;
             text-align: center;
             font-variant-numeric: tabular-nums;
+        }
+
+        #view-span-value:focus {
+            background: #303936;
+        }
+
+        .view-span-label {
+            width: 26px;
+            font-size: 11px;
+            text-align: right;
+        }
+
+        .view-span-unit {
+            width: 6px;
+            font-size: 11px;
         }
 
         .map-overlay {
@@ -3648,7 +3670,10 @@
                    aria-label="地图中心经纬度">
             <div class="view-span-controls">
                 <button id="view-span-decrease" type="button" data-action="view-span-decrease" title="减少可见瓦块">-</button>
-                <span id="view-span-value">视野 1.0x</span>
+                <span class="view-span-label">视野</span>
+                <input id="view-span-value" type="number" min="0.1" max="4" step="0.1"
+                       inputmode="decimal" value="1.00" aria-label="视野倍率">
+                <span class="view-span-unit">x</span>
                 <button id="view-span-increase" type="button" data-action="view-span-increase" title="显示更多瓦块">+</button>
             </div>
             <span id="cache-path">cache/高德地图</span>

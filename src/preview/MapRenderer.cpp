@@ -306,7 +306,7 @@ DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw
     auto addSource =
         [this](std::string id, std::string name, std::string coordinateSystem,
                std::unique_ptr<DownTool::DownToolBase> projection,
-               TileYAxisDirection yDirection, double minimumZoom, double maximumZoom)
+               TileYAxisDirection yDirection)
     {
         projection->SetTileSize(kTileSize);
         MapSource source;
@@ -318,8 +318,6 @@ DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw
         {
             source.summary.cacheRoot.clear();
         }
-        source.summary.minimumZoom = minimumZoom;
-        source.summary.maximumZoom = maximumZoom;
         source.yDirection = yDirection;
         source.projection = std::move(projection);
         sources_.push_back(std::move(source));
@@ -327,40 +325,40 @@ DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw
 
     addSource("gaode.satellite", "高德卫星", "GCJ02 / XYZ",
               std::make_unique<DownTool::GaoDeDown>(DownTool::GaoDeMapType::Satellite),
-              TileYAxisDirection::Down, 3., 20.);
+              TileYAxisDirection::Down);
     addSource("gaode.electronic", "高德电子地图", "GCJ02 / XYZ",
               std::make_unique<DownTool::GaoDeDown>(DownTool::GaoDeMapType::Electronic),
-              TileYAxisDirection::Down, 3., 20.);
+              TileYAxisDirection::Down);
     addSource("gaode.roads", "高德透明路网", "GCJ02 / XYZ",
               std::make_unique<DownTool::GaoDeDown>(DownTool::GaoDeMapType::RoadNetworkOverlay),
-              TileYAxisDirection::Down, 3., 20.);
+              TileYAxisDirection::Down);
     addSource("tencent.satellite", "腾讯卫星", "GCJ02 / XYZ",
-              std::make_unique<DownTool::TencentDown>(), TileYAxisDirection::Down, 3., 19.);
+              std::make_unique<DownTool::TencentDown>(), TileYAxisDirection::Down);
     addSource("tencent.electronic", "腾讯电子地图", "GCJ02 / XYZ",
               std::make_unique<DownTool::TencentDown>(DownTool::TencentMapType::Electronic),
-              TileYAxisDirection::Down, 3., 19.);
+              TileYAxisDirection::Down);
     addSource("tianditu.satellite", "天地图影像", "CGCS2000 / XYZ",
-              std::make_unique<DownTool::TianDiTuDown>(), TileYAxisDirection::Down, 1., 18.);
+              std::make_unique<DownTool::TianDiTuDown>(), TileYAxisDirection::Down);
     auto multidateProjection = std::make_unique<DownTool::TianDiTuMultidateDown>();
     multidateProjection->SetCachePath(pathToUtf8(multidateCacheRoot("latest")));
     tianDiTuMultidateLatestProjection_ = std::make_unique<DownTool::TianDiTuMultidateDown>();
     tianDiTuMultidateLatestProjection_->SetTileSize(kTileSize);
     tianDiTuMultidateLatestProjection_->SetCachePath(pathToUtf8(multidateCacheRoot("latest")));
     addSource("tianditu.multidate", "天地图多时相", "CGCS2000 / EPSG:4326",
-              std::move(multidateProjection), TileYAxisDirection::Down, 1., 18.);
+              std::move(multidateProjection), TileYAxisDirection::Down);
     addSource("baidu.satellite", "百度卫星", "BD09 / Baidu",
-              std::make_unique<DownTool::BaiduDown>(), TileYAxisDirection::Up, 3., 19.);
+              std::make_unique<DownTool::BaiduDown>(), TileYAxisDirection::Up);
     addSource("baidu.electronic", "百度电子地图", "BD09 / Baidu",
               std::make_unique<DownTool::BaiduDown>(DownTool::BaiduMapType::Electronic),
-              TileYAxisDirection::Up, 3., 19.);
+              TileYAxisDirection::Up);
     addSource("google.satellite", "Google 卫星", "WGS84 / XYZ",
-              std::make_unique<DownTool::GoogleDown>(), TileYAxisDirection::Down, 1., 21.);
+              std::make_unique<DownTool::GoogleDown>(), TileYAxisDirection::Down);
     addSource("bing.satellite", "Bing 卫星", "WGS84 / XYZ", std::make_unique<DownTool::BingDown>(),
-              TileYAxisDirection::Down, 1., 20.);
+              TileYAxisDirection::Down);
     addSource("arcgis.satellite", "ArcGIS 影像", "WGS84 / XYZ",
-              std::make_unique<DownTool::ArcGISDown>(), TileYAxisDirection::Down, 1., 20.);
+              std::make_unique<DownTool::ArcGISDown>(), TileYAxisDirection::Down);
     addSource("none", "无", "WGS84 / XYZ", std::make_unique<DownTool::GoogleDownBase>(),
-              TileYAxisDirection::Down, 1., 21.);
+              TileYAxisDirection::Down);
 }
 
 DomDownToolPreview::MapRenderer::~MapRenderer() = default;
@@ -638,9 +636,8 @@ bool DomDownToolPreview::MapRenderer::panBy(double deltaX, double deltaY)
 bool DomDownToolPreview::MapRenderer::zoomAt(double screenX, double screenY, double zoomDelta)
 {
     MapSource& source = currentSource();
-    const bool zoomed = viewport_.zoomAt(screenX, screenY, zoomDelta, source.summary.minimumZoom,
-                                        source.summary.maximumZoom, *source.projection,
-                                        source.yDirection, kTileSize);
+    const bool zoomed = viewport_.zoomAt(screenX, screenY, zoomDelta, *source.projection,
+                                         source.yDirection, kTileSize);
     if (zoomed)
     {
         tileDebugEntries_.clear();
@@ -664,9 +661,8 @@ bool DomDownToolPreview::MapRenderer::adjustViewSpan(double delta)
 
 void DomDownToolPreview::MapRenderer::setView(const DownTool::LonLat& centerWgs84, double zoom)
 {
-    const MapSource& source = currentSource();
     viewport_.setCenter(centerWgs84);
-    viewport_.setZoom(std::clamp(zoom, source.summary.minimumZoom, source.summary.maximumZoom));
+    viewport_.setZoom(zoom);
     downloadQueue_.cancelPending();
     tileDebugEntries_.clear();
 }
@@ -696,8 +692,6 @@ bool DomDownToolPreview::MapRenderer::selectSource(std::string_view sourceId)
 
     activeSourceIndex_ = static_cast<size_t>(std::distance(sources_.begin(), sourceIterator));
     downloadQueue_.cancelPending();
-    viewport_.setZoom(std::clamp(viewport_.zoom(), sourceIterator->summary.minimumZoom,
-                                 sourceIterator->summary.maximumZoom));
     tileDebugEntries_.clear();
     return true;
 }

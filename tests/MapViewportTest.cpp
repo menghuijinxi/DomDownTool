@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <string>
 
 #include "BaiduDown.h"
@@ -104,7 +105,7 @@ bool testProjectionInteraction(DownTool::DownToolBase& projection,
     }
 
     if (!postprocess_test::Require(
-            viewport.zoomAt(kAnchorX, kAnchorY, 0.7, 2., 20., projection, yDirection),
+            viewport.zoomAt(kAnchorX, kAnchorY, 0.7, projection, yDirection),
             projectionName + " zoom operation failed"))
     {
         return false;
@@ -245,8 +246,8 @@ bool testViewSpanShowsMoreTilesWithoutChangingSourceZoom()
 
     viewport.SetViewSpan(100.);
     const bool maximumClamped = viewport.GetViewSpan() == 4.;
-    viewport.SetViewSpan(0.1);
-    const bool minimumClamped = viewport.GetViewSpan() == 1.;
+    viewport.SetViewSpan(0.);
+    const bool minimumClamped = viewport.GetViewSpan() == 0.1;
 
     return postprocess_test::Require(!normalTiles.empty() &&
                                          expandedTiles.size() > normalTiles.size(),
@@ -281,9 +282,57 @@ bool testMapHoverRefreshThrottle()
                                      "map hover UI refresh throttle did not enforce its interval");
 }
 
+bool testHighZoomAndFractionalViewSpan()
+{
+    DomDownToolPreview::MapViewport viewport;
+    viewport.setSize(1024, 768);
+    viewport.setZoom(30.);
+    DownTool::GoogleDownBase projection;
+    projection.SetTileSize(256);
+    const auto tiles =
+        viewport.visibleTiles(projection, DomDownToolPreview::TileYAxisDirection::Down);
+    const bool highZoomAccepted =
+        viewport.zoom() == 30. && !tiles.empty() && tiles.front().cacheTile.Zoom == 30;
+    viewport.setZoom(100.);
+    const bool maximumClamped = viewport.zoom() == 30.;
+    viewport.setZoom(std::numeric_limits<double>::quiet_NaN());
+    const bool invalidIgnored = viewport.zoom() == 30.;
+    viewport.setZoom(-1.);
+    const bool minimumClamped = viewport.zoom() == 0.;
+    viewport.SetViewSpan(0.7);
+    viewport.SetViewSpan(std::numeric_limits<double>::infinity());
+    return postprocess_test::Require(highZoomAccepted, "viewport still limits zoom to 23") &&
+           postprocess_test::Require(maximumClamped && minimumClamped && invalidIgnored,
+                                     "zoom did not preserve numeric bounds or reject NaN") &&
+           postprocess_test::Require(std::abs(viewport.GetViewSpan() - 0.7) < 1.e-9,
+                                     "fractional view span below 1 is not accepted");
+}
+
+bool testZoomThroughUndefinedSourceLevel()
+{
+    DownTool::TianDiTuMultidateDown projection;
+    projection.SetTileSize(256);
+    DomDownToolPreview::MapViewport viewport;
+    viewport.setSize(1024, 768);
+    viewport.setZoom(1.);
+    const auto center = viewport.center();
+    if (!postprocess_test::Require(viewport.zoomAt(512., 384., -1., projection,
+                                                   DomDownToolPreview::TileYAxisDirection::Down) &&
+                                       viewport.zoom() == 0.,
+                                   "undefined source level is still clamped"))
+    {
+        return false;
+    }
+    return postprocess_test::Require(
+        viewport.zoomAt(512., 384., 1., projection, DomDownToolPreview::TileYAxisDirection::Down) &&
+            viewport.zoom() == 1. && isNear(viewport.center(), center, 1.e-9),
+        "cannot zoom back from an undefined source level");
+}
+
 bool runTest()
 {
-    if (!testStandardTileSelection() || !testBaiduTileSelection() ||
+    if (!testZoomThroughUndefinedSourceLevel() || !testHighZoomAndFractionalViewSpan() ||
+        !testStandardTileSelection() || !testBaiduTileSelection() ||
         !testTianDiTuMultidateTileSelection() ||
         !testViewSpanShowsMoreTilesWithoutChangingSourceZoom() ||
         !testMapHoverRefreshThrottle())

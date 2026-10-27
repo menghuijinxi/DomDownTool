@@ -27,8 +27,6 @@ struct MapSourceSummary
     std::string name;
     std::string coordinateSystem;
     std::filesystem::path cacheRoot;
-    double minimumZoom = 1.;
-    double maximumZoom = 20.;
 };
 
 struct MapRenderStats

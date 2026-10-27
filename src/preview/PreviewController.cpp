@@ -1932,10 +1932,28 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
     runtime.setElementEventCallback(
         [this, &runtime](const skui::ElementEvent& event)
         {
+            if (event.type == skui::ElementEventType::MouseDown &&
+                event.id != "view-span-value" && viewSpanInput_)
+            {
+                CommitViewSpanInput(runtime, *viewSpanInput_);
+            }
             if (HandleShapefilePreviewEvent(runtime, event) ||
                 HandleRangeEditorEvent(runtime, event))
             {
                 return;
+            }
+            if (event.id == "view-span-value")
+            {
+                if (event.type == skui::ElementEventType::Input)
+                {
+                    viewSpanInput_ = event.value;
+                    return;
+                }
+                if (event.type == skui::ElementEventType::Change)
+                {
+                    CommitViewSpanInput(runtime, event.value);
+                    return;
+                }
             }
             if (event.id == "export-radius" &&
                 event.type == skui::ElementEventType::Input)
@@ -2889,11 +2907,11 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             }
             else if (event.id == "view-span-decrease")
             {
-                renderer_.adjustViewSpan(-0.5);
+                renderer_.adjustViewSpan(-0.1);
             }
             else if (event.id == "view-span-increase")
             {
-                renderer_.adjustViewSpan(0.5);
+                renderer_.adjustViewSpan(0.1);
             }
             else if (event.id == "place-search-submit")
             {
@@ -2916,6 +2934,26 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
             requestRedraw();
         });
     runtime.setElementKeyDownCallback([this, &runtime](const skui::ElementEvent& event) {
+        if (event.id == "view-span-value")
+        {
+            if (event.key == VK_RETURN)
+            {
+                CommitViewSpanInput(runtime, event.value);
+                return true;
+            }
+            if (event.key == VK_ESCAPE)
+            {
+                viewSpanInput_.reset();
+                updateUi(runtime);
+                requestRedraw();
+                return true;
+            }
+            if (event.key == VK_TAB)
+            {
+                CommitViewSpanInput(runtime, event.value);
+                return false;
+            }
+        }
         if (event.id == "task-rename-input" && event.key == VK_RETURN)
         {
             taskRenameValue_ = event.value;
@@ -3005,6 +3043,19 @@ void DomDownToolPreview::PreviewController::resizeRuntime(skui::Runtime& runtime
     updateUi(runtime);
 }
 
+void DomDownToolPreview::PreviewController::CommitViewSpanInput(
+    skui::Runtime& runtime, std::string_view value)
+{
+    const auto viewSpan = parseFiniteDouble(value);
+    if (viewSpan)
+    {
+        renderer_.adjustViewSpan(*viewSpan - renderer_.GetViewSpan());
+    }
+    viewSpanInput_.reset();
+    updateUi(runtime);
+    requestRedraw();
+}
+
 void DomDownToolPreview::PreviewController::draw(SkCanvas& canvas, int width, int height,
                                                  float dpiScale)
 {
@@ -3048,6 +3099,12 @@ bool DomDownToolPreview::PreviewController::handleWindowMessage(HWND window, UIN
                                                                 WPARAM wParam, LPARAM lParam,
                                                                 skui::Runtime& runtime)
 {
+    if (viewSpanInput_ &&
+        (message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN ||
+         message == WM_MBUTTONDOWN || message == WM_KILLFOCUS))
+    {
+        CommitViewSpanInput(runtime, *viewSpanInput_);
+    }
     const bool destroyingWindow = message == WM_DESTROY || message == WM_NCDESTROY;
     if (!destroyingWindow && !fileDropEnabled_)
     {
@@ -4560,6 +4617,10 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
         static_cast<double>(stats.cache.cpuBytes + stats.cache.gpuBytes) / (1024. * 1024.);
 
     runtime.setValueById("provider-select", source.id);
+    if (!viewSpanInput_)
+    {
+        runtime.setValueById("view-span-value", fmt::format("{:.2f}", renderer_.GetViewSpan()));
+    }
     runtime.setValueById("export-radius", previewRadiusValue_);
     const bool previewKmlMode =
         previewRangeMode_ == ExportRangeMode::KmlPolygon;
@@ -4571,7 +4632,6 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
         {{"active-provider", source.name},
          {"coordinate-system", source.coordinateSystem},
          {"zoom-value", fmt::format("Z {:.2f}", renderer_.zoom())},
-         {"view-span-value", fmt::format("视野 {:.1f}x", renderer_.GetViewSpan())},
          {"cache-path", pathToUtf8(source.cacheRoot)}});
     UpdateTianDiTuMultidateUi(runtime, source);
     static_cast<void>(UpdateTileDebugUi(runtime));

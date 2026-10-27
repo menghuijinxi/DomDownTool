@@ -13,8 +13,9 @@ namespace
 constexpr double kMinimumLatitude = -85.0511287798066;
 constexpr double kMaximumLatitude = 85.0511287798066;
 constexpr double kMinimumZoom = 0.;
-constexpr double kMaximumZoom = 23.;
-constexpr double kMinimumViewSpan = 1.;
+// 仅保留瓦片坐标的数值边界，与图源实际提供的层级无关。
+constexpr double kMaximumZoom = 30.;
+constexpr double kMinimumViewSpan = 0.1;
 constexpr double kMaximumViewSpan = 4.;
 
 int64_t normalizeTileX(int64_t tileX, int64_t tileCount)
@@ -204,26 +205,24 @@ bool DomDownToolPreview::MapViewport::panBy(double deltaX, double deltaY,
 }
 
 bool DomDownToolPreview::MapViewport::zoomAt(double screenX, double screenY, double zoomDelta,
-                                             double minimumZoom, double maximumZoom,
                                              const DownTool::DownToolBase& projection,
                                              TileYAxisDirection yDirection, uint32_t tileSize)
 {
     const std::optional<DownTool::LonLat> anchor =
         lonLatAt(screenX, screenY, projection, yDirection, tileSize);
-    if (!anchor.has_value())
-    {
-        return false;
-    }
-
     const double previousZoom = zoom_;
     const DownTool::LonLat previousCenter = center_;
-    setZoom(std::clamp(zoom_ + zoomDelta, minimumZoom, maximumZoom));
+    setZoom(zoom_ + zoomDelta);
+    // 某些图源未定义低层级投影，仍允许进入空白层级并从该层级缩放回来。
+    if (!anchor.has_value())
+    {
+        return zoom_ != previousZoom;
+    }
     const uint32_t integerZoom = sourceZoom();
     SourcePoint anchorPoint;
     if (!project(anchor.value(), integerZoom, projection, yDirection, tileSize, anchorPoint))
     {
-        zoom_ = previousZoom;
-        return false;
+        return zoom_ != previousZoom;
     }
 
     const double scale = displayScale();

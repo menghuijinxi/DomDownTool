@@ -884,6 +884,213 @@ bool TestCopyUsesActiveRegionRole(HWND window, const std::filesystem::path& test
     return true;
 }
 
+bool TestProviderMenuScrolling(HWND window, const std::filesystem::path& testRoot)
+{
+    using postprocess_test::Require;
+    skui::Runtime runtime;
+    if (!Require(runtime.loadDocument((std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) /
+                                       "resources/preview/index.html")
+                                          .string()),
+                 "地图菜单测试文档加载失败"))
+    {
+        return false;
+    }
+    runtime.resize(1440, 900, 1.F);
+    RangeController controller;
+    controller.attachRuntime(runtime);
+    skui::win32::Win32EventAdapter adapter(runtime);
+    const auto center = FindElementCenter(runtime, "provider-select");
+    if (!center)
+    {
+        return false;
+    }
+    const auto zoom = runtime.textContentById("zoom-value");
+    for (const int direction : {-1, 1})
+    {
+        MapClick(controller, adapter, window, runtime, *center);
+        POINT popupPoint{center->x, center->y + 32};
+        POINT screenPoint = popupPoint;
+        ClientToScreen(window, &screenPoint);
+        for (int step = 0; step < 8; ++step)
+        {
+            WindowMessage(controller, adapter, window, runtime, WM_MOUSEWHEEL,
+                          MAKEWPARAM(0, direction * WHEEL_DELTA),
+                          MAKELPARAM(screenPoint.x, screenPoint.y));
+            controller.resizeRuntime(runtime);
+        }
+        const std::string expected = direction < 0 ? "none" : "gaode.satellite";
+        if (!WriteTaskScreenshot(runtime, testRoot / ("provider-scroll-" + expected + ".png")))
+        {
+            return false;
+        }
+        // 菜单每行 30px，向下滚动后选择第八行，向上滚动后选择第一行。
+        popupPoint.y += direction < 0 ? 7 * 30 : 0;
+        MapClick(controller, adapter, window, runtime, popupPoint);
+        if (!Require(runtime.textContentById("active-provider") ==
+                         (direction < 0 ? "无" : "高德卫星"),
+                     "界面刷新使地图菜单无法滚动到：" + expected) ||
+            !Require(runtime.textContentById("zoom-value") == zoom, "菜单滚轮误传给地图缩放"))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TestUnrestrictedMapZoom()
+{
+    using postprocess_test::Require;
+    DomDownToolPreview::MapRenderer renderer([] {});
+    for (const auto& source : renderer.sources())
+    {
+        renderer.setView({116.397389, 39.908722}, 25.);
+        if (!Require(renderer.selectSource(source.id) && renderer.zoom() == 25.,
+                     "切换图源仍限制预览层级：" + source.id))
+        {
+            return false;
+        }
+        renderer.setView(renderer.center(), 0.);
+        if (!Require(renderer.zoom() == 0., "图源仍有预设最低层级：" + source.id))
+        {
+            return false;
+        }
+        renderer.setView(renderer.center(), 23.);
+        if (!Require(renderer.zoomAt(0., 0., 1.) && renderer.zoom() == 24.,
+                     "图源无法滚轮放大到 24 级：" + source.id))
+        {
+            return false;
+        }
+        renderer.setView(renderer.center(), 30.);
+        if (!Require(renderer.zoom() == 30., "图源无法设置到 30 级：" + source.id))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TestFractionalViewSpanInput(HWND window, const std::filesystem::path& testRoot)
+{
+    using postprocess_test::Require;
+    skui::Runtime runtime;
+    if (!Require(runtime.loadDocument((std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) /
+                                       "resources/preview/index.html")
+                                          .string()),
+                 "视野倍率测试文档加载失败"))
+    {
+        return false;
+    }
+    runtime.resize(1440, 900, 1.F);
+    RangeController controller;
+    controller.attachRuntime(runtime);
+    skui::win32::Win32EventAdapter adapter(runtime);
+    const auto click = [&](const std::string& id) {
+        return ClickElement(controller, runtime, adapter, window, id);
+    };
+    const auto type = [&](const std::string& text) {
+        skui::Event selectAll;
+        selectAll.type = skui::EventType::KeyDown;
+        selectAll.key = 'A';
+        selectAll.ctrlKey = true;
+        runtime.handleEvent(selectAll);
+        if (text.empty())
+        {
+            WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_BACK, 0);
+            return;
+        }
+        skui::Event input;
+        input.type = skui::EventType::TextInput;
+        input.text = text;
+        runtime.handleEvent(input);
+    };
+    if (!click("view-span-decrease") ||
+        !Require(runtime.textContentById("view-span-value") == "0.90", "视野倍率不能按 0.1 缩小") ||
+        !click("view-span-value"))
+    {
+        return false;
+    }
+    type("1.25");
+    controller.resizeRuntime(runtime);
+    if (!Require(runtime.textContentById("view-span-value") == "1.25",
+                 "界面刷新覆盖了正在编辑的视野倍率"))
+    {
+        return false;
+    }
+    WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_RETURN, 0);
+    if (!click("view-span-increase") ||
+        !Require(runtime.textContentById("view-span-value") == "1.35",
+                 "输入小数后视野倍率无法继续按 0.1 调整") ||
+        !click("view-span-value"))
+    {
+        return false;
+    }
+    type("0.7");
+    if (!click("provider-select") || !Require(runtime.textContentById("view-span-value") == "0.70",
+                                              "视野倍率失焦时没有应用小数"))
+    {
+        return false;
+    }
+    WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_ESCAPE, 0);
+    if (!click("view-span-value"))
+    {
+        return false;
+    }
+    type("2.5");
+    WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_ESCAPE, 0);
+    if (!Require(runtime.textContentById("view-span-value") == "0.70",
+                 "取消编辑没有恢复原视野倍率"))
+    {
+        return false;
+    }
+    type("0.65");
+    MapClick(controller, adapter, window, runtime, POINT{1000, 500});
+    if (!Require(runtime.textContentById("view-span-value") == "0.65",
+                 "点击地图没有提交视野倍率") ||
+        !click("view-span-value"))
+    {
+        return false;
+    }
+    type("1.75");
+    WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_TAB, 0);
+    if (!Require(runtime.textContentById("view-span-value") == "1.75",
+                 "Tab 没有提交视野倍率"))
+    {
+        return false;
+    }
+    for (const auto& [input, expected] :
+         {std::pair{"100", "4.00"}, std::pair{"0", "0.10"}, std::pair{"", "0.10"}})
+    {
+        if (!click("view-span-value"))
+        {
+            return false;
+        }
+        type(input);
+        WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_RETURN, 0);
+        if (!Require(runtime.textContentById("view-span-value") == expected,
+                     "视野倍率未正确处理越界或空输入"))
+        {
+            return false;
+        }
+    }
+    for (const int width : {1440, 700})
+    {
+        runtime.resize(width, width == 1440 ? 900 : 600, 1.F);
+        controller.resizeRuntime(runtime);
+        if (!click("view-span-value"))
+        {
+            return false;
+        }
+        type("1.25");
+        WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, VK_RETURN, 0);
+        if (!WriteTaskScreenshot(runtime,
+                                 testRoot / ("view-span-" + std::to_string(width) + ".png")))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool TestElectronicMapSources(HWND window, const std::filesystem::path& testRoot)
 {
     using namespace DomDownToolPreview;
@@ -2224,6 +2431,8 @@ int main()
         return 1;
     }
     const bool passed =
+        TestProviderMenuScrolling(window, testRoot) && TestUnrestrictedMapZoom() &&
+        TestFractionalViewSpanInput(window, testRoot) &&
         RunTest(window, testRoot) && TestCopyUsesActiveRegionRole(window, testRoot) &&
         TestFlattenRegionEditing(window, testRoot) && TestShapefileComponent(window, testRoot) &&
         TestShapefileMapPreview(testRoot) && TestShapefileDrop(window, testRoot) &&
