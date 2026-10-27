@@ -118,6 +118,8 @@ namespace
         return encoded;
     }
 
+    bool RunEmptyHistoryTest();
+
     bool RunTest()
     {
         TestTianDiTuMultidateDown tool;
@@ -428,6 +430,11 @@ namespace
             return false;
         }
 
+        return RunEmptyHistoryTest();
+    }
+
+    bool RunEmptyHistoryTest()
+    {
         const std::filesystem::path emptyHistoryRoot =
             postprocess_test::MakeTestRoot("tianditu-multidate-empty-history");
         const std::filesystem::path emptyResponsePath = emptyHistoryRoot / "empty.bin";
@@ -460,8 +467,8 @@ namespace
         const cv::Vec4b emptyHistoryPixel = emptyHistoryImage.empty() ?
             cv::Vec4b(1, 1, 1, 1) : emptyHistoryImage.at<cv::Vec4b>(0, 0);
         if (!postprocess_test::Require(
-                !emptyHistoryImage.empty() && emptyHistoryImage.channels() == 4 &&
-                    emptyHistoryPixel[3] == 0,
+                emptyTileTool.GetDownloadError().empty() && !emptyHistoryImage.empty() &&
+                    emptyHistoryImage.channels() == 4 && emptyHistoryPixel[3] == 0,
                 "多时相历史空瓦片没有生成透明合并图"))
         {
             return false;
@@ -521,9 +528,10 @@ namespace
         partialTileTool.StartDown();
         const cv::Mat partialHistoryImage = cv::imread(
             postprocess_test::PathToUtf8String(partialMergedImagePath), cv::IMREAD_UNCHANGED);
-        if (!postprocess_test::Require(
-                !partialHistoryImage.empty() && partialHistoryImage.channels() == 4,
-                "多时相历史覆盖部分瓦片失败时没有补透明并生成合并图"))
+        if (!postprocess_test::Require(partialTileTool.GetDownloadError().empty() &&
+                                           !partialHistoryImage.empty() &&
+                                           partialHistoryImage.channels() == 4,
+                                       "多时相历史覆盖部分瓦片失败时没有补透明并生成合并图"))
         {
             return false;
         }
@@ -533,7 +541,8 @@ namespace
     }
 }
 
-int main()
+int main(int argc, char** argv)
 {
-    return postprocess_test::RunGuarded(RunTest);
+    return postprocess_test::RunGuarded(
+        argc > 1 && std::string(argv[1]) == "--empty-history" ? RunEmptyHistoryTest : RunTest);
 }

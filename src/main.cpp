@@ -815,5 +815,10 @@ int main(int argumentCount, char* arguments[])
     }
 
     downloader->StartDown();
+    if (!downloader->GetDownloadError().empty())
+    {
+        std::cerr << downloader->GetDownloadError() << '\n';
+        return 1;
+    }
     return 0;
 }

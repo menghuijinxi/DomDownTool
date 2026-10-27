@@ -95,6 +95,14 @@ class SlowTileHttpServer
 
     const std::string& GetUrl() const { return url_; }
     size_t GetSlowRequestCount() const { return slowRequests_.load(); }
+    size_t GetPartialRequestCount() const
+    {
+        return partialRequests_.load();
+    }
+    size_t GetHttpErrorRequestCount() const
+    {
+        return httpErrorRequests_.load();
+    }
     void ReleaseSlowResponses()
     {
         {
@@ -110,6 +118,8 @@ class SlowTileHttpServer
     std::string image_;
     std::string url_;
     std::atomic_size_t slowRequests_ = 0;
+    std::atomic_size_t partialRequests_ = 0;
+    std::atomic_size_t httpErrorRequests_ = 0;
     bool releaseSlowResponses_ = false;
     std::mutex mutex_;
     std::condition_variable_any condition_;
@@ -159,14 +169,26 @@ class SlowTileHttpServer
                     return;
                 }
                 const bool slow = std::string_view(request, received).find("GET /slow") == 0;
-                const std::string header = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n"
-                                           "Connection: close\r\nContent-Length: " +
-                                           std::to_string(image_.size()) + "\r\n\r\n";
+                const bool partial =
+                    std::string_view(request, received).find("GET /retry-partial") == 0;
+                const bool httpError =
+                    std::string_view(request, received).find("GET /retry-http-error") == 0;
+                const bool truncate = partial && partialRequests_.fetch_add(1) == 0;
+                const bool reject = httpError && httpErrorRequests_.fetch_add(1) == 0;
+                const std::string status = reject ? "503 Service Unavailable" : "200 OK";
+                const std::string header =
+                    "HTTP/1.1 " + status +
+                    "\r\nContent-Type: image/png\r\nConnection: close\r\nContent-Length: " +
+                    std::to_string(image_.size()) + "\r\n\r\n";
                 if (!Send(client.GetHandle(), header))
                 {
                     return;
                 }
-                if (slow)
+                if (truncate)
+                {
+                    (void)Send(client.GetHandle(), std::string_view(image_).substr(0, 16));
+                }
+                else if (slow)
                 {
                     if (!Send(client.GetHandle(), std::string_view(image_).substr(0, 1)))
                     {

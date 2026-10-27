@@ -61,7 +61,8 @@ namespace
 	constexpr uint32_t CacheScanConcurrencyMultiplier = 4;
 	constexpr long TileRequestTimeoutSeconds = 20;
 	constexpr long TileConnectTimeoutSeconds = 10;
-	constexpr uint32_t kMaximumFbxTerrainGridSize = 1024;
+    constexpr uint32_t kMaximumDownloadRetryRounds = 3;
+    constexpr uint32_t kMaximumFbxTerrainGridSize = 1024;
 	constexpr double kMinimumFbxTerrainGeometricErrorMeters = 1.;
 
 	struct TileRepairTask
@@ -566,8 +567,8 @@ namespace
 		{
 			context->fileStream.write(static_cast<char*>(ptr), totalSize);
 		}
-		return totalSize;
-	}
+        return context->fileStream.good() ? totalSize : 0;
+    }
 
 	size_t WriteTileHeaderData(void* ptr, size_t size, size_t nmemb, void* userdata)
 	{
@@ -2683,7 +2684,14 @@ void DownTool::DownToolBase::WaitDown()
 		if (msg->msg == CURLMSG_DONE)
 		{
 			CURL* easy = msg->easy_handle;
-			auto handleIt = curlEasyHandles.find(easy);
+            // 完成消息在移除或释放句柄后失效，先保存后续判断需要的结果。
+            const CURLcode requestResult = msg->data.result;
+            long responseCode = 0;
+            curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &responseCode);
+            const bool requestSucceeded =
+                requestResult == CURLE_OK &&
+                (responseCode == 0 || (responseCode >= 200 && responseCode < 300));
+            auto handleIt = curlEasyHandles.find(easy);
 			Tile tile;
 			std::filesystem::path tilePath;
 			std::string url;
@@ -2705,19 +2713,23 @@ void DownTool::DownToolBase::WaitDown()
 			}
 
 			// 可选：检查结果
-			if (msg->data.result != CURLE_OK)
-			{
+            if (requestResult != CURLE_OK)
+            {
 				if (hasContext)
 				{
-					fmt::print("\nRequest failed: {}, url: {}\n",
-						curl_easy_strerror(msg->data.result), url);
-				}
+                    fmt::print("\nRequest failed: {}, url: {}\n", curl_easy_strerror(requestResult),
+                               url);
+                }
 				else
 				{
-					fmt::print("\nRequest failed: {}\n", curl_easy_strerror(msg->data.result));
-				}
+                    fmt::print("\nRequest failed: {}\n", curl_easy_strerror(requestResult));
+                }
 			}
-			// 清理 easy handle（重要！）
+            else if (!requestSucceeded)
+            {
+                fmt::print("\nHTTP request failed: {}, url: {}\n", responseCode, url);
+            }
+            // 清理 easy handle（重要！）
 			curl_multi_remove_handle(curlMulti, easy);
 			if (handleIt != curlEasyHandles.end())
 			{
@@ -2732,12 +2744,17 @@ void DownTool::DownToolBase::WaitDown()
 			{
 				continue;
 			}
+            if (!requestSucceeded)
+            {
+                // 失败传输可能已写入图片头，清理残片后才能被缓存复查识别并重试。
+                RemoveFileIfExists(tilePath);
+            }
 
-			if (requestType == CurlRequestType::Tile)
+            if (requestType == CurlRequestType::Tile)
 			{
-				if (msg->data.result == CURLE_OK &&
-					(responseHeaderUnavailable || IsUnavailableTileFile(tilePath, tile)))
-				{
+                if (requestSucceeded &&
+                    (responseHeaderUnavailable || IsUnavailableTileFile(tilePath, tile)))
+                {
 					RemoveFileIfExists(tilePath);
 					if (!RepairTileFromLowerZoom(tile, tilePath))
 					{
@@ -2750,16 +2767,14 @@ void DownTool::DownToolBase::WaitDown()
 				continue;
 			}
 
-			if (msg->data.result == CURLE_OK && responseHeaderUnavailable)
-			{
+            if (requestSucceeded && responseHeaderUnavailable)
+            {
 				RemoveFileIfExists(tilePath);
 			}
 
-			if (msg->data.result == CURLE_OK &&
-				!responseHeaderUnavailable &&
-				IsValidImageFile(tilePath) &&
-				!IsUnavailableTileFile(tilePath, tile))
-			{
+            if (requestSucceeded && !responseHeaderUnavailable && IsValidImageFile(tilePath) &&
+                !IsUnavailableTileFile(tilePath, tile))
+            {
 				if (RepairTilesFromParent(tile, repairTargetZoom))
 				{
 					continue;
@@ -2783,8 +2798,8 @@ void DownTool::DownToolBase::WaitDown()
 	if (hasProgressUpdate)
 	{
 		fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
-		ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
-		return;
+        ReportProgress(downloadStage_, GetDowningCount(), TotalDownCount);
+        return;
 	}
 
 	// 3. 等待 socket 事件（避免 busy loop）
@@ -2835,7 +2850,9 @@ void DownTool::DownToolBase::StartDown()
 	}
 
 	bStop = false;
-	if (IsStopRequested())
+    downloadStage_ = "下载瓦片";
+    downloadError_.clear();
+    if (IsStopRequested())
 	{
 		return;
 	}
@@ -2863,9 +2880,9 @@ void DownTool::DownToolBase::StartDown()
 		return;
 	}
 	TotalDownCount = static_cast<uint32_t>(targetTiles.size());
-	ReportProgress("下载瓦片", 0, TotalDownCount);
+    ReportProgress(downloadStage_, 0, TotalDownCount);
 
-	fmt::print("下载范围：\n左上角经纬度：({}, {})\n右下角经纬度：({}, {})\n左上角瓦片坐标：({}, {})\n右下角瓦片坐标：({}, {})\n缓存路径：{}\n总下载切片数量预估：{}\n",
+    fmt::print("下载范围：\n左上角经纬度：({}, {})\n右下角经纬度：({}, {})\n左上角瓦片坐标：({}, {})\n右下角瓦片坐标：({}, {})\n缓存路径：{}\n总下载切片数量预估：{}\n",
 		MinLonLat.lon, MaxLonLat.lat, MaxLonLat.lon, MinLonLat.lat,
 		MinTile.X, MinTile.Y, MaxTile.X, MaxTile.Y, CachePath, TotalDownCount);
 
@@ -2873,38 +2890,27 @@ void DownTool::DownToolBase::StartDown()
 		ScanCacheAndCollectPendingTiles(
 			targetTiles, "下载前缓存检测", true, false);
 
-	for (const Tile& tile : pendingTiles)
-	{
-		if (IsStopRequested())
-		{
-			break;
-		}
-		DownloadTile(tile.X, tile.Y);
-	}
+    DownloadTileBatch(pendingTiles);
 
-	// 等待所有下载完成
-	while (curlEasyHandles.size() > 0)
-	{
-		if (IsStopRequested())
-		{
-			break;
-		}
-		WaitDown();
-	}
-	fmt::print("\n");
-
-	std::vector<Tile> failedTiles;
+    std::vector<Tile> failedTiles;
 	if (!IsStopRequested())
 	{
 		failedTiles =
 			ScanCacheAndCollectPendingTiles(
 				targetTiles, "下载后缓存检测", false, true);
 	}
-	if (!failedTiles.empty())
-	{
-		fmt::print("下载结束后仍有 {} 个瓦片不可用，请查看上面的缓存检测明细。\n",
-			failedTiles.size());
-	}
+    RetryFailedTiles(failedTiles);
+    if (!IsStopRequested() && !failedTiles.empty())
+    {
+        const Tile& first = failedTiles.front();
+        downloadError_ = fmt::format(
+            "瓦片下载失败：已重试 {} 轮，仍有 {} 个瓦片不可用；首个 z{} ({}, {})，缓存：{}",
+            kMaximumDownloadRetryRounds, failedTiles.size(), first.Zoom, first.X, first.Y,
+            PathToUtf8String(GetTileFilePath(first)));
+        fmt::print("{}\n", downloadError_);
+        DowningCount = static_cast<int32_t>(targetTiles.size() - failedTiles.size());
+        ReportProgress("下载失败", GetDowningCount(), TotalDownCount, failedTiles.size());
+    }
 	else if (!IsStopRequested() && (PostProcessEnabled ||
 		PostProcessMaxZoomOnlyEnabled || PostProcessMergedImageEnabled ||
 		PostProcessFbxEnabled))
@@ -2918,6 +2924,66 @@ void DownTool::DownToolBase::StartDown()
 	}*/
 
 	bDowning = false;
+}
+
+void DownTool::DownToolBase::DownloadTileBatch(const std::vector<Tile>& tiles)
+{
+    for (const Tile& tile : tiles)
+    {
+        if (IsStopRequested())
+        {
+            break;
+        }
+        DownloadTile(tile.X, tile.Y);
+    }
+    while (!curlEasyHandles.empty() && !IsStopRequested())
+    {
+        WaitDown();
+    }
+    fmt::print("\n");
+}
+
+bool DownTool::DownToolBase::WaitForDownloadRetry(uint32_t retryRound) const
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(retryRound);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (IsStopRequested())
+        {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return !IsStopRequested();
+}
+
+void DownTool::DownToolBase::RetryFailedTiles(std::vector<Tile>& failedTiles)
+{
+    for (uint32_t round = 1;
+         round <= kMaximumDownloadRetryRounds && !failedTiles.empty() && !IsStopRequested();
+         ++round)
+    {
+        DowningCount = static_cast<int32_t>(TotalDownCount - failedTiles.size());
+        downloadStage_ = fmt::format("等待重试下载瓦片 {}/{}", round, kMaximumDownloadRetryRounds);
+        fmt::print("{}：剩余 {} 个，等待 {} 秒。\n", downloadStage_, failedTiles.size(), round);
+        ReportProgress(downloadStage_, GetDowningCount(), TotalDownCount, failedTiles.size());
+        if (!WaitForDownloadRetry(round))
+        {
+            return;
+        }
+
+        downloadStage_ = fmt::format("重试下载瓦片 {}/{}", round, kMaximumDownloadRetryRounds);
+        ReportProgress(downloadStage_, GetDowningCount(), TotalDownCount, failedTiles.size());
+        DownloadTileBatch(failedTiles);
+        if (IsStopRequested())
+        {
+            return;
+        }
+        // 只复查本轮失败项，避免每轮重新扫描大批量任务的全部缓存。
+        failedTiles = ScanCacheAndCollectPendingTiles(failedTiles, "重试后缓存检测", false, true);
+        DowningCount = static_cast<int32_t>(TotalDownCount - failedTiles.size());
+        ReportProgress(downloadStage_, GetDowningCount(), TotalDownCount, failedTiles.size());
+    }
 }
 
 bool DownTool::DownToolBase::IsStopRequested() const
@@ -3359,8 +3425,8 @@ std::vector<DownTool::Tile> DownTool::DownToolBase::ScanCacheAndCollectPendingTi
 	if (updateProgress)
 	{
 		fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
-		ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
-	}
+        ReportProgress(downloadStage_, GetDowningCount(), TotalDownCount);
+    }
 
 	return pendingTiles;
 }
@@ -3393,8 +3459,8 @@ void DownTool::DownToolBase::DownloadTile(int32_t x, int32_t y)
 	{
 		DowningCount++;
 		fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
-		ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
-		return;
+        ReportProgress(downloadStage_, GetDowningCount(), TotalDownCount);
+        return;
 	}
 
 	//如果文件存在，检测是不是一个有效的图片文件，如果是的话就跳过下载，如果不是的话就删除这个文件重新下载
@@ -3416,15 +3482,15 @@ void DownTool::DownToolBase::DownloadTile(int32_t x, int32_t y)
 
 			DowningCount++;
 			fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
-			ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
-			return;
+            ReportProgress(downloadStage_, GetDowningCount(), TotalDownCount);
+            return;
 		}
 		else if (IsValidImageFile(nativePath))
 		{
 			DowningCount++;
 			fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
-			ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
-			return;
+            ReportProgress(downloadStage_, GetDowningCount(), TotalDownCount);
+            return;
 		}
 	}
 
@@ -3432,8 +3498,8 @@ void DownTool::DownToolBase::DownloadTile(int32_t x, int32_t y)
 	{
 		DowningCount++;
 		fmt::print("\r下载进度: {}/{}", GetDowningCount(), TotalDownCount);
-		ReportProgress("下载瓦片", GetDowningCount(), TotalDownCount);
-	}
+        ReportProgress(downloadStage_, GetDowningCount(), TotalDownCount);
+    }
 }
 
 std::filesystem::path DownTool::DownToolBase::GetTileFilePath(const Tile& tile) const

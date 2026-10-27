@@ -415,6 +415,8 @@ add_domdown_test(TianDiTuDownloadTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/TianDiTuDownloadTest.cpp)
 add_domdown_test(TianDiTuMultidateDownloadTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/TianDiTuMultidateDownloadTest.cpp)
+add_test(NAME TianDiTuMultidateEmptyHistoryTest
+    COMMAND TianDiTuMultidateDownloadTest --empty-history)
 add_domdown_test(RealDataIntegrationTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/RealDataIntegrationTest.cpp)
 add_domdown_test(RealDataFbxIntegrationTest

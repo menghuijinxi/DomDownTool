@@ -300,6 +300,32 @@ class FailingDownloader final : public DownTool::DownToolBase
     void StartDown() override { throw std::runtime_error("模拟重新下载失败"); }
 };
 
+class RetryExhaustedDownloader final : public DownTool::GoogleDownBase
+{
+  public:
+    RetryExhaustedDownloader(std::filesystem::path responsePath,
+                             std::shared_ptr<std::atomic_uint32_t> requestCount)
+        : responsePath_(std::move(responsePath)), requestCount_(std::move(requestCount))
+    {
+    }
+
+    void CalculateDownRange() override
+    {
+        MinTile = DownTool::Tile(1, 0, Zoom);
+        MaxTile = MinTile;
+    }
+
+    std::string MakeUri(const DownTool::Tile&) override
+    {
+        requestCount_->fetch_add(1, std::memory_order_relaxed);
+        return "file:///" + responsePath_.generic_string();
+    }
+
+  private:
+    std::filesystem::path responsePath_;
+    std::shared_ptr<std::atomic_uint32_t> requestCount_;
+};
+
 DomDownToolPreview::ExportConfiguration makeCancelableConfiguration(
     const std::filesystem::path& outputRoot)
 {
@@ -1460,6 +1486,48 @@ bool verifyShapefileTask(const std::filesystem::path& testRoot)
                    "重启后丢失了 SHP 组件或图源配置");
 }
 
+bool verifyDownloadRetryFailure(const std::filesystem::path& testRoot)
+{
+    using namespace DomDownToolPreview;
+    const std::filesystem::path root = testRoot / "download-retry-failure";
+    if (!postprocess_test::ResetDirectory(root))
+    {
+        return false;
+    }
+    const std::filesystem::path responsePath = root / "empty.bin";
+    std::ofstream(responsePath, std::ios::binary).close();
+    const auto requestCount = std::make_shared<std::atomic_uint32_t>(0);
+    ExportTaskManager manager(
+        {}, root / "records.json", [responsePath, requestCount](std::string_view) {
+            return std::make_unique<RetryExhaustedDownloader>(responsePath, requestCount);
+        });
+    ExportConfiguration configuration = makeCancelableConfiguration(root / "output");
+    configuration.zoom = 2;
+    const std::string taskId = manager.Enqueue(configuration);
+    if (!postprocess_test::Require(waitForFinished(manager, taskId, std::chrono::seconds(15)),
+                                   "失败瓦片重试耗尽后导出任务没有结束"))
+    {
+        return false;
+    }
+    const auto records = manager.GetRecords();
+    const auto* record = findRecord(records, taskId);
+    if (!postprocess_test::Require(
+            requestCount->load() == 4 && record && record->state == ExportTaskState::Failed &&
+                record->error.find("已重试 3 轮") != std::string::npos &&
+                record->error.find("仍有 1 个瓦片不可用") != std::string::npos &&
+                record->error.find("z2 (1, 0)") != std::string::npos,
+            "导出任务没有上报实际下载失败数量和瓦片坐标"))
+    {
+        return false;
+    }
+    const std::filesystem::path conversionRecord =
+        ExportTaskOutputRoot(configuration, taskId) /
+        std::filesystem::u8path("转换记录-" + taskId + ".txt");
+    return postprocess_test::Require(
+        postprocess_test::ContainsText(conversionRecord, record->error),
+        "最终下载失败原因没有写入转换记录");
+}
+
 bool runTest()
 {
     const std::filesystem::path testRoot =
@@ -1473,7 +1541,7 @@ bool runTest()
         return false;
     }
     if (!verifyCesiumConfiguration(testRoot) || !verifyRestartAndRename(testRoot) ||
-        !verifyPerTileFbxConfiguration(testRoot))
+        !verifyPerTileFbxConfiguration(testRoot) || !verifyDownloadRetryFailure(testRoot))
     {
         return false;
     }

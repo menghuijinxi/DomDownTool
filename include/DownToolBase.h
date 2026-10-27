@@ -199,14 +199,21 @@ namespace DownTool
 
 		DownToolCancellationCallback CancellationRequestedCallback;
 
-		[[nodiscard]] bool IsStopRequested() const;
+        std::string downloadStage_ = "下载瓦片";
+        std::string downloadError_;
+
+        [[nodiscard]] bool IsStopRequested() const;
 
 		void ReportProgress(std::string_view stage, uint64_t completed,
 			uint64_t total, uint64_t failed = 0) const;
 
 		void WaitDown();
 
-		void BuildTargetTiles(std::vector<Tile>& targetTiles);
+        void DownloadTileBatch(const std::vector<Tile>& tiles);
+        void RetryFailedTiles(std::vector<Tile>& failedTiles);
+        bool WaitForDownloadRetry(uint32_t retryRound) const;
+
+        void BuildTargetTiles(std::vector<Tile>& targetTiles);
 
 		void BuildRequestedTiles(std::vector<Tile>& targetTiles) const;
 
@@ -382,7 +389,12 @@ namespace DownTool
 		//开始下载，做一些准备工作
 		virtual void StartDown();
 
-		void DownloadTile(int32_t x, int32_t y);
+        const std::string& GetDownloadError() const
+        {
+            return downloadError_;
+        }
+
+        void DownloadTile(int32_t x, int32_t y);
 
 		//对于经过了坐标偏移的瓦片来说，我们就可能会需要下载很多个瓦片了，比如火星偏移过的瓦片一般一个瓦片需要下载4个，然后再进行合并操作
 		virtual bool IsTileOffset() const { return false; }

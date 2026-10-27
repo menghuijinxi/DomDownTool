@@ -863,7 +863,7 @@ double GisProcessingRatio(const DownTool::GisProcessingProgress& progress)
 double DownToolPhaseProgress(const DownTool::DownToolProgress& progress)
 {
     const double phaseRatio = ProgressRatio(progress.completed, progress.total);
-    if (progress.stage == "下载瓦片")
+    if (progress.stage.find("下载瓦片") != std::string::npos || progress.stage == "下载失败")
     {
         return phaseRatio * 0.45;
     }
@@ -2657,6 +2657,12 @@ bool DomDownToolPreview::ExportTaskManager::RunSatelliteDownloaderToRoot(
     ClearActiveDownloader();
     if (IsCancellationRequested())
     {
+        return false;
+    }
+
+    if (!downloader->GetDownloadError().empty())
+    {
+        error = downloader->GetDownloadError();
         return false;
     }
 

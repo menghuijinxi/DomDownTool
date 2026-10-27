@@ -557,7 +557,9 @@ void DownTool::TianDiTuMultidateDown::StartDownWithTransparentEmptyTiles()
 		return;
 	}
 
-	if (postProcessEnabled || postProcessMergedImageEnabled || postProcessFbxEnabled)
+    // 历史覆盖层允许无数据；补透明后已完整，不再保留普通下载失败状态。
+    downloadError_.clear();
+    if (postProcessEnabled || postProcessMergedImageEnabled || postProcessFbxEnabled)
 	{
 		RunPostProcess();
 	}

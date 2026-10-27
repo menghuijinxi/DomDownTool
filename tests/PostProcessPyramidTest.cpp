@@ -3,16 +3,228 @@
 #include <atomic>
 #include <chrono>
 #include <limits>
+#include <map>
 #include <memory>
 #include <thread>
 
+#if defined(_WIN32)
+#include "SlowTileHttpServer.h"
+#endif
+
 namespace
 {
-    struct BlockingPostProcessControl
+class RetryDownloadDown final : public DownTool::GoogleDownBase
+{
+  public:
+    RetryDownloadDown(std::filesystem::path emptyResponse, std::filesystem::path validResponse,
+                      uint32_t failedAttempts)
+        : emptyResponse_(std::move(emptyResponse)), validResponse_(std::move(validResponse)),
+          failedAttempts_(failedAttempts)
     {
-        std::atomic_uint32_t callCount = 0;
-        std::atomic_bool started = false;
-    };
+    }
+
+    void CalculateDownRange() override
+    {
+        MinTile = DownTool::Tile(0, 0, Zoom);
+        MaxTile = DownTool::Tile(2, 0, Zoom);
+    }
+
+    std::string MakeUri(const DownTool::Tile& tile) override
+    {
+        const uint32_t attempt = ++requestCounts_[tile.X];
+        const bool fail = tile.X == 1 && attempt <= failedAttempts_;
+        return "file:///" + (fail ? emptyResponse_ : validResponse_).generic_string();
+    }
+
+    uint32_t GetRequestCount(int32_t x) const
+    {
+        const auto found = requestCounts_.find(x);
+        return found == requestCounts_.end() ? 0 : found->second;
+    }
+
+  private:
+    std::filesystem::path emptyResponse_;
+    std::filesystem::path validResponse_;
+    uint32_t failedAttempts_ = 0;
+    std::map<int32_t, uint32_t> requestCounts_;
+};
+
+bool PrepareDownloadRetryTest(const std::filesystem::path& testRoot)
+{
+    if (!postprocess_test::ResetDirectory(testRoot))
+    {
+        return false;
+    }
+    std::ofstream(testRoot / "empty.bin", std::ios::binary).close();
+    return postprocess_test::WriteSourceTile(testRoot / "valid.png", 32,
+                                             cv::Scalar(23, 47, 89, 255));
+}
+
+void ConfigureDownloadRetryTool(DownTool::DownToolBase& tool, const std::filesystem::path& testRoot)
+{
+    tool.SetZoom(2);
+    tool.SetTileSize(32);
+    tool.SetCachePath(postprocess_test::PathToUtf8String(testRoot / "cache"));
+    tool.SetPostProcessOutputPath(postprocess_test::PathToUtf8String(testRoot / "output"));
+    tool.SetPostProcessEnabled(true);
+    tool.SetMaxDownQueue(2);
+}
+
+bool RunDownloadRetryRecoveryTest(uint32_t failedAttempts)
+{
+    const std::filesystem::path testRoot =
+        postprocess_test::MakeTestRoot("download-retry-recovery-" + std::to_string(failedAttempts));
+    if (!PrepareDownloadRetryTest(testRoot))
+    {
+        return false;
+    }
+    const std::filesystem::path emptyResponse = testRoot / "empty.bin";
+    const std::filesystem::path validResponse = testRoot / "valid.png";
+
+    RetryDownloadDown tool(emptyResponse, validResponse, failedAttempts);
+    ConfigureDownloadRetryTool(tool, testRoot);
+    const std::filesystem::path cachedTile = testRoot / "cache" / "2" / "0" / "0.png";
+    if (!postprocess_test::WriteSourceTile(cachedTile, 32, cv::Scalar(91, 63, 17, 255)))
+    {
+        return false;
+    }
+    std::atomic_bool progressWithinTotal = true;
+    tool.SetProgressCallback([&progressWithinTotal](const DownTool::DownToolProgress& progress) {
+        if (progress.completed > progress.total)
+        {
+            progressWithinTotal.store(false);
+        }
+    });
+    tool.StartDown();
+
+    return postprocess_test::Require(tool.GetRequestCount(1) == failedAttempts + 1 &&
+                                         tool.GetDownloadError().empty(),
+                                     "首次返回空文件后没有在当前下载任务内重试失败瓦片") &&
+           postprocess_test::Require(tool.GetRequestCount(0) == 0 && tool.GetRequestCount(2) == 1,
+                                     "重试失败瓦片时重复下载了有效缓存或本轮已经成功的瓦片") &&
+           postprocess_test::Require(progressWithinTotal.load(),
+                                     "重试使下载完成数超过了目标总数") &&
+           postprocess_test::RequireReadableImage(testRoot / "output" / "2" / "1" / "0.png") &&
+           postprocess_test::RequireNonEmptyFile(testRoot / "output" / "meta.json");
+}
+
+bool RunDownloadRetryExhaustionTest()
+{
+    const std::filesystem::path testRoot =
+        postprocess_test::MakeTestRoot("download-retry-exhaustion");
+    if (!PrepareDownloadRetryTest(testRoot))
+    {
+        return false;
+    }
+    RetryDownloadDown tool(testRoot / "empty.bin", testRoot / "valid.png", 4);
+    ConfigureDownloadRetryTool(tool, testRoot);
+    uint64_t finalFailedCount = 0;
+    tool.SetProgressCallback([&finalFailedCount](const DownTool::DownToolProgress& progress) {
+        if (progress.stage == "下载失败")
+        {
+            finalFailedCount = progress.failed;
+        }
+    });
+    tool.StartDown();
+
+    return postprocess_test::Require(tool.GetRequestCount(0) == 1 && tool.GetRequestCount(1) == 4 &&
+                                         tool.GetRequestCount(2) == 1 && finalFailedCount == 1,
+                                     "失败重试没有遵守三轮上限，或重复下载了成功瓦片") &&
+           postprocess_test::Require(
+               tool.GetDownloadError().find("仍有 1 个瓦片不可用") != std::string::npos &&
+                   tool.GetDownloadError().find("z2 (1, 0)") != std::string::npos &&
+                   !std::filesystem::exists(testRoot / "output" / "meta.json"),
+               "重试耗尽后没有报告失败详情，或仍然执行了后处理");
+}
+
+bool RunDownloadRetryCancellationTest()
+{
+    const std::filesystem::path testRoot =
+        postprocess_test::MakeTestRoot("download-retry-cancellation");
+    if (!PrepareDownloadRetryTest(testRoot))
+    {
+        return false;
+    }
+    RetryDownloadDown tool(testRoot / "empty.bin", testRoot / "valid.png", 4);
+    ConfigureDownloadRetryTool(tool, testRoot);
+    std::atomic_bool waitingForRetry = false;
+    tool.SetProgressCallback([&waitingForRetry](const DownTool::DownToolProgress& progress) {
+        if (progress.stage.find("等待重试") == 0)
+        {
+            waitingForRetry.store(true);
+        }
+    });
+    std::thread worker([&tool] { tool.StartDown(); });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!waitingForRetry.load() && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const auto canceledAt = std::chrono::steady_clock::now();
+    tool.StopDown();
+    worker.join();
+
+    return postprocess_test::Require(waitingForRetry.load() && tool.GetRequestCount(1) == 1 &&
+                                         std::chrono::steady_clock::now() - canceledAt <
+                                             std::chrono::milliseconds(500),
+                                     "等待重试时取消没有及时退出，或取消后继续发起下载") &&
+           postprocess_test::Require(
+               tool.GetDownloadError().empty() &&
+                   !std::filesystem::exists(testRoot / "output" / "meta.json"),
+               "取消重试被误报为下载失败，或仍然执行了后处理");
+}
+
+#if defined(_WIN32)
+class HttpRetryDownloadDown final : public DownTool::GoogleDownBase
+{
+  public:
+    void CalculateDownRange() override
+    {
+        MinTile = DownTool::Tile(1, 0, Zoom);
+        MaxTile = MinTile;
+    }
+};
+
+bool RunIncompleteResponseRetryTest()
+{
+    const cv::Mat image(32, 32, CV_8UC4, cv::Scalar(23, 47, 89, 255));
+    std::vector<unsigned char> encoded;
+    if (!cv::imencode(".png", image, encoded))
+    {
+        return false;
+    }
+    tile_queue_test::SlowTileHttpServer server(encoded);
+    for (const std::string route : {"retry-partial", "retry-http-error"})
+    {
+        const std::filesystem::path testRoot = postprocess_test::MakeTestRoot(route);
+        if (!postprocess_test::ResetDirectory(testRoot))
+        {
+            return false;
+        }
+        HttpRetryDownloadDown tool;
+        ConfigureDownloadRetryTool(tool, testRoot);
+        tool.SetProxy("");
+        tool.SetUrlTemplate(server.GetUrl() + "/" + route);
+        tool.StartDown();
+        if (!postprocess_test::Require(tool.GetDownloadError().empty(),
+                                       "HTTP 失败或传输中断没有在重试后恢复") ||
+            !postprocess_test::RequireReadableImage(testRoot / "output" / "2" / "1" / "0.png") ||
+            !postprocess_test::RequireNonEmptyFile(testRoot / "output" / "meta.json"))
+        {
+            return false;
+        }
+    }
+    return postprocess_test::Require(server.GetPartialRequestCount() == 2 &&
+                                         server.GetHttpErrorRequestCount() == 2,
+                                     "带图片头的半截响应或 HTTP 错误图片被缓存检查误判为成功");
+}
+#endif
+
+struct BlockingPostProcessControl
+{
+    std::atomic_uint32_t callCount = 0;
+    std::atomic_bool started = false;
+};
 
     class BlockingPostProcessDown final : public postprocess_test::TestPostProcessDown
     {
@@ -278,6 +490,18 @@ namespace
 
     bool RunTest()
     {
+        if (!RunDownloadRetryRecoveryTest(1) || !RunDownloadRetryRecoveryTest(3) ||
+            !RunDownloadRetryExhaustionTest() || !RunDownloadRetryCancellationTest())
+        {
+            return false;
+        }
+#if defined(_WIN32)
+        if (!RunIncompleteResponseRetryTest())
+        {
+            return false;
+        }
+#endif
+
         if (!RunFallbackCacheIsolationTest())
         {
             return false;
