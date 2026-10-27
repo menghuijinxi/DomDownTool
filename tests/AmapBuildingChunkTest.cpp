@@ -282,10 +282,145 @@ namespace
         return true;
     }
 
+    bool RequireUprightBuildingTextures(const std::filesystem::path& path)
+    {
+        Assimp::Importer importer;
+        const aiScene* scene = postprocess_test::ReadFbxScene(importer, path);
+        if (!postprocess_test::Require(scene != nullptr, "cannot read texture orientation FBX"))
+        {
+            return false;
+        }
+        bool checkedWall = false;
+        bool checkedRoof = false;
+        for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; ++meshIndex)
+        {
+            const aiMesh& mesh = *scene->mMeshes[meshIndex];
+            aiString texturePath;
+            if (!postprocess_test::Require(
+                    mesh.HasNormals() && mesh.HasTextureCoords(0) &&
+                        scene->mMaterials[mesh.mMaterialIndex]->GetTexture(
+                            aiTextureType_DIFFUSE, 0, &texturePath) == AI_SUCCESS,
+                    "orientation mesh has no normals, UVs or texture"))
+            {
+                return false;
+            }
+            const cv::Mat image = cv::imread(postprocess_test::PathToUtf8String(
+                path.parent_path() / std::filesystem::u8path(texturePath.C_Str())));
+            if (!postprocess_test::Require(!image.empty(), "cannot read orientation texture"))
+            {
+                return false;
+            }
+            for (unsigned int faceIndex = 0; faceIndex < mesh.mNumFaces; ++faceIndex)
+            {
+                const aiFace& face = mesh.mFaces[faceIndex];
+                const bool roof = mesh.mNormals[face.mIndices[0]].z > 0.5f;
+                float minimum = std::numeric_limits<float>::max();
+                float maximum = std::numeric_limits<float>::lowest();
+                float center = 0.f;
+                aiVector3D uv;
+                for (unsigned int corner = 0; corner < face.mNumIndices; ++corner)
+                {
+                    const unsigned int index = face.mIndices[corner];
+                    const aiVector3D& point = mesh.mVertices[index];
+                    const float heightOrNorth = roof ? point.y : point.z;
+                    minimum = std::min(minimum, heightOrNorth);
+                    maximum = std::max(maximum, heightOrNorth);
+                    center += heightOrNorth / 3.f;
+                    uv += mesh.mTextureCoords[0][index] / 3.f;
+                }
+                uv.x -= std::floor(uv.x);
+                uv.y = std::clamp(uv.y, 0.f, 1.f);
+                if (mesh.HasTextureCoords(1) && mesh.HasTextureCoords(2))
+                {
+                    const auto& offset = mesh.mTextureCoords[1][face.mIndices[0]];
+                    const auto& upper = mesh.mTextureCoords[2][face.mIndices[0]];
+                    uv.x = offset.x + uv.x * (upper.x - offset.x);
+                    uv.y = offset.y + uv.y * (upper.y - offset.y);
+                }
+                const int column = std::clamp(
+                    static_cast<int>(uv.x * image.cols), 0, image.cols - 1);
+                const int row = std::clamp(
+                    static_cast<int>((1.f - uv.y) * image.rows), 0, image.rows - 1);
+                const cv::Vec3b color = image.at<cv::Vec3b>(row, column);
+                const bool expectedRed = center > (minimum + maximum) * 0.5f;
+                if (!postprocess_test::Require(
+                        expectedRed ? color[2] > 200 && color[0] < 50 :
+                                      color[0] > 200 && color[2] < 50,
+                        std::string(roof ? "roof north/south" : "wall top/bottom") +
+                            " texture is vertically inverted: " +
+                            postprocess_test::PathToUtf8String(path)))
+                {
+                    return false;
+                }
+                checkedWall = checkedWall || !roof;
+                checkedRoof = checkedRoof || roof;
+            }
+        }
+        return postprocess_test::Require(
+            checkedWall && checkedRoof, "orientation test did not sample walls and roofs");
+    }
+
+    bool CheckBuildingTextureOrientation(const std::filesystem::path& root)
+    {
+        DownTool::AmapVectorDecodedData data;
+        data.features = {MakeBuilding(0., 0., 5)};
+        DownTool::AmapBuildingFbxExportOptions options;
+        options.centerWgs84 = {0., 0.};
+        options.wallTexturePath = root / "sources" / "wall";
+        options.roofTexturePath = root / "sources" / "roof";
+        cv::Mat image(96, 96, CV_8UC3, cv::Scalar(255, 0, 0));
+        image(cv::Rect(0, 0, 96, 48)).setTo(cv::Scalar(0, 0, 255));
+        for (const auto& directory : {options.wallTexturePath, options.roofTexturePath})
+        {
+            std::filesystem::create_directories(directory);
+            if (!postprocess_test::Require(
+                    cv::imwrite(postprocess_test::PathToUtf8String(directory / "texture.png"),
+                        image),
+                    "cannot write orientation fixture"))
+            {
+                return false;
+            }
+        }
+        for (const bool atlas : {false, true})
+        {
+            options.wallTextureMode = atlas ?
+                DownTool::AmapBuildingFbxTextureMode::MergedAtlas :
+                DownTool::AmapBuildingFbxTextureMode::Scattered;
+            options.roofTextureMode = atlas ?
+                DownTool::AmapBuildingFbxRoofTextureMode::MergedAtlas :
+                DownTool::AmapBuildingFbxRoofTextureMode::Scattered;
+            options.outputPath = root / (atlas ? "atlas" : "scattered") / "buildings.fbx";
+            const auto result = DownTool::ExportAmapBuildingsToFbx(data, options);
+            if (!postprocess_test::Require(result.success, result.error) ||
+                !RequireUprightBuildingTextures(options.outputPath))
+            {
+                return false;
+            }
+        }
+        options.roofTextureMode = DownTool::AmapBuildingFbxRoofTextureMode::Satellite;
+        const auto southWest = Wgs84AtMeters(-40., -40.);
+        const auto northEast = Wgs84AtMeters(40., 40.);
+        options.satelliteRoofTextures.push_back({
+            options.roofTexturePath / "texture.png",
+            southWest.lon, southWest.lat, northEast.lon, northEast.lat});
+        options.outputPath = root / "satellite" / "buildings.fbx";
+        const auto result = DownTool::ExportAmapBuildingsToFbx(data, options);
+        if (!postprocess_test::Require(result.success, result.error) ||
+            !RequireUprightBuildingTextures(options.outputPath))
+        {
+            return false;
+        }
+        return true;
+    }
+
     bool RunTest()
     {
         const auto root = postprocess_test::MakeTestRoot("building-chunks");
         if (!postprocess_test::ResetDirectory(root))
+        {
+            return false;
+        }
+        if (!CheckBuildingTextureOrientation(root / "texture-orientation"))
         {
             return false;
         }

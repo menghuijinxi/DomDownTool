@@ -1544,6 +1544,7 @@ namespace
                 std::array<double, 3>{ -dy, dx, 0. };
             const double nextU = currentU + segmentLength / std::max(1., textureWallWidth);
 
+            // Assimp/FBX 的 V 从下向上递增，墙脚对应贴图底边。
             AppendWallQuad(
                 first,
                 second,
@@ -1551,8 +1552,8 @@ namespace
                 topCentimeters,
                 currentU,
                 nextU,
-                1.,
                 0.,
+                1.,
                 normal,
                 useRightNormal,
                 mesh);
@@ -1620,7 +1621,7 @@ namespace
                         point.y,
                         topCentimeters,
                         (point.x - uvBounds.minX) / footprintWidth,
-                        1. - (point.y - uvBounds.minY) / footprintHeight,
+                        (point.y - uvBounds.minY) / footprintHeight,
                         { 0., 0., 1. }
                     });
                 }
