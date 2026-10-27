@@ -484,6 +484,7 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     target_compile_options(TileDownloadQueueTest PRIVATE /EHsc /permissive-)
   endif()
   add_test(NAME TileDownloadQueueTest COMMAND TileDownloadQueueTest)
+  add_test(NAME PreviewHttpsTileIntegrationTest COMMAND TileDownloadQueueTest --https-tiles)
 
   add_executable(GisOverlayRendererTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/GisOverlayRendererTest.cpp

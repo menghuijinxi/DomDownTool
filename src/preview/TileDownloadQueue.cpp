@@ -82,6 +82,12 @@ size_t writeFileData(void* data, size_t size, size_t count, void* userData)
     return stream->good() ? byteCount : 0;
 }
 
+int cancelObsoleteRequest(void* userData, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+{
+    const auto& cancellationRequested = *static_cast<const std::atomic_bool*>(userData);
+    return cancellationRequested.load() ? 1 : 0;
+}
+
 std::string trimAscii(std::string value)
 {
     size_t begin = 0;
@@ -310,6 +316,10 @@ DomDownToolPreview::TileDownloadQueue::~TileDownloadQueue()
         pendingJobs_.clear();
         pendingPaths_.clear();
         visiblePaths_.clear();
+        for (const auto& [path, cancellationRequested] : activeRequests_)
+        {
+            cancellationRequested->store(true);
+        }
     }
     condition_.notify_all();
     for (std::thread& worker : workers_)
@@ -347,6 +357,13 @@ void DomDownToolPreview::TileDownloadQueue::updateVisibleRequests(
             (void)job;
             visiblePaths_.insert(destination);
         }
+        for (const auto& [path, cancellationRequested] : activeRequests_)
+        {
+            if (!visiblePaths_.contains(path))
+            {
+                cancellationRequested->store(true);
+            }
+        }
 
         std::deque<PendingJob> retainedJobs;
         for (PendingJob& pending : pendingJobs_)
@@ -367,7 +384,7 @@ void DomDownToolPreview::TileDownloadQueue::updateVisibleRequests(
         for (const TileDownloadJob& job : jobs)
         {
             if (!job.source || job.destination.empty() ||
-                activePaths_.contains(job.destination) ||
+                activeRequests_.contains(job.destination) ||
                 pendingPaths_.contains(job.destination) ||
                 HasExhaustedPersistentFailures(job.destination))
             {
@@ -383,10 +400,17 @@ void DomDownToolPreview::TileDownloadQueue::updateVisibleRequests(
 
 void DomDownToolPreview::TileDownloadQueue::cancelPending()
 {
-    const std::lock_guard lock(mutex_);
-    pendingJobs_.clear();
-    pendingPaths_.clear();
-    visiblePaths_.clear();
+    {
+        const std::lock_guard lock(mutex_);
+        pendingJobs_.clear();
+        pendingPaths_.clear();
+        visiblePaths_.clear();
+        for (const auto& [path, cancellationRequested] : activeRequests_)
+        {
+            cancellationRequested->store(true);
+        }
+    }
+    condition_.notify_all();
 }
 
 std::vector<std::filesystem::path>
@@ -413,7 +437,7 @@ DomDownToolPreview::TileDownloadQueue::takeCompletedPaths()
 DomDownToolPreview::TileDownloadStats DomDownToolPreview::TileDownloadQueue::stats() const
 {
     const std::lock_guard lock(mutex_);
-    return {pendingPaths_.size(), activePaths_.size(), failedTileCount_};
+    return {pendingPaths_.size(), activeRequests_.size(), failedTileCount_};
 }
 
 DomDownToolPreview::TilePersistentFailureState
@@ -492,8 +516,13 @@ void DomDownToolPreview::TileDownloadQueue::ClearPersistentFailureStatesUnder(
     }
 }
 
-bool DomDownToolPreview::TileDownloadQueue::download(const TileDownloadJob& job) const
+bool DomDownToolPreview::TileDownloadQueue::download(
+    const TileDownloadJob& job, const std::atomic_bool& cancellationRequested) const
 {
+    if (cancellationRequested.load())
+    {
+        return false;
+    }
     std::error_code error;
     std::filesystem::create_directories(job.destination.parent_path(), error);
     if (error)
@@ -552,6 +581,11 @@ bool DomDownToolPreview::TileDownloadQueue::download(const TileDownloadJob& job)
         curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, kConnectTimeoutSeconds);
         curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(easy, CURLOPT_USERAGENT, "DomDownToolPreview/1.0");
+        // 吊销分发点离线时允许继续验证证书链，仍拒绝无效及已知吊销的证书。
+        curl_easy_setopt(easy, CURLOPT_SSL_OPTIONS, CURLSSLOPT_REVOKE_BEST_EFFORT);
+        curl_easy_setopt(easy, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(easy, CURLOPT_XFERINFOFUNCTION, cancelObsoleteRequest);
+        curl_easy_setopt(easy, CURLOPT_XFERINFODATA, &cancellationRequested);
         if (headers)
         {
             curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers.get());
@@ -573,6 +607,10 @@ bool DomDownToolPreview::TileDownloadQueue::download(const TileDownloadJob& job)
         }
     }
 
+    if (cancellationRequested.load())
+    {
+        return false;
+    }
     bool wroteTransparentPlaceholder = false;
     if (isEmptyFile(partialPath) && job.useTransparentPlaceholderOnEmptyResponse)
     {
@@ -588,7 +626,7 @@ bool DomDownToolPreview::TileDownloadQueue::download(const TileDownloadJob& job)
         return false;
     }
 
-    if (!replaceFileAtomically(partialPath, job.destination))
+    if (cancellationRequested.load() || !replaceFileAtomically(partialPath, job.destination))
     {
         return false;
     }
@@ -647,6 +685,7 @@ void DomDownToolPreview::TileDownloadQueue::workerLoop()
     while (true)
     {
         TileDownloadJob job;
+        std::shared_ptr<std::atomic_bool> cancellationRequested;
         {
             std::unique_lock lock(mutex_);
             while (true)
@@ -687,17 +726,18 @@ void DomDownToolPreview::TileDownloadQueue::workerLoop()
                 job = std::move(nextJob->job);
                 pendingJobs_.erase(nextJob);
                 pendingPaths_.erase(job.destination);
-                activePaths_.insert(job.destination);
+                cancellationRequested = std::make_shared<std::atomic_bool>(false);
+                activeRequests_.emplace(job.destination, cancellationRequested);
                 break;
             }
         }
 
-        const bool succeeded = download(job);
+        const bool succeeded = download(job, *cancellationRequested);
         {
             const std::lock_guard lock(mutex_);
-            activePaths_.erase(job.destination);
+            activeRequests_.erase(job.destination);
             completed_.push_back({job.destination, succeeded});
-            if (!succeeded)
+            if (!succeeded && !cancellationRequested->load())
             {
                 ++failedTileCount_;
                 const TilePersistentFailureState failureState =

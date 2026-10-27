@@ -3572,6 +3572,8 @@ bool DownTool::DownToolBase::QueueTileDownload(
 	curl_easy_setopt(easy, CURLOPT_TIMEOUT, TileRequestTimeoutSeconds);
 	curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, TileConnectTimeoutSeconds);
 	curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+	// 吊销分发点离线时允许继续验证证书链，仍拒绝无效及已知吊销的证书。
+	curl_easy_setopt(easy, CURLOPT_SSL_OPTIONS, CURLSSLOPT_REVOKE_BEST_EFFORT);
     if (!Proxy.empty())
     {
         curl_easy_setopt(easy, CURLOPT_PROXY, Proxy.c_str());

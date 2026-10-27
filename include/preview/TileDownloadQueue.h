@@ -1,11 +1,13 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -96,7 +98,8 @@ class TileDownloadQueue
         bool succeeded = false;
     };
 
-    [[nodiscard]] bool download(const TileDownloadJob& job) const;
+    [[nodiscard]] bool download(
+        const TileDownloadJob& job, const std::atomic_bool& cancellationRequested) const;
 
     [[nodiscard]] static bool validateImage(const std::filesystem::path& path);
 
@@ -107,7 +110,7 @@ class TileDownloadQueue
     std::condition_variable condition_;
     std::deque<PendingJob> pendingJobs_;
     std::unordered_set<std::filesystem::path> pendingPaths_;
-    std::unordered_set<std::filesystem::path> activePaths_;
+    std::unordered_map<std::filesystem::path, std::shared_ptr<std::atomic_bool>> activeRequests_;
     std::unordered_set<std::filesystem::path> visiblePaths_;
     std::deque<DownloadResult> completed_;
     std::vector<std::thread> workers_;

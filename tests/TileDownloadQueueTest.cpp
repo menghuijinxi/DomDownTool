@@ -1,8 +1,11 @@
+#include "SlowTileHttpServer.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <fstream>
@@ -12,9 +15,13 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "DownToolBase.h"
+#include "GaoDeDown.h"
+#include "TencentDown.h"
+#include "TianDiTuDown.h"
 #include "preview/TileDownloadQueue.h"
 
 namespace
@@ -107,10 +114,171 @@ std::vector<unsigned char> makePngBytes()
         0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82};
     return {std::begin(kPngBytes), std::end(kPngBytes)};
 }
+
+int testHttpsMapTiles()
+{
+    const char* enabled = std::getenv("DOMDOWNTOOL_RUN_REAL_DATA_TESTS");
+    if (!enabled || std::string(enabled) != "1")
+    {
+        std::cout << "HTTPS tile integration skipped; set DOMDOWNTOOL_RUN_REAL_DATA_TESTS=1\n";
+        return 0;
+    }
+
+    const std::filesystem::path testRoot =
+        std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) / "tmp" / "preview-https-tiles";
+    std::error_code error;
+    std::filesystem::remove_all(testRoot, error);
+    DownTool::TencentDown tencent(DownTool::TencentMapType::Electronic);
+    DownTool::GaoDeDown roads(DownTool::GaoDeMapType::RoadNetworkOverlay);
+    DownTool::TianDiTuDown tianditu;
+    const std::vector<std::pair<std::string, DownTool::DownToolBase*>> sources{
+        {"tencent-electronic", &tencent}, {"gaode-roads", &roads}, {"tianditu", &tianditu}};
+    std::condition_variable completionCondition;
+    std::mutex completionMutex;
+    DomDownToolPreview::TileDownloadQueue queue(
+        [&completionCondition] { completionCondition.notify_all(); }, 8);
+    std::vector<DomDownToolPreview::TileDownloadJob> jobs;
+    for (const auto& [name, source] : sources)
+    {
+        for (uint32_t zoom : {15u, 16u, 17u, 18u})
+        {
+            DownTool::Tile centerTile;
+            double pixelX = 0.0;
+            double pixelY = 0.0;
+            if (!source->TryProjectToSourceTile(
+                    {116.389606, 39.909374}, zoom, centerTile, pixelX, pixelY))
+            {
+                throw std::runtime_error("Cannot project HTTPS integration tile");
+            }
+            for (int32_t offsetY = -1; offsetY <= 1; ++offsetY)
+            {
+                for (int32_t offsetX = -1; offsetX <= 1; ++offsetX)
+                {
+                    const DownTool::Tile tile(
+                        centerTile.X + offsetX, centerTile.Y + offsetY, zoom);
+                    const auto destination = testRoot / name / std::to_string(zoom) /
+                        std::to_string(tile.X) / (std::to_string(tile.Y) + ".png");
+                    jobs.push_back({destination, tile, source, source->BuildTileHttpRequest(tile)});
+                }
+            }
+        }
+    }
+    queue.updateVisibleRequests(jobs);
+    const auto deadline = std::chrono::steady_clock::now() + 60s;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        const auto stats = queue.stats();
+        if (stats.queuedTiles == 0 && stats.activeTiles == 0)
+        {
+            break;
+        }
+        std::unique_lock lock(completionMutex);
+        completionCondition.wait_for(lock, 100ms);
+    }
+    queue.cancelPending();
+    bool success = true;
+    size_t downloaded = 0;
+    for (const auto& job : jobs)
+    {
+        if (std::filesystem::exists(job.destination))
+        {
+            ++downloaded;
+        }
+        else
+        {
+            success = false;
+            std::cerr << "Missing HTTPS tile: "
+                      << job.destination.lexically_relative(testRoot).generic_string() << '\n';
+        }
+    }
+    std::cout << "HTTPS tiles downloaded: " << downloaded << "/" << jobs.size()
+              << "; failures: " << queue.stats().failedTiles << '\n';
+    return success ? 0 : 1;
+}
+
+void testViewportCancellation(const std::filesystem::path& testRoot,
+    const std::vector<unsigned char>& pngBytes)
+{
+    for (bool switchSource : {false, true})
+    {
+        DownTool::DownToolBase source;
+        source.SetProxy("");
+        std::condition_variable condition;
+        std::mutex mutex;
+        DomDownToolPreview::TileDownloadQueue queue([&condition] { condition.notify_all(); }, 1);
+        tile_queue_test::SlowTileHttpServer server(pngBytes);
+        const auto root = testRoot / (switchSource ? "switch-source" : "switch-zoom");
+        const auto oldPath = root / "old.png";
+        const auto newPath = root / "new.png";
+        source.SetUrlTemplate(server.GetUrl() + "/slow");
+        const DownTool::Tile oldTile(1, 2, 15);
+        const DomDownToolPreview::TileDownloadJob oldJob{
+            oldPath, oldTile, &source, source.BuildTileHttpRequest(oldTile)};
+        queue.updateVisibleRequests({oldJob});
+        if (!waitUntil([&server] { return server.GetSlowRequestCount() == 1; }, condition, mutex))
+        {
+            throw std::runtime_error("Slow viewport request did not start");
+        }
+        queue.updateVisibleRequests({oldJob});
+        if (switchSource)
+        {
+            queue.cancelPending();
+        }
+        source.SetUrlTemplate(server.GetUrl() + "/fast");
+        const DownTool::Tile newTile(4, 8, switchSource ? 15 : 17);
+        const DomDownToolPreview::TileDownloadJob newJob{
+            newPath, newTile, &source, source.BuildTileHttpRequest(newTile)};
+        queue.updateVisibleRequests({newJob});
+        const bool newTileReady = waitUntil(
+            [&newPath] { return std::filesystem::exists(newPath); }, condition, mutex);
+        queue.cancelPending();
+        if (!newTileReady)
+        {
+            throw std::runtime_error(switchSource ?
+                "Old source request blocked the new source" :
+                "Old zoom request blocked the new zoom");
+        }
+        if (queue.stats().failedTiles != 0 || std::filesystem::exists(oldPath) ||
+            std::filesystem::exists(partialPathFor(oldPath)) ||
+            std::filesystem::exists(failedMarkerPathFor(oldPath)))
+        {
+            throw std::runtime_error("Cancelled viewport request was cached or counted as failed");
+        }
+    }
+
+    DownTool::DownToolBase source;
+    source.SetProxy("");
+    std::condition_variable condition;
+    std::mutex mutex;
+    DomDownToolPreview::TileDownloadQueue queue([&condition] { condition.notify_all(); }, 1);
+    tile_queue_test::SlowTileHttpServer server(pngBytes);
+    const auto destination = testRoot / "retained-request.png";
+    source.SetUrlTemplate(server.GetUrl() + "/slow");
+    const DownTool::Tile tile(1, 2, 15);
+    const DomDownToolPreview::TileDownloadJob job{
+        destination, tile, &source, source.BuildTileHttpRequest(tile)};
+    queue.updateVisibleRequests({job});
+    if (!waitUntil([&server] { return server.GetSlowRequestCount() == 1; }, condition, mutex))
+    {
+        throw std::runtime_error("Retained viewport request did not start");
+    }
+    queue.updateVisibleRequests({job});
+    server.ReleaseSlowResponses();
+    if (!waitUntil([&destination] { return std::filesystem::exists(destination); },
+            condition, mutex) ||
+        queue.stats().failedTiles != 0)
+    {
+        throw std::runtime_error("Viewport update cancelled a still-visible request");
+    }
+}
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--https-tiles")
+    {
+        return testHttpsMapTiles();
+    }
     const std::filesystem::path testRoot =
         std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) / "tmp" / "tile-download-queue-test";
     std::error_code error;
@@ -123,6 +291,7 @@ int main()
         {
             throw std::runtime_error("无法创建 PNG 测试数据");
         }
+        testViewportCancellation(testRoot, pngBytes);
 
         const std::filesystem::path validSourcePath = testRoot / "source.png";
         const std::filesystem::path invalidSourcePath = testRoot / "source.txt";

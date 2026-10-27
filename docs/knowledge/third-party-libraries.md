@@ -38,6 +38,48 @@ z16、半径 300 米条件下完成真实下载、XYZ 金字塔和 512×768 合�
 失效时重新核对官方 SDK，并用真实图片确认，不能只检查 HTTP 200。
 下载和图片后处理继续使用现有 CURL/OpenCV 链路，线程生命周期和取消方式未增加。
 
+### HTTPS 瓦片长时间 loading 和视口切换阻塞
+
+2026-10-27 修复腾讯电子底图、高德透明路网和天地图大面积缺图。诊断显示瓦片先处于
+`loading`，重试 12 次后变为 `failed`；部分已有缓存仍能显示。并非只能请求到 z16。
+
+- 本机 Release 使用 libcurl 8.21.0 / Schannel。直接复用预览下载队列、使用全新缓存
+  即可复现；临时错误缓冲捕获到 `CURLE_SSL_CONNECT_ERROR` /
+  `CRYPT_E_REVOCATION_OFFLINE (0x80092013)`，HTTP 状态仍为 0，尚未到达图片解码。
+  Windows 无法访问证书吊销分发点，使多个 HTTPS 图源同时失败。
+- 预览队列和导出共用的栅格下载器设置
+  `CURLOPT_SSL_OPTIONS = CURLSSLOPT_REVOKE_BEST_EFFORT`。只容许吊销分发点缺失或离线，
+  保留证书链、主机名及已知吊销证书验证；不能使用关闭 `SSL_VERIFYPEER`、
+  `SSL_VERIFYHOST` 或 `CURLSSLOPT_NO_REVOKE` 代替。
+  依据为 [libcurl 官方选项说明](https://curl.se/libcurl/c/CURLOPT_SSL_OPTIONS.html)，
+  该选项在其他 TLS 后端上无效果。
+- 另一个独立问题是 `cancelPending()` 原先只清理尚未开始的任务。切换图源、缩放或拖动后，
+  已开始的旧瓦片仍会占用线程直到返回或超时。现在每个活动请求持有单向取消标记，
+  视口更新取消不再需要的请求；清理队列和销毁时也设置标记，由
+  `CURLOPT_XFERINFOFUNCTION` 中止 CURL 传输，随后释放工作线程。
+  取消不累计失败次数、不写 `.failed`，也不提交未完成图片；仍可见的请求继续下载。
+  现有自定义 WebView 下载回调仍由其自身管理在途 I/O，返回后同样检查取消标记。
+- 原先已经写入 `attempts=12` 的失败状态仍按既有策略保留。更新并重启程序后，
+  点击顶部刷新按钮可清理当前图源的失败标记，重新请求，无需删除已成功的瓦片。
+
+验证：修复前新加入的慢响应回归报 `Old zoom request blocked the new zoom`，
+真实 HTTPS 队列也复现证书错误。修复后 `TileDownloadQueueTest` 覆盖缩放和切换图源，
+旧响应故意停住 30 秒时，新瓦片仍在 5 秒内完成，且旧请求不产生缓存或失败状态。
+`PreviewHttpsTileIntegrationTest` 在三家、z15～z18 各取 3×3 瓦片，108/108 图片通过实际
+下载及 Skia 解码校验，失败数为 0。联网测试需显式启用：
+
+```powershell
+$env:DOMDOWNTOOL_RUN_REAL_DATA_TESTS = "1"
+ctest --test-dir <build-dir> -R PreviewHttpsTileIntegrationTest --output-on-failure
+```
+
+联网复测曾出现一次连接超时，随后同批全部成功；测试需允许既有队列完成重试，
+成功条件仍是全部图片完成，不能在第一次瞬时失败时就取消其余请求。
+
+快速检查顺序：查看诊断中的失败次数和缓存字节数，复现同一 URL 并记录 CURL 错误，
+区分 TLS、HTTP 和图片解码失败，再检查旧视口的活动请求是否会取消。
+不要仅根据显示层级推断服务端无数据，也不要通过增加线程数掩盖旧请求占用。
+
 ## CDT 约束 Delaunay 三角剖分用于 FBX 地形 TIN
 
 ### 选型与约束
