@@ -1,7 +1,11 @@
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <limits>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include "ArcGISDown.h"
 #include "BaiduDown.h"
@@ -9,6 +13,8 @@
 #include "GaoDeDown.h"
 #include "GoogleDown.h"
 #include "TencentDown.h"
+
+#include "../src/SystemProxy.h"
 
 namespace
 {
@@ -128,6 +134,69 @@ namespace
                        "Baidu satellite cache was not restored");
     }
 
+    bool TestSystemHttpsProxySelection()
+    {
+        const std::array<std::pair<std::string_view, std::string_view>, 13> cases{
+            {{"", ""},
+             {" ; \t ", ""},
+             {"127.0.0.1:18080", "http://127.0.0.1:18080"},
+             {"http://127.0.0.1:18080", "http://127.0.0.1:18080"},
+             {"http=127.0.0.1:18080;https=127.0.0.1:18081", "http://127.0.0.1:18081"},
+             {"HTTPS=proxy.example:443;http=proxy.example:80", "http://proxy.example:443"},
+             {"http=proxy.example:80", ""},
+             {"socks=127.0.0.1:11080", ""},
+             {"https=", ""},
+             {"proxy.example:8080;https=secure.example:8081", "http://secure.example:8081"},
+             {"https=socks5h://127.0.0.1:11080", "socks5h://127.0.0.1:11080"},
+             {"https=[::1]:18080", "http://[::1]:18080"},
+             {" \thttp=proxy.example:80 ; https=proxy.example:443 ; ",
+              "http://proxy.example:443"}}};
+        for (const auto& [configuration, expected] : cases)
+        {
+            if (!Require(DownTool::detail::SelectSystemHttpsProxy(configuration) == expected,
+                         "Incorrect HTTPS proxy selection: " + std::string(configuration)))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool TestGoogleProxyRequests()
+    {
+        DownTool::GoogleDown google;
+        const DownTool::Tile tile(215872, 99317, 18);
+        const auto request = google.BuildTileHttpRequest(tile);
+        if (!Require(request.proxy == DownTool::detail::GetSystemHttpsProxy(),
+                     "Google preview requests must inherit the detected system proxy") ||
+            !Require(request.headers == std::vector<std::string>{"User-Agent: DomDownTool/1.0"},
+                     "Google requests must identify the downloader"))
+        {
+            return false;
+        }
+
+        google.SetProxy("http://manual.example:18080");
+        if (!Require(google.BuildTileHttpRequest(tile).proxy == "http://manual.example:18080",
+                     "An explicit Google proxy must override the system proxy"))
+        {
+            return false;
+        }
+        google.SetProxy("");
+        if (!Require(google.BuildTileHttpRequest(tile).proxy.empty(),
+                     "Disabling the Google proxy must not restore the system proxy"))
+        {
+            return false;
+        }
+
+        DownTool::DownToolBase defaultSource;
+        DownTool::GaoDeDown gaode;
+        DownTool::TencentDown tencent;
+        DownTool::BaiduDown baidu;
+        return Require(defaultSource.GetProxy().empty() && gaode.GetProxy().empty() &&
+                           tencent.GetProxy().empty() && baidu.GetProxy().empty(),
+                       "Detecting Google's system proxy must not change other map sources");
+    }
+
     bool RunTest()
     {
         const DownTool::Tile beijingTile(215872, 99317, 18);
@@ -186,8 +255,8 @@ namespace
                     "x=215872&y=99317&z=18",
                 "Google URL does not match the compatibility template") ||
             !Require(
-                google.GetProxy().empty(),
-                "Google downloads must default to direct connections") ||
+                google.GetProxy() == DownTool::detail::GetSystemHttpsProxy(),
+                "Google downloads must use the enabled system HTTPS proxy") ||
             !Require(google.IsTileOffset(), "Google China imagery must use GCJ02 correction"))
         {
             return false;
@@ -233,7 +302,8 @@ namespace
                            google.GetCachePath() != arcgis.GetCachePath() &&
                            bing.GetCachePath() != arcgis.GetCachePath(),
                        "Provider cache roots must not overlap") &&
-               TestGcj02CoordinateCalibration() && TestElectronicMapProviders();
+               TestGcj02CoordinateCalibration() && TestElectronicMapProviders() &&
+               TestSystemHttpsProxySelection() && TestGoogleProxyRequests();
     }
 } // namespace
 

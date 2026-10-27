@@ -43,7 +43,7 @@ PNG 大图：
 | `baidu` | 百度卫星，也支持电子地图 | `cache/百度地图` |
 | `tencent` | 腾讯卫星，也支持电子地图 | `cache/腾讯地图` |
 | `tianditu` | 天地图影像 | `cache/天地图` |
-| `google` | Google 中国卫星图，默认直连 | `cache/Google地图` |
+| `google` | Google 中国卫星图，自动检测 Windows 系统代理 | `cache/Google地图` |
 | `bing` | Bing 卫星图 | `cache/Bing地图` |
 | `arcgis` | ArcGIS World Imagery | `cache/ArcGIS地图` |
 
@@ -160,7 +160,10 @@ Web Mercator XYZ。
 .\DomDownTool.exe --provider bing --concurrency 12
 ```
 
-`--concurrency 0` 表示自动。地图源默认直连；可以显式设置或关闭代理：
+`--concurrency 0` 表示自动。Google 图源创建时会读取 Windows 当前用户已启用的手动
+系统代理；没有配置或未启用时保留默认连接行为。检测结果只用于 Google 图源，不修改
+系统设置、进程代理环境变量或其他图源。修改系统代理后，重启预览程序或新建导出任务
+即可重新检测。其他图源保持原有默认连接行为；仍可以显式设置或关闭代理：
 
 ```powershell
 .\DomDownTool.exe --provider google --proxy "http://127.0.0.1:7890"

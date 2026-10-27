@@ -15,10 +15,6 @@ list(APPEND VCPKG_OVERLAY_PORTS
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/vcpkg-overlays")
 list(REMOVE_DUPLICATES VCPKG_OVERLAY_PORTS)
 
-message(设置代理：127.0.0.1:7897)
-set(ENV{https_proxy} "127.0.0.1:7897")
-set(ENV{http_proxy} "127.0.0.1:7897")
-
 IF(IS_AUTODOWNLOAD_VCPKG)
     set(Vcpkg_DownloadPath ${CMAKE_CURRENT_SOURCE_DIR}/../out/vcpkg)
     #初始化vcpkg
@@ -172,6 +168,9 @@ target_include_directories(DomDownToolCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/CDT/include
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>)
 target_link_libraries(DomDownToolCore PUBLIC ${DOMDOWNTOOL_LIBRARIES})
+if(WIN32)
+  target_link_libraries(DomDownToolCore PRIVATE winhttp)
+endif()
 
 # 将源代码添加到此项目的可执行文件。
 add_executable(DomDownTool ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
 #include "GCJ02GoogleDownBase.h"
 
 namespace DownTool
@@ -8,5 +11,8 @@ namespace DownTool
     {
     public:
         GoogleDown();
+
+    protected:
+        std::vector<std::string> GetRequestHeaders(const Tile& tile) const override;
     };
 } // namespace DownTool
