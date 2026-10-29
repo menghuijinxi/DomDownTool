@@ -1,0 +1,17 @@
+{
+  "26334": {
+    "itemTitle": "World Imagery (Wayback 2026-08-05)",
+    "itemID": "106760699ba242daab4885c9b062a133",
+    "itemURL": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/26334/{level}/{row}/{col}"
+  },
+  "10": {
+    "itemTitle": "World Imagery (Wayback 2014-02-20)",
+    "itemID": "903f0abe9c3b452dafe1ca5b8dd858b9",
+    "itemURL": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/10/{level}/{row}/{col}"
+  },
+  "63116": {
+    "itemTitle": "World Imagery (Wayback 2026-09-24)",
+    "itemID": "ab83ada1bd3145978eecfb115aaa10c3",
+    "itemURL": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/63116/{level}/{row}/{col}"
+  }
+}

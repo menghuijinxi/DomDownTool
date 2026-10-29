@@ -11,6 +11,7 @@
 
 #include "DownToolBase.h"
 #include "DownloadRegion.h"
+#include "EsriWaybackDown.h"
 #include "TianDiTuMultidateDown.h"
 #include "preview/GisOverlayRenderer.h"
 #include "preview/MapViewport.h"
@@ -99,6 +100,8 @@ class MapRenderer
     [[nodiscard]] std::optional<DownTool::LonLat> lonLatAt(double screenX, double screenY) const;
 
     bool selectSource(std::string_view sourceId);
+
+    bool SetWaybackRelease(const DownTool::WaybackRelease& release);
 
     bool UseLatestTianDiTuMultidate();
 

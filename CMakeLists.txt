@@ -243,7 +243,9 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/SkiaImageCodecs.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TianDiTuMultidateWebViewSession.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TileDownloadQueue.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TileImageCache.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/TileImageCache.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/WaybackCatalog.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/WaybackPreview.cpp)
   set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewResources.rc
     APPEND PROPERTY OBJECT_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/resources/preview/index.html)
@@ -411,6 +413,9 @@ add_domdown_test(BaiduProjectionTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/BaiduProjectionTest.cpp)
 add_domdown_test(TileProviderUrlTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/TileProviderUrlTest.cpp)
+add_domdown_test(WaybackTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/WaybackTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/WaybackCatalog.cpp)
 add_domdown_test(TianDiTuDownloadTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/TianDiTuDownloadTest.cpp)
 add_domdown_test(TianDiTuMultidateDownloadTest

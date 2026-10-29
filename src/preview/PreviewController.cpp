@@ -1905,14 +1905,24 @@ void DomDownToolPreview::PreviewController::ClearKmlRange(
     requestRedraw();
 }
 
-DomDownToolPreview::PreviewController::PreviewController()
+DomDownToolPreview::PreviewController::PreviewController(WaybackCatalog::Fetch waybackFetch)
     : tianDiTuMultidateSession_(),
       renderer_([this] { requestRedraw(); }),
       placeSearch_([this] { scheduleSearchRefresh(); },
                    [this](const std::string& url) { return webViewSearch_.get(url); },
                    [this] { webViewSearch_.cancelCurrent(); }),
       exportTaskManager_([this] { scheduleExportTaskRefresh(); }),
-      dx12FbxRenderer_([this] { requestRedraw(); })
+      dx12FbxRenderer_([this] { requestRedraw(); }),
+      waybackCatalog_(
+          [this]
+          {
+              if (const HWND window = window_.load(std::memory_order_relaxed))
+              {
+                  PostMessageW(window, kPreviewUiRefreshMessage, 0, 0);
+                  PostMessageW(window, kPreviewRedrawMessage, 0, 0);
+              }
+          },
+          std::move(waybackFetch))
 {
     renderer_.SetTianDiTuMultidateTileDownloader(
         [this](const DownTool::TileHttpRequest& request,
@@ -1928,10 +1938,23 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
     writeSearchTrace("Controller", "runtime_attached");
     runtime_ = &runtime;
     runtime.setConsumesEventsById("shp-preview-panel", true);
+    runtime.setConsumesEventsById("wayback-panel", true);
     selectGisColorCategory(gisColorPaletteCategory_);
     runtime.setElementEventCallback(
         [this, &runtime](const skui::ElementEvent& event)
         {
+            if (event.id == "wayback-release" &&
+                event.type == skui::ElementEventType::Change)
+            {
+                SelectWaybackRelease(runtime, event.value);
+                return;
+            }
+            if (event.id == "wayback-refresh" &&
+                event.type == skui::ElementEventType::Click)
+            {
+                RefreshWaybackCatalog(runtime);
+                return;
+            }
             if (event.type == skui::ElementEventType::MouseDown &&
                 event.id != "view-span-value" && viewSpanInput_)
             {
@@ -2329,6 +2352,10 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
                                              event.value));
                 if (renderer_.selectSource(event.value))
                 {
+                    if (event.value == "arcgis.wayback" && !waybackCatalogRequested_)
+                    {
+                        RefreshWaybackCatalog(runtime);
+                    }
                     updateUi(runtime);
                     requestRedraw();
                 }
@@ -4565,6 +4592,7 @@ void DomDownToolPreview::PreviewController::updateFbxPreviewFrameStatsUi(
 
 void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
 {
+    ProcessWaybackCatalog();
     const skui::RuntimeUpdateBatch updateBatch(runtime);
     runtime.setVisibleById("preview-page", page_ == Page::Preview);
     runtime.setVisibleById("export-page", page_ == Page::Export);
@@ -4634,6 +4662,7 @@ void DomDownToolPreview::PreviewController::updateUi(skui::Runtime& runtime)
          {"zoom-value", fmt::format("Z {:.2f}", renderer_.zoom())},
          {"cache-path", pathToUtf8(source.cacheRoot)}});
     UpdateTianDiTuMultidateUi(runtime, source);
+    UpdateWaybackUi(runtime, source);
     static_cast<void>(UpdateTileDebugUi(runtime));
     const std::string tileStatsState =
         fmt::format("{}:{}:{}:{}:{}:{}:{:.1f}", stats.visibleTiles, stats.readyTiles,

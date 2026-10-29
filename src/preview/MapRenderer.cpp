@@ -357,6 +357,8 @@ DomDownToolPreview::MapRenderer::MapRenderer(std::function<void()> requestRedraw
               TileYAxisDirection::Down);
     addSource("arcgis.satellite", "ArcGIS 影像", "WGS84 / XYZ",
               std::make_unique<DownTool::ArcGISDown>(), TileYAxisDirection::Down);
+    addSource("arcgis.wayback", "Esri Wayback", "WGS84 / XYZ",
+              std::make_unique<DownTool::EsriWaybackDown>(), TileYAxisDirection::Down);
     addSource("none", "无", "WGS84 / XYZ", std::make_unique<DownTool::GoogleDownBase>(),
               TileYAxisDirection::Down);
 }
@@ -545,7 +547,8 @@ void DomDownToolPreview::MapRenderer::draw(SkCanvas& canvas, int width, int heig
 
         return result;
     };
-    if (source.summary.id != "none")
+    if (source.summary.id != "none" &&
+        !(source.summary.id == "arcgis.wayback" && source.projection->GetUrlTemplate().empty()))
     {
         auto* multidateProjection = dynamic_cast<DownTool::TianDiTuMultidateDown*>(
             source.projection.get());
@@ -782,6 +785,27 @@ void DomDownToolPreview::MapRenderer::SetTianDiTuMultidateTileDownloader(
     tianDiTuMultidateTileDownloader_ = std::move(downloader);
     downloadQueue_.cancelPending();
     tileDebugEntries_.clear();
+}
+
+bool DomDownToolPreview::MapRenderer::SetWaybackRelease(
+    const DownTool::WaybackRelease& release)
+{
+    const auto source = std::find_if(
+        sources_.begin(), sources_.end(),
+        [](const MapSource& item) { return item.summary.id == "arcgis.wayback"; });
+    if (source == sources_.end())
+    {
+        return false;
+    }
+    auto& projection = static_cast<DownTool::EsriWaybackDown&>(*source->projection);
+    projection.SetRelease(release);
+    source->summary.cacheRoot = std::filesystem::u8path(projection.GetCachePath());
+    if (currentSource().summary.id == "arcgis.wayback")
+    {
+        downloadQueue_.cancelPending();
+        tileDebugEntries_.clear();
+    }
+    return true;
 }
 
 std::optional<DomDownToolPreview::ViewportGeoBounds>

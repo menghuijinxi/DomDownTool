@@ -2,14 +2,17 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <cmath>
 #include <chrono>
 #include <iostream>
+#include <iterator>
 #include <numbers>
 #include <optional>
 #include <string>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -34,6 +37,7 @@ namespace
 class RangeController : public DomDownToolPreview::PreviewController
 {
   public:
+    using PreviewController::PreviewController;
     void OpenExportEditor(skui::Runtime& runtime) { BeginExportRangeEditing(runtime); }
     void LoadExport(skui::Runtime& runtime,
                     const DomDownToolPreview::ExportConfiguration& configuration)
@@ -962,6 +966,190 @@ bool TestUnrestrictedMapZoom()
         }
         renderer.setView(renderer.center(), 30.);
         if (!Require(renderer.zoom() == 30., "图源无法设置到 30 级：" + source.id))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TestWaybackPreview(HWND window, const std::filesystem::path& testRoot, bool live = false)
+{
+    using postprocess_test::Require;
+    using namespace std::chrono_literals;
+    std::ifstream input(std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) /
+                        "tests/fixtures/wayback-catalog.json");
+    const std::string fixture(
+        (std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    std::atomic_int requests = 0;
+    skui::Runtime runtime;
+    if (!runtime.loadDocument((std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) /
+            "resources/preview/index.html").string()))
+    {
+        return false;
+    }
+    runtime.resize(1440, 900, 1.F);
+    DomDownToolPreview::WaybackCatalog::Fetch fetch;
+    if (!live)
+    {
+        fetch = [&](std::stop_token)
+        {
+            if (++requests == 2)
+            {
+                throw std::runtime_error("测试网络失败");
+            }
+            return fixture;
+        };
+    }
+    RangeController controller(std::move(fetch));
+    controller.attachRuntime(runtime);
+    skui::win32::Win32EventAdapter adapter(runtime);
+    const auto click = [&](const std::string& id)
+    {
+        return ClickElement(controller, runtime, adapter, window, id);
+    };
+    const auto key = [&](int value)
+    {
+        WindowMessage(controller, adapter, window, runtime, WM_KEYDOWN, value, 0);
+    };
+    const auto chooseWayback = [&]
+    {
+        if (!click("provider-select"))
+        {
+            return false;
+        }
+        key(VK_END);
+        key(VK_UP);
+        key(VK_RETURN);
+        return true;
+    };
+    const auto zoom = runtime.textContentById("zoom-value");
+    const auto center = runtime.textContentById("center-coordinate");
+    if (!chooseWayback() ||
+        !Require(runtime.textContentById("active-provider") == "Esri Wayback",
+                 "地图菜单无法切换到 Wayback"))
+    {
+        return false;
+    }
+    const auto waitCatalog = [&]
+    {
+        const auto deadline = std::chrono::steady_clock::now() + (live ? 25s : 2s);
+        do
+        {
+            controller.resizeRuntime(runtime);
+            const auto status = runtime.textContentById("wayback-status").value_or("");
+            if (status.find("个发布版本") != std::string::npos ||
+                status.find("加载失败") != std::string::npos)
+            {
+                return status;
+            }
+            std::this_thread::sleep_for(5ms);
+        } while (std::chrono::steady_clock::now() < deadline);
+        return std::string{};
+    };
+    if (!Require(waitCatalog().find("个发布版本") != std::string::npos,
+                 "Wayback 目录加载未完成") ||
+        !Require(runtime.textContentById("zoom-value") == zoom &&
+                     runtime.textContentById("center-coordinate") == center,
+                 "Wayback 切换改变了当前视图"))
+    {
+        return false;
+    }
+    const auto firstCache = runtime.textContentById("cache-path");
+    if (!click("wayback-release"))
+    {
+        return false;
+    }
+    // 瓦片状态刷新期间展开菜单，仍应能选择第二个日期。
+    controller.resizeRuntime(runtime);
+    key(VK_HOME);
+    key(VK_DOWN);
+    key(VK_RETURN);
+    if (!Require(runtime.textContentById("cache-path") != firstCache &&
+                     runtime.textContentById("zoom-value") == zoom &&
+                     runtime.textContentById("center-coordinate") == center,
+                 "切换日期没有更新缓存或改变了视图"))
+    {
+        return false;
+    }
+    if (!click("wayback-release"))
+    {
+        return false;
+    }
+    key(VK_HOME);
+    key(VK_RETURN);
+    if (live)
+    {
+        // 用真实生产控制器在北京 18 级连续渲染，等待网络、图片解码和 UI 合成。
+        if (!click("center-coordinate"))
+        {
+            return false;
+        }
+        skui::Event selectAll;
+        selectAll.type = skui::EventType::KeyDown;
+        selectAll.key = 'A';
+        selectAll.ctrlKey = true;
+        runtime.handleEvent(selectAll);
+        skui::Event input;
+        input.type = skui::EventType::TextInput;
+        input.text = "116.42, 39.89";
+        runtime.handleEvent(input);
+        key(VK_RETURN);
+        const auto surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(1440, 900));
+        controller.draw(*surface->getCanvas(), 1440, 900, 1.F);
+        POINT mapCenter{720, 462};
+        ClientToScreen(window, &mapCenter);
+        WindowMessage(controller, adapter, window, runtime, WM_MOUSEWHEEL,
+                      MAKEWPARAM(0, 12 * WHEEL_DELTA), MAKELPARAM(mapCenter.x, mapCenter.y));
+        if (!Require(runtime.textContentById("zoom-value") == "Z 18.00" &&
+                         runtime.textContentById("center-coordinate") == "116.420000, 39.890000",
+                     "在线检查没有定位到北京 18 级"))
+        {
+            return false;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + 50s;
+        bool ready = false;
+        do
+        {
+            controller.draw(*surface->getCanvas(), 1440, 900, 1.F);
+            controller.resizeRuntime(runtime);
+            const auto count = runtime.textContentById("tile-stat-ready").value_or("0");
+            const auto visible = runtime.textContentById("tile-stat-visible").value_or("0");
+            ready = std::stoi(count) > 0 && count == visible;
+            if (ready)
+            {
+                break;
+            }
+            std::this_thread::sleep_for(50ms);
+        } while (std::chrono::steady_clock::now() < deadline);
+        std::vector<uint32_t> pixels(1440 * 900);
+        surface->readPixels(SkImageInfo::MakeN32Premul(1440, 900),
+                            pixels.data(), 1440 * sizeof(uint32_t), 0, 0);
+        const auto output = testRoot / "wayback-live-desktop.png";
+        return Require(cv::imwrite(output.string(), cv::Mat(900, 1440, CV_8UC4, pixels.data())),
+                       "在线画面截图失败") &&
+            Require(ready, "在线瓦片未成功加载足够画面");
+    }
+    if (!click("wayback-refresh") ||
+        !Require(waitCatalog().find("加载失败") != std::string::npos,
+                 "目录错误没有显示") ||
+        !Require(runtime.textContentById("cache-path") == firstCache,
+                 "刷新失败丢失已选日期") ||
+        !click("wayback-refresh") ||
+        !Require(waitCatalog().find("个发布版本") != std::string::npos,
+                 "刷新失败后不能重试"))
+    {
+        return false;
+    }
+    for (const int width : {1440, 700})
+    {
+        runtime.resize(width, width == 1440 ? 900 : 600, 1.F);
+        controller.resizeRuntime(runtime);
+        if (!FindElementCenter(runtime, "wayback-release") ||
+            !FindElementCenter(runtime, "wayback-refresh") ||
+            !Require(WriteTaskScreenshot(runtime, testRoot /
+                         (width == 1440 ? "wayback-desktop.png" : "wayback-narrow.png")),
+                     "Wayback 日期控件截图失败"))
         {
             return false;
         }
@@ -2413,7 +2601,7 @@ bool TestTaskActions(HWND window, const std::filesystem::path& testRoot)
 }
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
     const auto testRoot =
         std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) / "tmp/preview-range-editor-test";
@@ -2430,7 +2618,9 @@ int main()
     {
         return 1;
     }
-    const bool passed =
+    const bool liveWayback = argc == 2 && std::string(argv[1]) == "--wayback-live";
+    const bool passed = liveWayback ? TestWaybackPreview(window, testRoot, true) :
+        TestWaybackPreview(window, testRoot) &&
         TestProviderMenuScrolling(window, testRoot) && TestUnrestrictedMapZoom() &&
         TestFractionalViewSpanInput(window, testRoot) &&
         RunTest(window, testRoot) && TestCopyUsesActiveRegionRole(window, testRoot) &&

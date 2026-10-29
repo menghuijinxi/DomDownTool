@@ -16,6 +16,8 @@
 - [高德 Web 矢量瓦片](knowledge/amap-vector-tile.md)
 - [腾讯 Web 矢量瓦片](knowledge/tencent-vector-tile.md)：前端协议对照、C++ 数据源、
   坐标与分类规则、建筑高度、独立缓存及导出边界。
+- [Esri Wayback 历史影像](knowledge/esri-wayback.md)：在线预览、发布日期选择、
+  版本缓存隔离、接口验证范围与离线导出授权条件。
 
 ## 问题排查
 

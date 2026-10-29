@@ -26,6 +26,7 @@
 #include "preview/MapRenderer.h"
 #include "preview/DownloadRangeEditor.h"
 #include "preview/TianDiTuMultidateWebViewSession.h"
+#include "preview/WaybackCatalog.h"
 
 class SkCanvas;
 
@@ -40,7 +41,7 @@ namespace DomDownToolPreview
 class PreviewController
 {
   public:
-    PreviewController();
+    explicit PreviewController(WaybackCatalog::Fetch waybackFetch = {});
 
     void attachRuntime(skui::Runtime& runtime);
 
@@ -134,6 +135,11 @@ class PreviewController
 
     void UpdateTianDiTuMultidateUi(skui::Runtime& runtime,
                                    const MapSourceSummary& source);
+
+    void RefreshWaybackCatalog(skui::Runtime& runtime);
+    void ProcessWaybackCatalog();
+    void SelectWaybackRelease(skui::Runtime& runtime, std::string_view number);
+    void UpdateWaybackUi(skui::Runtime& runtime, const MapSourceSummary& source);
 
     [[nodiscard]] bool DownloadTianDiTuMultidateTile(
         const DownTool::TileHttpRequest& request,
@@ -463,5 +469,15 @@ protected:
     std::string rangePreviewKmlBackup_;
     DownTool::LonLat rangePreviewCenterBackup_;
     double rangePreviewZoomBackup_ = 15.;
+
+private:
+    std::vector<DownTool::WaybackRelease> waybackReleases_;
+    std::string waybackSelectedNumber_;
+    std::string waybackStatus_;
+    std::string lastWaybackSelectHtml_;
+    std::string lastWaybackSelectedNumber_;
+    bool waybackCatalogRequested_ = false;
+    // 最先析构，保证异步完成回调执行时控制器的其余成员仍然存在。
+    WaybackCatalog waybackCatalog_;
 };
 } // namespace DomDownToolPreview

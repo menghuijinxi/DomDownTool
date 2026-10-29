@@ -179,6 +179,35 @@
             white-space: nowrap;
         }
 
+        #wayback-panel {
+            width: 560px;
+        }
+
+        #wayback-release {
+            width: 144px;
+            height: 30px;
+        }
+
+        #wayback-panel #wayback-refresh {
+            width: 30px;
+            min-width: 30px;
+            padding: 0;
+        }
+
+        #wayback-status {
+            max-width: 320px;
+            overflow: hidden;
+            color: #aeb9b4;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .wayback-credit {
+            flex-basis: 100%;
+            color: #aeb9b4;
+            font-size: 11px;
+        }
+
         .gis-field {
             flex: 0 0 171px;
             width: 171px;
@@ -2827,6 +2856,10 @@
                 max-width: calc(100% - 24px);
             }
 
+            #wayback-panel {
+                top: 116px;
+            }
+
             .export-range-bar {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
                 gap: 10px;
@@ -3280,6 +3313,7 @@
                     <option value="google.satellite">Google 卫星</option>
                     <option value="bing.satellite">Bing 卫星</option>
                     <option value="arcgis.satellite">ArcGIS 影像</option>
+                    <option value="arcgis.wayback">Esri Wayback</option>
                     <option value="none">无</option>
                 </select>
             </label>
@@ -3468,6 +3502,18 @@
                 <option value="latest">最新影像</option>
             </select>
             <span id="tianditu-multidate-status">默认显示最新影像；历史时相需要登录后刷新。</span>
+        </section>
+
+        <section id="wayback-panel" class="multidate-panel" style="display: none">
+            <label for="wayback-release">发布日期</label>
+            <select id="wayback-release" aria-label="Wayback 发布日期" disabled>
+                <option value="">暂无版本</option>
+            </select>
+            <button id="wayback-refresh" type="button" data-action="refresh-wayback"
+                    title="刷新发布版本"
+                    aria-label="刷新发布版本">&#x21bb;</button>
+            <span id="wayback-status"></span>
+            <span class="wayback-credit">Esri, Vantor, Earthstar Geographics, GIS User Community</span>
         </section>
 
         <div id="gis-overlay-panel" class="gis-overlay-panel" style="display: none">
