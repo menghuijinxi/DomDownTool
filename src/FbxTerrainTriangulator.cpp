@@ -50,8 +50,9 @@ bool InCircle(FbxTerrainGridPoint a, FbxTerrainGridPoint b,
 class ProgressiveTerrain
 {
 public:
-    ProgressiveTerrain(uint32_t width, uint32_t height, const std::vector<double>& heights)
-        : width_(width), height_(height), heights_(heights)
+    ProgressiveTerrain(uint32_t width, uint32_t height, const std::vector<double>& heights,
+                       const std::vector<std::array<double, 3>>& positions)
+        : width_(width), height_(height), heights_(heights), positions_(positions)
     {
     }
 
@@ -131,6 +132,27 @@ private:
         return heights_[static_cast<std::size_t>(p.y) * (width_ + 1) + p.x];
     }
 
+    double PositionError(FbxTerrainGridPoint p, FbxTerrainGridPoint a, FbxTerrainGridPoint b,
+                         FbxTerrainGridPoint c, const std::array<double, 3>& weights) const
+    {
+        if (positions_.empty())
+        {
+            return std::abs(Height(p) - Height(a) * weights[0] - Height(b) * weights[1] -
+                            Height(c) * weights[2]);
+        }
+        const auto at = [&](FbxTerrainGridPoint point) -> const auto& {
+            return positions_[static_cast<std::size_t>(point.y) * (width_ + 1) + point.x];
+        };
+        double squaredError = 0.;
+        for (std::size_t axis = 0; axis < 3; ++axis)
+        {
+            const double difference = at(p)[axis] - at(a)[axis] * weights[0] -
+                                      at(b)[axis] * weights[1] - at(c)[axis] * weights[2];
+            squaredError += difference * difference;
+        }
+        return std::sqrt(squaredError);
+    }
+
     std::pair<FbxTerrainGridPoint, double> FindCandidate(int triangle) const
     {
         const auto a = points_[triangles_[triangle * 3]];
@@ -188,7 +210,13 @@ private:
                 const double z = za * (weights[0] + steps[0] * offset) +
                     zb * (weights[1] + steps[1] * offset) +
                     zc * (weights[2] + steps[2] * offset);
-                const double error = std::abs(z - Height(p));
+                const double error =
+                    positions_.empty()
+                        ? std::abs(z - Height(p))
+                        : PositionError(p, a, b, c,
+                                        {double(weights[0] + steps[0] * offset) / area,
+                                         double(weights[1] + steps[1] * offset) / area,
+                                         double(weights[2] + steps[2] * offset) / area});
                 if (error > maximum)
                 {
                     maximum = error;
@@ -220,8 +248,7 @@ private:
                         (int64_t(b.x) - a.x) * i / length),
                     static_cast<uint32_t>(int64_t(a.y) +
                         (int64_t(b.y) - a.y) * i / length)};
-                maximum = std::max(maximum,
-                    std::abs(Height(p) - (Height(a) * (1. - t) + Height(b) * t)));
+                maximum = std::max(maximum, PositionError(p, a, b, b, {1. - t, t, 0.}));
             }
         }
         return maximum;
@@ -467,6 +494,7 @@ private:
     uint32_t width_;
     uint32_t height_;
     const std::vector<double>& heights_;
+    const std::vector<std::array<double, 3>>& positions_;
     std::vector<FbxTerrainGridPoint> points_;
     std::vector<int> triangles_;
     std::vector<int> halfedges_;
@@ -507,10 +535,11 @@ bool ValidBoundary(uint32_t width, uint32_t height,
 
 namespace DownTool
 {
-FbxTerrainTinResult BuildFbxTerrainTin(
-    uint32_t gridWidth, uint32_t gridHeight, const std::vector<double>& heights,
-    const std::vector<FbxTerrainGridPoint>& boundaryPoints, double geometricErrorMeters,
-    uint32_t maximumTriangles)
+FbxTerrainTinResult BuildFbxTerrainTin(uint32_t gridWidth, uint32_t gridHeight,
+                                       const std::vector<double>& heights,
+                                       const std::vector<FbxTerrainGridPoint>& boundaryPoints,
+                                       double geometricErrorMeters, uint32_t maximumTriangles,
+                                       const std::vector<std::array<double, 3>>& positionsMeters)
 {
     // 整数内圆谓词的四次乘积在该范围内不会溢出；正式导出最多使用 1024 段。
     constexpr uint32_t maximumGridExtent = 4096;
@@ -519,13 +548,22 @@ FbxTerrainTinResult BuildFbxTerrainTin(
         heights.size() != (std::size_t(gridWidth) + 1) * (gridHeight + 1) ||
         boundaryPoints.size() < 4 || !std::isfinite(geometricErrorMeters) ||
         geometricErrorMeters < 0. ||
+        (!positionsMeters.empty() && (positionsMeters.size() != heights.size() ||
+                                      !std::ranges::all_of(
+                                          positionsMeters,
+                                          [](const auto& position) {
+                                              return std::ranges::all_of(position, [](double v) {
+                                                  return std::isfinite(v);
+                                              });
+                                          }))) ||
         (maximumTriangles != 0 && maximumTriangles < 2) ||
-        !std::ranges::all_of(heights, [](double z) { return std::isfinite(z); }) ||
+        !std::ranges::all_of(
+            heights, [](double z) { return std::isfinite(z); }) ||
         !ValidBoundary(gridWidth, gridHeight, boundaryPoints))
     {
         return {};
     }
-    ProgressiveTerrain terrain(gridWidth, gridHeight, heights);
+    ProgressiveTerrain terrain(gridWidth, gridHeight, heights, positionsMeters);
     if (!terrain.Initialize(boundaryPoints))
     {
         return {};

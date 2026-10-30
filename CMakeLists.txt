@@ -396,6 +396,8 @@ add_domdown_test(PostProcessMergedImageTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/PostProcessMergedImageTest.cpp)
 add_domdown_test(PostProcessFbxTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/PostProcessFbxTest.cpp)
+add_domdown_test(SphereFbxCoordinatesTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/SphereFbxCoordinatesTest.cpp)
 add_domdown_test(FbxTerrainRegionClipperTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/FbxTerrainRegionClipperTest.cpp)
 add_domdown_test(FbxDistanceLodTest

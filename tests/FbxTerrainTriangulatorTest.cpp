@@ -73,6 +73,37 @@ void verifyPeakAddsDetail()
     requireValidTriangles(result);
 }
 
+void verifyCurvatureRefinesConstantHeights()
+{
+    constexpr uint32_t width = 16;
+    constexpr uint32_t height = 16;
+    const auto heights = flatHeights(width, height, 0.);
+    std::vector<std::array<double, 3>> positions(heights.size());
+    for (uint32_t y = 0; y <= height; ++y)
+    {
+        for (uint32_t x = 0; x <= width; ++x)
+        {
+            positions[std::size_t(y) * (width + 1) + x] = {
+                double(x), double(y),
+                10. * std::sin(x * 3.141592653589793 / width) *
+                    std::sin(y * 3.141592653589793 / height)};
+        }
+    }
+    const auto boundary = squareBoundary(width, height);
+    const auto result =
+        DownTool::BuildFbxTerrainTin(width, height, heights, boundary, .1, 0, positions);
+    require(result.triangles.size() > 2, "constant heights erased three-dimensional curvature");
+    require(result.maximumErrorMeters <= .1, "three-dimensional error exceeds tolerance");
+    const auto limited =
+        DownTool::BuildFbxTerrainTin(width, height, heights, boundary, .1, 2, positions);
+    require(limited.triangles.size() == 2 && limited.maximumErrorMeters > 9.,
+            "triangle budget hid the remaining three-dimensional error");
+    positions.pop_back();
+    require(DownTool::BuildFbxTerrainTin(width, height, heights, boundary, .1, 0, positions)
+                .triangles.empty(),
+            "three-dimensional position buffer with incorrect size was accepted");
+}
+
 void verifyInvalidInputIsRejected()
 {
     const std::vector<FbxTerrainGridPoint> boundary = squareBoundary(4, 4);
@@ -311,6 +342,7 @@ int main()
     {
         verifyPlaneUsesBoundaryOnly();
         verifyPeakAddsDetail();
+        verifyCurvatureRefinesConstantHeights();
         verifyInvalidInputIsRejected();
         verifyRefinementBatchKeepsRequestedAccuracy();
         verifyRefinementCanExceedLegacyTriangleLimit();

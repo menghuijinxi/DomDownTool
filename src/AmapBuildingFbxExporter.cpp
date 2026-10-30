@@ -362,7 +362,7 @@ namespace
                 180. / std::numbers::pi};
     }
 
-    std::array<double, 3> LonLatToEcef(const DownTool::LonLat& lonLat)
+    std::array<double, 3> LonLatToEcef(const DownTool::LonLat& lonLat, double heightMeters)
     {
         constexpr double semiMajorAxis = 6378137.;
         constexpr double firstEccentricitySquared = 6.69437999014e-3;
@@ -375,10 +375,9 @@ namespace
         const double primeVerticalRadius =
             semiMajorAxis /
             std::sqrt(1. - firstEccentricitySquared * sinLat * sinLat);
-        return {
-            primeVerticalRadius * cosLat * cosLon,
-            primeVerticalRadius * cosLat * sinLon,
-            primeVerticalRadius * (1. - firstEccentricitySquared) * sinLat};
+        return {(primeVerticalRadius + heightMeters) * cosLat * cosLon,
+                (primeVerticalRadius + heightMeters) * cosLat * sinLon,
+                (primeVerticalRadius * (1. - firstEccentricitySquared) + heightMeters) * sinLat};
     }
 
     void RecalculateMeshNormals(BuildingMeshData& mesh)
@@ -432,7 +431,7 @@ namespace
         {
             const DownTool::LonLat lonLat =
                 PlanePointToWgs84({ vertex.x, vertex.y }, context);
-            const std::array<double, 3> ecef = LonLatToEcef(lonLat);
+            const std::array<double, 3> ecef = LonLatToEcef(lonLat, vertex.z * .01);
             const double dx = ecef[0] - context.centerEcef[0];
             const double dy = ecef[1] - context.centerEcef[1];
             const double dz = ecef[2] - context.centerEcef[2];
@@ -448,7 +447,7 @@ namespace
                 context.sinCenterLat * dz;
             vertex.x = east * 100.;
             vertex.y = north * 100.;
-            vertex.z += up * 100.;
+            vertex.z = up * 100.;
         }
         RecalculateMeshNormals(mesh);
     }

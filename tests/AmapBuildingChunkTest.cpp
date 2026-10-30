@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "GeographicLib/LocalCartesian.hpp"
 #include "assimp/material.h"
 
 #include "AmapBuildingFbxExporter.h"
@@ -263,9 +264,27 @@ namespace
                         {
                             const aiVector3D& vertex = vertices[index];
                             const aiVector3D& baseline = seaLevelVertices[index];
-                            if (std::abs(vertex.x - baseline.x) >= 0.1F ||
-                                std::abs(vertex.y - baseline.y) >= 0.1F ||
-                                std::abs(vertex.z - baseline.z - elevation * 100.) >= 0.1)
+                            double expectedX = baseline.x;
+                            double expectedY = baseline.y;
+                            double expectedZ = baseline.z + elevation * 100.;
+                            if (shape == DownTool::FbxPlanetShape::Sphere)
+                            {
+                                const GeographicLib::LocalCartesian reference(
+                                    options.centerWgs84.lat, options.centerWgs84.lon, 0.);
+                                double latitude = 0.;
+                                double longitude = 0.;
+                                double height = 0.;
+                                reference.Reverse(baseline.x * .01, baseline.y * .01,
+                                                  baseline.z * .01, latitude, longitude, height);
+                                reference.Forward(latitude, longitude, height + elevation,
+                                                  expectedX, expectedY, expectedZ);
+                                expectedX *= 100.;
+                                expectedY *= 100.;
+                                expectedZ *= 100.;
+                            }
+                            if (std::abs(vertex.x - expectedX) >= 0.1 ||
+                                std::abs(vertex.y - expectedY) >= 0.1 ||
+                                std::abs(vertex.z - expectedZ) >= 0.1)
                             {
                                 return false;
                             }

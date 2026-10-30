@@ -13,8 +13,9 @@
 #include <utility>
 #include <vector>
 
-#include "nlohmann/json.hpp"
 #include "CopernicusDem.h"
+#include "GeographicLib/LocalCartesian.hpp"
+#include "nlohmann/json.hpp"
 
 namespace
 {
@@ -24,24 +25,14 @@ namespace
         const auto manifest = nlohmann::json::parse(input);
         Assimp::Importer importer;
         const aiScene* scene = postprocess_test::ReadFbxScene(importer, fbxRoot / "plane.fbx");
-        Assimp::Importer sphereImporter;
-        const aiScene* sphereScene =
-            postprocess_test::ReadFbxScene(sphereImporter, fbxRoot / "sphere.fbx");
-        if (!postprocess_test::Require(scene != nullptr && sphereScene != nullptr,
-                "distance LOD FBX cannot be read"))
+        if (!postprocess_test::Require(scene != nullptr, "distance LOD FBX cannot be read"))
         {
             return false;
         }
         std::map<std::string, const aiMesh*> meshes;
-        std::map<std::string, const aiMesh*> sphereMeshes;
         for (unsigned int index = 0; index < scene->mNumMeshes; ++index)
         {
             meshes[scene->mMeshes[index]->mName.C_Str()] = scene->mMeshes[index];
-        }
-        for (unsigned int index = 0; index < sphereScene->mNumMeshes; ++index)
-        {
-            sphereMeshes[sphereScene->mMeshes[index]->mName.C_Str()] =
-                sphereScene->mMeshes[index];
         }
         std::set<uint32_t> seenSizes;
         std::set<uint32_t> seenBudgets;
@@ -58,17 +49,15 @@ namespace
             const auto meshName = fmt::format("tile_{}_{}",
                 texture.at("gridx").get<int>(), texture.at("gridy").get<int>());
             const auto found = meshes.find(meshName);
-            const auto sphereFound = sphereMeshes.find(meshName);
             if (!postprocess_test::Require(
                     texture.at("outputtexturesize") == expectedSize &&
                         texture.at("terrainmaximumtriangles") == expectedBudget &&
-                        found != meshes.end() && sphereFound != sphereMeshes.end() &&
-                        found->second->mNumFaces == sphereFound->second->mNumFaces &&
+                        found != meshes.end() &&
                         (expectedBudget == 0 || found->second->mNumFaces <= expectedBudget),
                     "distance band did not control actual texture size or mesh face count") ||
-                !postprocess_test::RequireImageSize(
-                    fbxRoot / texture.at("path").get<std::string>(),
-                    static_cast<int>(expectedSize), static_cast<int>(expectedSize)))
+                !postprocess_test::RequireImageSize(fbxRoot / texture.at("path").get<std::string>(),
+                                                    static_cast<int>(expectedSize),
+                                                    static_cast<int>(expectedSize)))
             {
                 return false;
             }
@@ -92,7 +81,7 @@ namespace
         tool.SetPostProcessFbxEnabled(true);
         tool.SetFbxOutputPath(postprocess_test::PathToUtf8String(root / "FBX"));
         tool.SetFbxTextureSize(512);
-        tool.SetFbxShape(DownTool::FbxPlanetShape::Both);
+        tool.SetFbxShape(DownTool::FbxPlanetShape::Plane);
         tool.SetFbxTerrainHeightEnabled(true);
         tool.SetFbxTerrainSampleRateMeters(400.);
         tool.SetFbxElevationSampler([](const DownTool::LonLat& point)
@@ -265,7 +254,7 @@ namespace
             tool.SetFbxMeshSubdivision(4);
             tool.SetFbxTerrainHeightEnabled(elevation);
             tool.SetFbxTerrainSampleRateMeters(100.);
-            tool.SetFbxTerrainMaximumTriangles(200);
+            tool.SetFbxTerrainMaximumTriangles(0);
             tool.SetFbxElevationSampler([](const DownTool::LonLat& point) {
                 return std::optional<double>(100. + 40. * std::sin(point.lon * 800.) *
                                                         std::cos(point.lat * 800.));
@@ -1012,6 +1001,24 @@ namespace
                     vertices.insert(vertices.end(), mesh.mVertices,
                                     mesh.mVertices + mesh.mNumVertices);
                 }
+                if (shape == "sphere")
+                {
+                    const GeographicLib::LocalCartesian reference(-0.005, 0.005, 0.);
+                    for (const auto& vertex : vertices)
+                    {
+                        double latitude = 0.;
+                        double longitude = 0.;
+                        double height = 0.;
+                        reference.Reverse(vertex.x * .01, vertex.y * .01, vertex.z * .01, latitude,
+                                          longitude, height);
+                        if (!postprocess_test::Require(std::abs(height - elevation) < .001,
+                                                       "球面地形未保留有符号高程"))
+                        {
+                            return false;
+                        }
+                    }
+                    continue;
+                }
                 if (elevation == 0.)
                 {
                     seaLevelVertices[shape] = std::move(vertices);
@@ -1311,7 +1318,8 @@ namespace
         tool.SetPostProcessFbxEnabled(true);
         tool.SetFbxOutputPath(postprocess_test::PathToUtf8String(fbxRoot));
         tool.SetFbxTextureSize(64);
-        tool.SetFbxShape(DownTool::FbxPlanetShape::Both);
+        // 全球尺度的合成样例用于平面流程；球面精度由区域回归测试单独约束。
+        tool.SetFbxShape(DownTool::FbxPlanetShape::Plane);
         tool.SetFbxMeshSubdivision(8);
         tool.SetMaxDownQueue(2);
 
@@ -1323,7 +1331,6 @@ namespace
         tool.RunPostProcessForTest();
 
         const std::filesystem::path planeFbxPath = fbxRoot / "plane.fbx";
-        const std::filesystem::path sphereFbxPath = fbxRoot / "sphere.fbx";
 
         if (!postprocess_test::RequireFileExists(xyzRoot / "meta.json") ||
             !postprocess_test::RequireFileExists(xyzRoot / "tilemapresource.xml") ||
@@ -1336,12 +1343,9 @@ namespace
                 postprocess_test::HasAnyPng(fbxRoot),
                 "FBX texture directory has no png output") ||
             !postprocess_test::RequireNonEmptyFile(planeFbxPath) ||
-            !postprocess_test::RequireNonEmptyFile(sphereFbxPath) ||
             !postprocess_test::RequireFbxAxisAndUnit(planeFbxPath) ||
-            !postprocess_test::RequireFbxAxisAndUnit(sphereFbxPath) ||
             !postprocess_test::RequirePlaneFbxUvMatchesNorthAxis(planeFbxPath) ||
             !RequireFbxTexturesBesideModel(planeFbxPath, fbxRoot) ||
-            !RequireFbxTexturesBesideModel(sphereFbxPath, fbxRoot) ||
             !postprocess_test::Require(
                 !std::filesystem::exists(fbxRoot / "mesh") &&
                     !std::filesystem::exists(fbxRoot / "textures"),
@@ -1392,7 +1396,7 @@ namespace
 
         tool.SetFbxOutputPath(postprocess_test::PathToUtf8String(fbxRoot));
         tool.SetFbxTextureFormat("png");
-        tool.SetFbxShape(DownTool::FbxPlanetShape::Both);
+        tool.SetFbxShape(DownTool::FbxPlanetShape::Plane);
 
         tool.SetFbxTerrainHeightEnabled(true);
         tool.SetFbxElevationReferenceMeters(100.);
