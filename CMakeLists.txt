@@ -60,7 +60,7 @@ IF(WIN32)
     add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/Zc:__cplusplus>")
 ENDIF()
 
-project ("DomDownTool" VERSION 1.1.0.0)
+project ("DomDownTool" VERSION 1.3.2.0)
 
 function(domdowntool_configure_msvc_ninja_dependencies)
     if(NOT MSVC OR NOT CMAKE_GENERATOR MATCHES "^Ninja")
@@ -169,7 +169,9 @@ target_include_directories(DomDownToolCore PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>)
 target_link_libraries(DomDownToolCore PUBLIC ${DOMDOWNTOOL_LIBRARIES})
 if(WIN32)
-  target_link_libraries(DomDownToolCore PRIVATE winhttp)
+  find_package(unofficial-skia CONFIG REQUIRED)
+  target_sources(DomDownToolCore PRIVATE src/map/PointLabel.cpp src/map/PointSymbol.cpp)
+  target_link_libraries(DomDownToolCore PRIVATE winhttp unofficial::skia::skia)
 endif()
 
 # 将源代码添加到此项目的可执行文件。
@@ -228,6 +230,7 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/Dx12GisRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/Dx12FbxRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportComposer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/GitHubUpdate.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportDistanceLodUi.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportGroupedExport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/ExportImageComposer.cpp
@@ -249,6 +252,7 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
   set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewResources.rc
     APPEND PROPERTY OBJECT_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/resources/preview/index.html
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/preview/GitHubUpdate.ps1
     ${CMAKE_CURRENT_SOURCE_DIR}/resources/preview/DomDownTool.ico)
   set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/preview_main.cpp
     APPEND PROPERTY COMPILE_DEFINITIONS DOMDOWNTOOL_PREVIEW_VERSION=L"${PROJECT_VERSION}")
@@ -477,6 +481,8 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     target_compile_options(PreviewRangeEditorTest PRIVATE /EHsc /permissive-)
   endif()
   add_test(NAME PreviewRangeEditorTest COMMAND PreviewRangeEditorTest)
+  add_test(NAME GitHubUpdateTest COMMAND powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned
+    -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/GitHubUpdateTest.ps1" "$<TARGET_FILE:DomDownToolPreview>")
 
   add_executable(TileDownloadQueueTest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/TileDownloadQueueTest.cpp

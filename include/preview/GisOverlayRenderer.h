@@ -97,6 +97,10 @@ class GisOverlayRenderer
     struct MeshBuildRequest;
     struct MeshBuildResult;
 
+    void drawPointLabels(SkCanvas& canvas, const ViewportTransform& transform,
+                         const GisOverlayCategories& categories,
+                         const std::map<GisOverlayCategory, DownTool::AmapVectorColor>& colors);
+
     struct LoadRequest
     {
         DownTool::LonLat centerWgs84;

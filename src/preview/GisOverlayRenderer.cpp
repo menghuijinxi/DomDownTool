@@ -9,18 +9,22 @@
 #include <exception>
 #include <iterator>
 #include <numbers>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include <fmt/format.h>
 
 #include "AmapVectorTileGrid.h"
+#include "../map/PointLabel.h"
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
+#include "include/core/SkImage.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkPathBuilder.h"
+#include "include/core/SkSurface.h"
 
 #include "preview/Dx12GisRenderer.h"
 #include "preview/SearchTrace.h"
@@ -207,6 +211,14 @@ struct DomDownToolPreview::GisOverlayRenderer::PreparedData
     using Feature = GisMeshFeature;
 
     std::array<std::vector<Feature>, kCategoryCount> featuresByCategory;
+    struct LabelAnchor
+    {
+        DownTool::LonLat coordinate;
+        std::shared_ptr<const DownTool::PointLabel> label;
+        uint32_t minZoom;
+        uint32_t maxZoom;
+    };
+    std::array<std::vector<LabelAnchor>, kCategoryCount> labelsByCategory;
 };
 
 struct DomDownToolPreview::GisOverlayRenderer::PreparedRenderCache
@@ -220,7 +232,87 @@ struct DomDownToolPreview::GisOverlayRenderer::PreparedRenderCache
     std::array<std::vector<uint8_t>, kCategoryCount> initialized;
     std::array<std::shared_ptr<const GisGeometryMesh>, kCategoryCount> meshes;
     std::array<uint8_t, kCategoryCount> meshInitialized{};
+    double labelScale = 0.;
+    std::array<SkColor, kCategoryCount> labelColors{};
+    std::vector<DownTool::PositionedPointLabel> labels;
+    struct LabelSprite
+    {
+        sk_sp<SkImage> image;
+        SkIPoint offset;
+        uint64_t lastFrame = 0;
+    };
+    // PreparedData 持有标注，缓存随数据释放。只给进入视口的标注分配像素。
+    std::unordered_map<const DownTool::PointLabel*, LabelSprite> sprites;
+    uint64_t labelFrame = 0;
+    uint64_t lastPruneFrame = 0;
+    size_t spriteBytes = 0;
+    std::chrono::steady_clock::time_point spriteDeadline;
+
+    void drawLabel(SkCanvas& canvas, const DownTool::PositionedPointLabel& placed,
+                   double originX, double originY);
 };
+
+void DomDownToolPreview::GisOverlayRenderer::PreparedRenderCache::drawLabel(
+    SkCanvas& canvas, const DownTool::PositionedPointLabel& placed, double originX, double originY)
+{
+    constexpr size_t kPixelBudget = 32 * 1024 * 1024;
+    const auto& label = placed.GetLabel();
+    auto found = sprites.find(&label);
+    if (found == sprites.end())
+    {
+        if (std::chrono::steady_clock::now() >= spriteDeadline)
+        {
+            placed.Draw(canvas, originX, originY);
+            return;
+        }
+        const auto bounds = label.Bounds(0., 0.);
+        const auto left = static_cast<int>(std::floor(bounds.GetWest()));
+        const auto top = static_cast<int>(std::floor(bounds.GetSouth()));
+        const int width = static_cast<int>(std::ceil(bounds.GetEast())) - left;
+        const int height = static_cast<int>(std::ceil(bounds.GetNorth())) - top;
+        const auto info = SkImageInfo::MakeN32Premul(width, height);
+        const size_t bytes = info.computeMinByteSize();
+        if (bytes > kPixelBudget)
+        {
+            placed.Draw(canvas, originX, originY);
+            return;
+        }
+        if (spriteBytes > kPixelBudget - bytes && lastPruneFrame != labelFrame)
+        {
+            lastPruneFrame = labelFrame;
+            std::erase_if(sprites, [&](const auto& entry) {
+                if (entry.second.lastFrame >= labelFrame - 1)
+                {
+                    return false;
+                }
+                spriteBytes -= entry.second.image->imageInfo().computeMinByteSize();
+                return true;
+            });
+        }
+        if (spriteBytes > kPixelBudget - bytes)
+        {
+            placed.Draw(canvas, originX, originY);
+            return;
+        }
+        const auto surface = SkSurfaces::Raster(info);
+        if (!surface)
+        {
+            placed.Draw(canvas, originX, originY);
+            return;
+        }
+        surface->getCanvas()->clear(SK_ColorTRANSPARENT);
+        label.Draw(*surface->getCanvas(), static_cast<float>(-left),
+                   static_cast<float>(-top), placed.GetColor());
+        found = sprites.emplace(&label, LabelSprite{surface->makeImageSnapshot(), {left, top}})
+                    .first;
+        spriteBytes += bytes;
+    }
+    auto& sprite = found->second;
+    sprite.lastFrame = labelFrame;
+    const float x = static_cast<float>(std::round(placed.GetX() - originX) + sprite.offset.x());
+    const float y = static_cast<float>(std::round(placed.GetY() - originY) + sprite.offset.y());
+    canvas.drawImage(sprite.image, x, y);
+}
 
 struct DomDownToolPreview::GisOverlayRenderer::MeshBuildRequest
 {
@@ -450,6 +542,65 @@ void DomDownToolPreview::GisOverlayRenderer::UpdateContext(
     condition_.notify_one();
 }
 
+void DomDownToolPreview::GisOverlayRenderer::drawPointLabels(
+    SkCanvas& canvas, const ViewportTransform& transform, const GisOverlayCategories& categories,
+    const std::map<GisOverlayCategory, DownTool::AmapVectorColor>& colors)
+{
+    std::array<SkColor, kCategoryCount> labelColors{};
+    for (const auto category : categories)
+    {
+        labelColors[categoryIndex(category)] = toSkColor(colors.at(category));
+    }
+    if (renderCache_->labelScale != transform.displayScale ||
+        renderCache_->labelColors != labelColors)
+    {
+        if (renderCache_->labelColors != labelColors)
+        {
+            renderCache_->sprites.clear();
+            renderCache_->spriteBytes = 0;
+        }
+        std::vector<DownTool::PositionedPointLabel> candidates;
+        for (const auto category : categories)
+        {
+            const auto color = colors.at(category);
+            for (const auto& anchor : renderCache_->data->labelsByCategory[categoryIndex(category)])
+            {
+                if (color.alpha == 0 || !isFeatureVisibleAtZoom(anchor.minZoom, anchor.maxZoom, transform.sourceZoom))
+                {
+                    continue;
+                }
+                const auto point = transform.sourcePointForLonLat(anchor.coordinate);
+                if (point)
+                {
+                    candidates.emplace_back(anchor.label, point->x * transform.displayScale,
+                                            point->y * transform.displayScale, color);
+                }
+            }
+        }
+        renderCache_->labels = DownTool::PlacePointLabels(std::move(candidates));
+        renderCache_->labelScale = transform.displayScale;
+        renderCache_->labelColors = labelColors;
+    }
+    // 在双精度世界像素中避让，平移时只改变绘制原点，避免标签闪动。
+    const double x = transform.centerSourceX * transform.displayScale - transform.centerScreenX;
+    const double y = transform.centerSourceY * transform.displayScale - transform.centerScreenY;
+    const SkRect clip = canvas.getLocalClipBounds();
+    const DownTool::GisSpatialBounds visible(x + clip.left(), y + clip.top(),
+                                             x + clip.right(), y + clip.bottom());
+    ++renderCache_->labelFrame;
+    // GPU 可以直接画未缓存的标注。把密集区域首次生成贴图的 CPU 工作分摊到连续帧。
+    renderCache_->spriteDeadline = canvas.recordingContext()
+        ? std::chrono::steady_clock::now() + std::chrono::milliseconds(2)
+        : std::chrono::steady_clock::time_point::max();
+    for (const auto& label : renderCache_->labels)
+    {
+        if (visible.Intersects(label.GetBounds()))
+        {
+            renderCache_->drawLabel(canvas, label, x, y);
+        }
+    }
+}
+
 void DomDownToolPreview::GisOverlayRenderer::Draw(
     SkCanvas& canvas, const MapViewport& viewport, const DownTool::DownToolBase& projection,
     TileYAxisDirection yDirection, uint32_t tileSize)
@@ -470,8 +621,6 @@ void DomDownToolPreview::GisOverlayRenderer::Draw(
 
     const std::optional<ViewportTransform> transform =
         viewport.makeTransform(projection, yDirection, tileSize);
-    const std::optional<ViewportGeoBounds> viewportBounds =
-        viewport.visibleGeoBounds(projection, yDirection, tileSize);
     if (!transform.has_value())
     {
         return;
@@ -481,7 +630,16 @@ void DomDownToolPreview::GisOverlayRenderer::Draw(
         renderCache_->projection != &projection || renderCache_->yDirection != yDirection ||
         renderCache_->tileSize != tileSize || renderCache_->sourceZoom != transform->sourceZoom)
     {
+        auto previous = std::move(renderCache_);
         renderCache_ = std::make_unique<PreparedRenderCache>();
+        if (previous && previous->data == preparedData)
+        {
+            // 图标和字形使用固定屏幕像素。跨整数层级只需更新投影和避让结果。
+            renderCache_->sprites = std::move(previous->sprites);
+            renderCache_->spriteBytes = previous->spriteBytes;
+            renderCache_->labelColors = previous->labelColors;
+            renderCache_->labelFrame = previous->labelFrame;
+        }
         renderCache_->data = preparedData;
         renderCache_->projection = &projection;
         renderCache_->yDirection = yDirection;
@@ -497,12 +655,21 @@ void DomDownToolPreview::GisOverlayRenderer::Draw(
 
     const uint32_t zoom = viewport.sourceZoom();
     std::vector<GisOverlayCategory> categories;
+    bool hasGeometry = false;
     for (const GisOverlayCategory category : kAllDrawOrder)
     {
         if (selectedCategories.contains(category))
         {
             categories.push_back(category);
+            hasGeometry |= !preparedData->featuresByCategory[categoryIndex(category)].empty();
         }
+    }
+
+    // 纯标注图层直接与底图一同提交，避免空的 DX12 全屏清除、MSAA 解析和合成。
+    if (!hasGeometry)
+    {
+        drawPointLabels(canvas, *transform, selectedCategories, colors);
+        return;
     }
 
     const auto meshRequestMatches = [&](const MeshBuildRequest* request)
@@ -611,10 +778,12 @@ void DomDownToolPreview::GisOverlayRenderer::Draw(
         }
         if (dx12Renderer.Draw(canvas, dx12Frame))
         {
+            drawPointLabels(canvas, *transform, selectedCategories, colors);
             return;
         }
     }
 
+    const auto viewportBounds = viewport.visibleGeoBounds(projection, yDirection, tileSize);
     const auto drawCategory = [&](GisOverlayCategory category)
     {
         const size_t index = categoryIndex(category);
@@ -731,6 +900,7 @@ void DomDownToolPreview::GisOverlayRenderer::Draw(
         drawCategory(category);
     }
     canvas.restore();
+    drawPointLabels(canvas, *transform, selectedCategories, colors);
 }
 
 void DomDownToolPreview::GisOverlayRenderer::Clear()
@@ -975,6 +1145,18 @@ std::shared_ptr<const DomDownToolPreview::GisOverlayRenderer::PreparedData> DomD
         }
         if (!feature.geometryParts.empty())
         {
+            if (const auto label = DownTool::PointLabel::Create(sourceFeature))
+            {
+                auto& anchors = preparedData->labelsByCategory[categoryIndex(category)];
+                for (const auto& part : feature.geometryParts)
+                {
+                    for (const auto& coordinate : part)
+                    {
+                        anchors.push_back({coordinate, label, feature.minZoom, feature.maxZoom});
+                    }
+                }
+                continue;
+            }
             preparedData->featuresByCategory[categoryIndex(category)].push_back(
                 std::move(feature));
         }

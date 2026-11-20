@@ -43,18 +43,20 @@
             display: flex;
             align-items: baseline;
             gap: 8px;
-            width: 170px;
-            min-width: 170px;
+            width: 120px;
+            min-width: 120px;
             color: #f4f6f5;
             font-size: 16px;
             font-weight: 700;
             white-space: nowrap;
         }
 
-        .brand span {
-            color: #98a39e;
-            font-size: 11px;
-            font-weight: 400;
+        #check-github-update {
+            min-width: 60px;
+            padding: 0 5px;
+            color: #b8ded7;
+            font-size: 12px;
+            white-space: nowrap;
         }
 
         .field {
@@ -3290,7 +3292,9 @@
 <body>
     <main id="preview-page" class="shell">
         <header class="toolbar">
-            <div class="brand">DomDownTool <span>瓦块预览</span></div>
+            <div class="brand">DomDownTool</div>
+            <button id="check-github-update" type="button" data-action="check-github-update"
+                    title="检查 GitHub 更新">检查更新</button>
             <div class="search-control">
                 <div class="search-input-shell">
                     <input id="place-search-input" type="text" placeholder="搜索地点或地址" autocomplete="off">

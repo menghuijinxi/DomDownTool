@@ -921,6 +921,33 @@ namespace
             return false;
         }
 
+#ifdef _WIN32
+        // 锚点在左瓦片里，地名的文字应自然延伸到右瓦片。
+        auto edgeOptions = vectorOptions;
+        auto edgeRender = renderOptions;
+        edgeRender.pngTileCachePath = outputRoot / "point-label-edge";
+        const DownTool::Tile rightTile{tile.X + 1, tile.Y, tile.Zoom};
+        const auto edge = DownTool::GoogleDownBase::TileToLonLat(rightTile);
+        edgeOptions.centerWgs84 = {edge.lon - 360. / (256. * (1u << tile.Zoom)), centerWgs84.lat};
+        edgeOptions.radiusMeters = 150.;
+        auto named = MakePoint(edgeOptions.centerWgs84);
+        named.SetCoordinateSystem(DownTool::VectorCoordinateSystem::Wgs84);
+        named.names = {{"停车场", "zh"}};
+        named.SetDataSource(DownTool::VectorDataSource::Tencent);
+        named.SetSourceProperties({{"tag", "carpark"}});
+        DownTool::AmapVectorDecodedData edgeData;
+        edgeData.features.push_back(std::move(named));
+        const auto edgeResult = downloader.Render(edgeData, edgeOptions, edgeRender);
+        const auto rightPath = edgeRender.pngTileCachePath / std::to_string(tile.Zoom) /
+            std::to_string(rightTile.X) / (std::to_string(rightTile.Y) + ".png");
+        const auto rightImage = cv::imread(rightPath.string(), cv::IMREAD_UNCHANGED);
+        if (!Require(edgeResult.success && !rightImage.empty() &&
+                     HasColor(rightImage, 35, 39, 43) && HasColor(rightImage, 255, 255, 255),
+                     "GIS 导出没有在相邻瓦片画出带描边的中文点名"))
+        {
+            return false;
+        }
+#endif
         DownTool::AmapVectorDecodedData heightData;
         heightData.status = true;
         const DownTool::LonLat sameHeightCenterA =

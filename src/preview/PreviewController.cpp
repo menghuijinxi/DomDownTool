@@ -1943,6 +1943,11 @@ void DomDownToolPreview::PreviewController::attachRuntime(skui::Runtime& runtime
     runtime.setElementEventCallback(
         [this, &runtime](const skui::ElementEvent& event)
         {
+            if (event.id == "check-github-update" && event.type == skui::ElementEventType::Click)
+            {
+                githubUpdate_.Open(window_.load(std::memory_order_relaxed));
+                return;
+            }
             if (event.id == "wayback-release" &&
                 event.type == skui::ElementEventType::Change)
             {

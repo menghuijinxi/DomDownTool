@@ -2,3 +2,4 @@
 
 DOMDOWNTOOL_PREVIEW_HTML_RESOURCE_ID RCDATA "../../resources/preview/index.html"
 DOMDOWNTOOL_PREVIEW_ICON_RESOURCE_ID ICON "../../resources/preview/DomDownTool.ico"
+DOMDOWNTOOL_PREVIEW_UPDATE_RESOURCE_ID RCDATA "../../resources/preview/GitHubUpdate.ps1"

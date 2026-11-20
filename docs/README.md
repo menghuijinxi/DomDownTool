@@ -2,6 +2,12 @@
 
 ## 使用指南
 
+预览器左上角的“检查更新”会查询 [GitHub Releases](https://github.com/menghuijinxi/DomDownTool/releases)。
+发现新版后，可选择“更新并重启”或“关闭后更新”。后者适合等待导出任务完成后再退出。
+发布新版时，用与 EXE 文件版本一致的标签创建正式 Release（例如 `v1.2.1.0`），
+并上传 `DomDownToolPreview.exe`。如果同时发布多个架构，附件分别命名为
+`DomDownToolPreview-x64.exe`、`DomDownToolPreview-x86.exe` 等。更新器优先选择匹配架构的附件。
+
 - [高德 GIS 下载与 PNG 渲染](amap-gis-download.md)：构建命令、参数说明、常用命令、
   输出目录和 C++ 调用示例。
 - [卫星图和栅格地图命令行下载](satellite-download.md)：地图源、下载范围、缓存、合并大图、

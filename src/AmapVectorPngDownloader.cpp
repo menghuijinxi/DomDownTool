@@ -24,6 +24,10 @@
 #include "AmapVectorDecoder.h"
 #include "AmapBuildingFbxExporter.h"
 #include "GCJ02GoogleDownBase.h"
+#ifdef _WIN32
+#include "map/PointLabel.h"
+#include "include/core/SkCanvas.h"
+#endif
 
 namespace
 {
@@ -773,6 +777,9 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
 
     std::vector<ProjectedFeature> projectedFeatures;
     projectedFeatures.reserve(decodedData.features.size());
+#ifdef _WIN32
+    std::vector<PositionedPointLabel> labelCandidates;
+#endif
     for (const AmapVectorFeature& feature : decodedData.features)
     {
         if (isCancellationRequested())
@@ -790,6 +797,22 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
         ProjectedFeature projectedFeature;
         if (BuildProjectedFeature(feature, renderOptions, *this, projectedFeature))
         {
+#ifdef _WIN32
+            if (const auto label = PointLabel::Create(feature))
+            {
+                if (projectedFeature.color.alpha != 0)
+                {
+                    for (const auto& part : projectedFeature.geometryParts)
+                    {
+                        for (const auto& point : part)
+                        {
+                            labelCandidates.emplace_back(label, point.x, point.y, projectedFeature.color);
+                        }
+                    }
+                }
+                continue;
+            }
+#endif
             projectedFeatures.push_back(std::move(projectedFeature));
         }
     }
@@ -821,6 +844,22 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
         return result;
     }
 
+#ifdef _WIN32
+    // 整个导出范围共用一次排版。跨瓦片的字形用同一锚点绘制，边界处自然接合。
+    const auto labels = PlacePointLabels(std::move(labelCandidates), isCancellationRequested);
+    std::vector<GisSpatialBounds> labelBounds;
+    labelBounds.reserve(labels.size());
+    for (const auto& label : labels)
+    {
+        labelBounds.push_back(label.GetBounds());
+    }
+    GisSpatialIndex labelIndex;
+    if (!labelIndex.Build(std::move(labelBounds), isCancellationRequested))
+    {
+        result.error = "高德 GIS PNG 渲染已取消。";
+        return result;
+    }
+#endif
     std::map<std::pair<int32_t, int32_t>, std::vector<size_t>> tileFeatureIndexes;
     const int32_t minimumTileX = GetMinTile().X;
     const int32_t maximumTileX = GetMaxTile().X;
@@ -990,6 +1029,23 @@ DownTool::AmapVectorPngRenderResult DownTool::AmapVectorPngDownloader::Render(
                             }
                         }
 
+#ifdef _WIN32
+                        const double originX = static_cast<double>(tile.X) * renderOptions.tileSize;
+                        const double originY = static_cast<double>(tile.Y) * renderOptions.tileSize;
+                        std::vector<size_t> visibleLabels;
+                        labelIndex.Query({originX, originY, originX + renderOptions.tileSize,
+                                          originY + renderOptions.tileSize}, visibleLabels);
+                        if (!visibleLabels.empty())
+                        {
+                            auto canvas = SkCanvas::MakeRasterDirectN32(renderImage.cols, renderImage.rows,
+                                renderImage.ptr<SkPMColor>(), renderImage.step);
+                            canvas->scale(kRenderScale, kRenderScale);
+                            for (const auto labelIndexInTile : visibleLabels)
+                            {
+                                labels[labelIndexInTile].Draw(*canvas, originX, originY);
+                            }
+                        }
+#endif
                         cv::Mat image;
                         DownsampleRenderImage(
                             renderImage,

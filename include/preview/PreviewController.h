@@ -22,6 +22,7 @@
 #include "preview/AmapWebViewSearch.h"
 #include "preview/Dx12FbxRenderer.h"
 #include "preview/ExportTaskManager.h"
+#include "preview/GitHubUpdate.h"
 #include "preview/MapHoverRefreshThrottle.h"
 #include "preview/MapRenderer.h"
 #include "preview/DownloadRangeEditor.h"
@@ -289,6 +290,7 @@ private:
     bool HandleShapefilePreviewEvent(skui::Runtime& runtime, const skui::ElementEvent& event);
 
     std::atomic<HWND> window_{nullptr};
+    GitHubUpdate githubUpdate_;
     skui::Runtime* runtime_ = nullptr;
     TianDiTuMultidateWebViewSession tianDiTuMultidateSession_;
     MapRenderer renderer_;

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <iostream>
@@ -7,6 +8,7 @@
 
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
+#include "include/core/SkImage.h"
 
 #include "GCJ02GoogleDownBase.h"
 #include "GoogleDownBase.h"
@@ -116,6 +118,177 @@ bool pointRendersAfterPanningAndColorChange(bool wgs84)
         SkColorGetG(renderedColor) == updatedColor.green &&
         SkColorGetB(renderedColor) == updatedColor.blue;
 }
+bool pointNamesFollowSelectionAndPriority()
+{
+    using namespace DomDownToolPreview;
+    const DownTool::LonLat center{116.397389, 39.908722};
+    DownTool::AmapVectorFeature district;
+    district.SetCoordinateSystem(DownTool::VectorCoordinateSystem::Wgs84);
+    district.layerName = "poi";
+    district.mainKey = 10002;
+    district.subKey = 37;
+    district.names = {{"Changping", "en"}, {"昌平区", "zh-Hans"}};
+    district.geometryParts = {{{center.lon, center.lat}}};
+    auto shop = district;
+    shop.mainKey = 0;
+    shop.names = {{"测试商店", "zh"}};
+    DownTool::AmapVectorDecodedData decoded;
+    decoded.features = {shop, district};
+    GisOverlayRenderer renderer([] {});
+    renderer.SetCategory(GisOverlayCategory::Point);
+    GisOverlayRendererTestAccess::SetDecodedData(renderer, decoded);
+    DownTool::GoogleDownBase projection;
+    projection.SetTileSize(256);
+    MapViewport viewport;
+    viewport.setSize(160, 64);
+    viewport.setCenter(center);
+    viewport.setZoom(15.);
+    SkBitmap bitmap;
+    bitmap.allocN32Pixels(160, 64);
+    const auto pixels = [&] {
+        bitmap.eraseColor(SK_ColorTRANSPARENT);
+        SkCanvas canvas(bitmap);
+        renderer.Draw(canvas, viewport, projection, TileYAxisDirection::Down, 256);
+        std::vector<SkColor> result;
+        for (int x = 0; x < bitmap.width(); ++x)
+        {
+            for (int y = 0; y < bitmap.height(); ++y)
+            {
+                result.push_back(bitmap.getColor(x, y));
+            }
+        }
+        return result;
+    };
+    const auto combined = pixels();
+    district.names.erase(district.names.begin());
+    decoded.features = {district};
+    GisOverlayRendererTestAccess::SetDecodedData(renderer, decoded);
+    if (pixels() != combined || std::ranges::count(combined, SK_ColorWHITE) == 0)
+    {
+        return false;
+    }
+    renderer.SetCategory(GisOverlayCategory::Road);
+    return std::ranges::all_of(pixels(), [](SkColor pixel) { return pixel == SK_ColorTRANSPARENT; });
+}
+
+bool qianmenPointStylesRenderDistinctIcons()
+{
+    using namespace DomDownToolPreview;
+    const DownTool::LonLat center{116.394028, 39.898489};
+    DownTool::GoogleDownBase projection;
+    projection.SetTileSize(256);
+    MapViewport viewport;
+    viewport.setSize(80, 40);
+    viewport.setCenter(center);
+    viewport.setZoom(18.);
+    GisOverlayRenderer renderer([] {});
+    renderer.SetCategory(GisOverlayCategory::Point);
+
+    const auto render = [&](uint32_t mainKey, uint32_t subKey, const char* name) {
+        DownTool::AmapVectorFeature point;
+        point.SetCoordinateSystem(DownTool::VectorCoordinateSystem::Wgs84);
+        point.layerName = "poi";
+        point.mainKey = mainKey;
+        point.subKey = subKey;
+        point.names = {{name, "zh-Hans"}};
+        point.geometryParts = {{{center.lon, center.lat}}};
+        DownTool::AmapVectorDecodedData decoded;
+        decoded.features = {point};
+        GisOverlayRendererTestAccess::SetDecodedData(renderer, decoded);
+        SkBitmap bitmap;
+        bitmap.allocN32Pixels(80, 40);
+        bitmap.eraseColor(SK_ColorTRANSPARENT);
+        SkCanvas canvas(bitmap);
+        renderer.Draw(canvas, viewport, projection, TileYAxisDirection::Down, 256);
+        return bitmap;
+    };
+    // 前门东大街两个无名点都使用 10001/2，灯珠从上到下为红、黄、绿。
+    const auto signal = render(10001, 2, "");
+    const auto red = signal.getColor(40, 15);
+    const auto amber = signal.getColor(40, 20);
+    const auto green = signal.getColor(40, 25);
+    if (SkColorGetR(red) < 180 || SkColorGetG(amber) < 150 ||
+        SkColorGetR(amber) < 180 || SkColorGetG(green) < 130 ||
+        SkColorGetG(green) <= SkColorGetR(green))
+    {
+        return false;
+    }
+    const auto parking = render(12024, 1373, "");
+    const auto museum = render(12024, 25, "铁道博物馆");
+    const auto parkingColor = parking.getColor(34, 20);
+    const auto museumColor = museum.getColor(34, 20);
+    return SkColorGetB(parkingColor) > SkColorGetR(parkingColor) &&
+        SkColorGetR(museumColor) > SkColorGetB(museumColor) &&
+        SkColorGetA(parkingColor) == 255 && SkColorGetA(museumColor) == 255;
+}
+
+bool pointLabelArtworkIsReusedWhileNavigating()
+{
+    using namespace DomDownToolPreview;
+    class CountingCanvas final : public SkCanvas
+    {
+      public:
+        using SkCanvas::SkCanvas;
+        uint32_t spriteId = 0;
+
+      protected:
+        void onDrawImageRect2(const SkImage* image, const SkRect& source, const SkRect& target,
+                              const SkSamplingOptions& sampling, const SkPaint* paint,
+                              SrcRectConstraint constraint) override
+        {
+            spriteId = image->uniqueID();
+            SkCanvas::onDrawImageRect2(image, source, target, sampling, paint, constraint);
+        }
+    };
+
+    const DownTool::LonLat center{116.394028, 39.898489};
+    DownTool::AmapVectorFeature point;
+    point.SetCoordinateSystem(DownTool::VectorCoordinateSystem::Wgs84);
+    point.layerName = "poi";
+    point.mainKey = 12024;
+    point.subKey = 1373;
+    point.names = {{"停车场", "zh"}};
+    point.geometryParts = {{{center.lon, center.lat}}};
+    DownTool::AmapVectorDecodedData decoded;
+    decoded.features = {point};
+    GisOverlayRenderer renderer([] {});
+    renderer.SetCategory(GisOverlayCategory::Point);
+    GisOverlayRendererTestAccess::SetDecodedData(renderer, decoded);
+    DownTool::GoogleDownBase projection;
+    projection.SetTileSize(256);
+    MapViewport view;
+    view.setSize(160, 64);
+    view.setCenter(center);
+    view.setZoom(18.);
+    SkBitmap bitmap;
+    bitmap.allocN32Pixels(160, 64);
+    CountingCanvas canvas(bitmap);
+    const auto draw = [&] {
+        canvas.spriteId = 0;
+        canvas.clear(SK_ColorTRANSPARENT);
+        renderer.Draw(canvas, view, projection, TileYAxisDirection::Down, 256);
+        return canvas.spriteId;
+    };
+    const auto original = draw();
+    view.panBy(4., 0., projection, TileYAxisDirection::Down, 256);
+    if (original == 0 || draw() != original)
+    {
+        return false;
+    }
+    view.setZoom(18.25);
+    if (draw() != original || SkColorGetA(bitmap.getColor(84, 32)) == 0)
+    {
+        return false;
+    }
+    view.setZoom(19.);
+    if (draw() != original)
+    {
+        return false;
+    }
+    view.setCenter(center);
+    renderer.SetColor(GisOverlayCategory::Point, {11, 177, 29, 255});
+    return draw() != original && bitmap.getColor(74, 32) == SkColorSetRGB(11, 177, 29);
+}
 } // namespace
 
 int main()
@@ -141,6 +314,18 @@ int main()
         }
 
         renderer.UpdateContext({116.397389, 39.908722}, 100., 15);
+        if (!qianmenPointStylesRenderDistinctIcons())
+        {
+            throw std::runtime_error("前门的无名信号灯、停车场或博物馆未使用对应图标");
+        }
+        if (!pointLabelArtworkIsReusedWhileNavigating())
+        {
+            throw std::runtime_error("平移、缩放没有复用点标注，或改色后仍显示旧图标");
+        }
+        if (!pointNamesFollowSelectionAndPriority())
+        {
+            throw std::runtime_error("GIS 点的中文名称、碰撞优先级或图层开关不正确");
+        }
         if (renderer.IsLoading())
         {
             throw std::runtime_error("disabled GIS overlay started a download");
