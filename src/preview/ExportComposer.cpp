@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -50,6 +51,18 @@ struct GisCatalogItem
     DownTool::AmapVectorRenderCategory category;
     GisOverlayCategory preview;
 };
+
+struct GisProviderOption
+{
+    DownTool::VectorDataSource provider;
+    std::string_view allId;
+    std::string_view allLabel;
+};
+
+constexpr GisProviderOption kGisProviders[] = {
+    {DownTool::VectorDataSource::Amap, "gis.all", "高德·全部"},
+    {DownTool::VectorDataSource::Tencent, "gis.tencent.all", "腾讯·全部"},
+    {DownTool::VectorDataSource::Baidu, "gis.baidu.all", "百度·全部"}};
 
 constexpr GisCatalogItem kGisCatalog[] = {
     {"gis.road", "道路", DownTool::AmapVectorRenderCategory::Road, GisOverlayCategory::Road},
@@ -152,6 +165,26 @@ std::string GisSourceName(const GisCatalogItem& item)
 {
     return GisDataSource(item) == DownTool::VectorDataSource::Amap ?
         std::string("高德·") + item.name : item.name;
+}
+
+ExportSourceEntry MakeGisSource(const GisCatalogItem& item, DownTool::AmapVectorColor color)
+{
+    ExportSourceEntry source;
+    source.id = item.id;
+    source.name = GisSourceName(item);
+    source.kind = ExportSourceKind::Gis;
+    source.gisCategory = item.category;
+    source.color = color;
+    return source;
+}
+
+ExportSourceEntry MakeGisSource(const GisCatalogItem& item,
+    const DomDownToolPreview::MapRenderer& renderer,
+    const std::map<DownTool::AmapVectorRenderCategory, DownTool::AmapVectorColor>& savedColors)
+{
+    const auto saved = savedColors.find(item.category);
+    return MakeGisSource(item, saved == savedColors.end() ?
+        renderer.GetGisOverlayColor(item.preview) : saved->second);
 }
 
 const GisCatalogItem* FindGis(DownTool::AmapVectorRenderCategory category,
@@ -290,6 +323,11 @@ bool AllowsGis(ExportComponentKind kind)
         kind != ExportComponentKind::DemGeoTiff;
 }
 
+bool BuildingSourcesOnly(ExportComponentKind kind)
+{
+    return kind == ExportComponentKind::BuildingModel || kind == ExportComponentKind::CesiumBuildings;
+}
+
 std::string ShapeName(DownTool::FbxPlanetShape shape)
 {
     switch (shape)
@@ -416,6 +454,14 @@ bool ComponentHasSource(const ExportComponent& component, std::string_view sourc
         });
 }
 
+bool CanAddGis(const ExportComponent& component, const GisCatalogItem& item)
+{
+    return AllowsGis(component.kind) &&
+        (!BuildingSourcesOnly(component.kind) ||
+         item.category == DownTool::AmapVectorRenderCategory::Building) &&
+        !ComponentHasSource(component, item.id, {});
+}
+
 std::string JoinedSourceNames(const ExportComponent& component)
 {
     std::string names;
@@ -505,27 +551,6 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
     const auto nextId = [this](char prefix)
     {
         return std::string(1, prefix) + std::to_string(exportComposerSerial_++);
-    };
-    const auto colorFor = [this](DownTool::AmapVectorRenderCategory category)
-    {
-        const auto saved = exportGisColors_.find(category);
-        if (saved != exportGisColors_.end())
-        {
-            return saved->second;
-        }
-        const GisCatalogItem* item = FindGis(category);
-        return item == nullptr ? DownTool::AmapVectorColor{} :
-            renderer_.GetGisOverlayColor(item->preview);
-    };
-    const auto makeGis = [&](const GisCatalogItem& item)
-    {
-        ExportSourceEntry source;
-        source.id = item.id;
-        source.name = GisSourceName(item);
-        source.kind = ExportSourceKind::Gis;
-        source.gisCategory = item.category;
-        source.color = colorFor(item.category);
-        return source;
     };
     const auto makeImagery = [this](const SatelliteExportSource& saved)
     {
@@ -622,7 +647,7 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
             if (GisDataSource(item) == DownTool::VectorDataSource::Amap &&
                 (allGis || configuration->gisCategories.contains(item.category)))
             {
-                gis.push_back(makeGis(item));
+                gis.push_back(MakeGisSource(item, renderer_, exportGisColors_));
             }
         }
         const bool overlay = configuration->gisModes.contains(GisExportMode::OverlayOnSatellite);
@@ -692,7 +717,7 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
             building.kind = ExportComponentKind::BuildingModel;
             if (const GisCatalogItem* item = FindGis(DownTool::AmapVectorRenderCategory::Building))
             {
-                building.sources.push_back(makeGis(*item));
+                building.sources.push_back(MakeGisSource(*item, renderer_, exportGisColors_));
             }
             building.wallTexturePath = configuration->buildingWallTexturePath;
             building.roofTexturePath = configuration->buildingRoofTexturePath;
@@ -766,7 +791,7 @@ void DomDownToolPreview::PreviewController::ResetExportComposer(
                 if (GisDataSource(item) == renderer_.GetGisSource() &&
                     (allSelected || selected.contains(item.preview)))
                 {
-                    merged.sources.push_back(makeGis(item));
+                    merged.sources.push_back(MakeGisSource(item, renderer_, exportGisColors_));
                 }
             }
         }
@@ -941,11 +966,10 @@ std::string SourceBlockHtml(
     bool allowAdd)
 {
     std::string html = "<div class=\"export-source-list\">";
+    const bool fixedBuilding = BuildingSourcesOnly(component.kind);
     for (size_t index = 0; index < component.sources.size(); ++index)
     {
         const ExportSourceEntry& source = component.sources[index];
-        const bool fixedBuilding = component.kind == ExportComponentKind::BuildingModel ||
-            component.kind == ExportComponentKind::CesiumBuildings;
         std::string color;
         if (source.kind == ExportSourceKind::Gis && !fixedBuilding)
         {
@@ -1024,6 +1048,14 @@ std::string SourceBlockHtml(
     }
     std::string menu = "<div class=\"export-menu\">";
     bool any = false;
+    const auto appendOption = [&](std::string_view id, std::string_view label)
+    {
+        any = true;
+        menu += fmt::format(
+            "<button id=\"export-act-add-source__{}__{}\" type=\"button\" "
+            "data-action=\"export-composer\">{}</button>",
+            component.id, id, EscapeHtml(label));
+    };
     if (AllowsImagery(component.kind))
     {
         for (const ImageryCatalogItem& item : kImageryCatalog)
@@ -1033,47 +1065,36 @@ std::string SourceBlockHtml(
             {
                 continue;
             }
-            any = true;
-            menu += fmt::format(
-                "<button id=\"export-act-add-source__{}__{}\" type=\"button\" "
-                "data-action=\"export-composer\">{}</button>",
-                component.id, item.id, item.name);
+            appendOption(item.id, item.name);
         }
     }
     if (AllowsGis(component.kind))
     {
-        for (const GisCatalogItem& item : kGisCatalog)
+        for (const auto& provider : kGisProviders)
         {
-            if ((component.kind == ExportComponentKind::BuildingModel ||
-                 component.kind == ExportComponentKind::CesiumBuildings) &&
-                item.category != DownTool::AmapVectorRenderCategory::Building)
+            bool showAll = !fixedBuilding;
+            for (const GisCatalogItem& item : kGisCatalog)
             {
-                continue;
+                if (GisDataSource(item) != provider.provider || !CanAddGis(component, item))
+                {
+                    continue;
+                }
+                if (showAll)
+                {
+                    appendOption(provider.allId, provider.allLabel);
+                    showAll = false;
+                }
+                appendOption(item.id, GisSourceName(item));
             }
-            if (ComponentHasSource(component, item.id, {}))
-            {
-                continue;
-            }
-            any = true;
-            menu += fmt::format(
-                "<button id=\"export-act-add-source__{}__{}\" type=\"button\" "
-                "data-action=\"export-composer\">{}</button>",
-                component.id, item.id, GisSourceName(item));
         }
         for (const auto& source : importedSources)
         {
             if (ComponentHasSource(component, source.id, {}) ||
-                ((component.kind == ExportComponentKind::BuildingModel ||
-                  component.kind == ExportComponentKind::CesiumBuildings) &&
-                 source.gisCategory != DownTool::AmapVectorRenderCategory::Building))
+                (fixedBuilding && source.gisCategory != DownTool::AmapVectorRenderCategory::Building))
             {
                 continue;
             }
-            any = true;
-            menu += fmt::format(
-                "<button id=\"export-act-add-source__{}__{}\" type=\"button\" "
-                "data-action=\"export-composer\">{}</button>",
-                component.id, source.id, EscapeHtml(source.name));
+            appendOption(source.id, source.name);
         }
     }
     if (!any)
@@ -1639,13 +1660,8 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
                 if (const GisCatalogItem* item = FindGis(
                         DownTool::AmapVectorRenderCategory::Building, renderer_.GetGisSource()))
                 {
-                    ExportSourceEntry source;
-                    source.id = item->id;
-                    source.name = GisSourceName(*item);
-                    source.kind = ExportSourceKind::Gis;
-                    source.gisCategory = item->category;
-                    source.color = renderer_.GetGisOverlayColor(item->preview);
-                    component.sources.push_back(std::move(source));
+                    component.sources.push_back(
+                        MakeGisSource(*item, renderer_.GetGisOverlayColor(item->preview)));
                 }
             }
             exportSelectedComponentId_ = component.id;
@@ -1690,6 +1706,13 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
         ExportComponent* component = findComponent(first);
         if (component != nullptr)
         {
+            const auto addGis = [&](const GisCatalogItem& item)
+            {
+                if (CanAddGis(*component, item))
+                {
+                    component->sources.push_back(MakeGisSource(item, renderer_, exportGisColors_));
+                }
+            };
             if (const ImageryCatalogItem* item = FindImagery(second))
             {
                 if (std::string_view(item->id) == "tianditu.multidate" ||
@@ -1712,17 +1735,17 @@ bool DomDownToolPreview::PreviewController::HandleExportComposerEvent(
             }
             else if (const GisCatalogItem* item = FindGis(second))
             {
-                if (AllowsGis(component->kind) && !ComponentHasSource(*component, item->id, {}))
+                addGis(*item);
+            }
+            else if (const auto provider = std::ranges::find(kGisProviders, second,
+                         &GisProviderOption::allId); provider != std::end(kGisProviders))
+            {
+                for (const GisCatalogItem& item : kGisCatalog)
                 {
-                    ExportSourceEntry source;
-                    source.id = item->id;
-                    source.name = GisSourceName(*item);
-                    source.kind = ExportSourceKind::Gis;
-                    source.gisCategory = item->category;
-                    const auto saved = exportGisColors_.find(item->category);
-                    source.color = saved == exportGisColors_.end() ?
-                        renderer_.GetGisOverlayColor(item->preview) : saved->second;
-                    component->sources.push_back(std::move(source));
+                    if (GisDataSource(item) == provider->provider)
+                    {
+                        addGis(item);
+                    }
                 }
             }
             else

@@ -1371,6 +1371,89 @@ bool TestElectronicMapSources(HWND window, const std::filesystem::path& testRoot
                    "电子地图窄窗口界面截图失败");
 }
 
+bool TestAddAllGisSources(HWND window)
+{
+    using namespace DomDownToolPreview;
+    using postprocess_test::Require;
+    skui::Runtime runtime;
+    if (!runtime.loadDocument((std::filesystem::path(DOMDOWNTOOL_SOURCE_DIR) /
+        "resources/preview/index.html").string()))
+    {
+        return false;
+    }
+    runtime.resize(1440, 900, 1.F);
+    RangeController controller;
+    controller.attachRuntime(runtime);
+    skui::win32::Win32EventAdapter adapter(runtime);
+    const auto click = [&](const std::string& id)
+    {
+        return ClickElement(controller, runtime, adapter, window, id);
+    };
+    if (!click("open-export-page"))
+    {
+        return false;
+    }
+    ExportConfiguration configuration;
+    configuration.centerWgs84 = {116.42, 39.89};
+    configuration.radiusMeters = 300.;
+    configuration.zoom = 16;
+    ExportContentGroup group;
+    group.id = "gis-group";
+    ExportComponent image;
+    image.id = "image";
+    image.kind = ExportComponentKind::MergedImage;
+    group.components = {image};
+    configuration.groups = {group};
+    const std::string add = "export-act-add-source__image__";
+    for (const auto& [prefix, label] : {std::pair{"gis.", "高德·全部"},
+             std::pair{"gis.tencent.", "腾讯·全部"}, std::pair{"gis.baidu.", "百度·全部"}})
+    {
+        ExportSourceEntry water;
+        water.id = std::string(prefix) + "water";
+        water.kind = ExportSourceKind::Gis;
+        water.gisCategory = DownTool::AmapVectorRenderCategory::Water;
+        water.color = {17, 34, 51, 255};
+        configuration.groups[0].components[0].sources = {water};
+        controller.LoadExport(runtime, configuration);
+        const std::string all = add + prefix + "all";
+        if (!click("export-act-open-params__image") || !click("export-act-open-sources__image") ||
+            !Require(runtime.textContentById(all) == label, "图源菜单缺少" + std::string(label)) ||
+            !click(all))
+        {
+            return false;
+        }
+        std::string error;
+        const auto exported = controller.ReadExport(error);
+        if (!Require(exported && exported->groups[0].components[0].sources.size() == 9,
+                     "全部 GIS 图源没有正确写入大图配置：" + error))
+        {
+            return false;
+        }
+        const auto& sources = exported->groups[0].components[0].sources;
+        if (!Require(sources.front().id == water.id && sources.front().color.red == 17,
+                     "补齐 GIS 图层时覆盖了已有图层"))
+        {
+            return false;
+        }
+        for (const auto category : {"road", "building", "water", "point", "green",
+                                   "boundary", "highway", "subway", "other"})
+        {
+            if (!Require(std::ranges::count(sources, std::string(prefix) + category,
+                                            &ExportSourceEntry::id) == 1,
+                         std::string(label) + " 缺少或重复添加了 " + category))
+            {
+                return false;
+            }
+        }
+        if (!click("export-act-open-sources__image") ||
+            !Require(!runtime.textContentById(all).has_value(), "已选齐的图源仍显示全部按钮"))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool TestTencentGis(HWND window, const std::filesystem::path& testRoot)
 {
     using namespace DomDownToolPreview;
@@ -2628,7 +2711,8 @@ int main(int argc, char** argv)
         TestShapefileMapPreview(testRoot) && TestShapefileDrop(window, testRoot) &&
         TestTaskActions(window, testRoot) && TestPerTileFbxOption(window, testRoot) &&
         TestTaskFbxPreviewLoadsEveryTile(window, testRoot) &&
-        TestElectronicMapSources(window, testRoot) && TestTencentGis(window, testRoot) &&
+        TestElectronicMapSources(window, testRoot) && TestAddAllGisSources(window) &&
+        TestTencentGis(window, testRoot) &&
         TestBaiduGis(window, testRoot);
     DestroyWindow(window);
     CoUninitialize();
