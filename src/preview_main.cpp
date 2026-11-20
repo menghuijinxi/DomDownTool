@@ -20,6 +20,22 @@ namespace
 {
 std::wstring crashDumpDirectory;
 
+void setPreviewWindowIcons(HWND window, HINSTANCE instance)
+{
+    const auto setIcon = [&](WPARAM kind, int widthMetric, int heightMetric)
+    {
+        const auto icon = LoadImageW(instance, MAKEINTRESOURCEW(DOMDOWNTOOL_PREVIEW_ICON_RESOURCE_ID),
+                                     IMAGE_ICON, GetSystemMetrics(widthMetric),
+                                     GetSystemMetrics(heightMetric), LR_SHARED);
+        if (icon != nullptr)
+        {
+            SendMessageW(window, WM_SETICON, kind, reinterpret_cast<LPARAM>(icon));
+        }
+    };
+    setIcon(ICON_SMALL, SM_CXSMICON, SM_CYSMICON);
+    setIcon(ICON_BIG, SM_CXICON, SM_CYICON);
+}
+
 std::filesystem::path executableDirectory()
 {
     std::vector<wchar_t> pathBuffer(32768);
@@ -188,7 +204,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 
     DomDownToolPreview::PreviewController controller;
     skui::win32::WindowOptions options;
-    options.title = L"DomDownTool Tile Preview";
+    options.title = L"DomDownTool Tile Preview v" DOMDOWNTOOL_PREVIEW_VERSION;
     options.logicalWidth = 1440;
     options.logicalHeight = 900;
     options.clearColor = RGB(31, 34, 33);
@@ -207,9 +223,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     options.onAfterUiRender =
         [&controller](SkCanvas& canvas, int width, int height, float dpiScale)
     { controller.draw(canvas, width, height, dpiScale); };
-    options.onWindowMessage = [&controller](HWND window, UINT message, WPARAM wParam, LPARAM lParam,
-                                            skui::Runtime& runtime)
-    { return controller.handleWindowMessage(window, message, wParam, lParam, runtime); };
+    options.onWindowMessage = [&controller, instance](HWND window, UINT message, WPARAM wParam,
+                                                      LPARAM lParam, skui::Runtime& runtime)
+    {
+        if (message == WM_CREATE)
+        {
+            setPreviewWindowIcons(window, instance);
+        }
+        return controller.handleWindowMessage(window, message, wParam, lParam, runtime);
+    };
 
     try
     {

@@ -60,7 +60,7 @@ IF(WIN32)
     add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/Zc:__cplusplus>")
 ENDIF()
 
-project ("DomDownTool" VERSION 1.0.0.0)
+project ("DomDownTool" VERSION 1.1.0.0)
 
 function(domdowntool_configure_msvc_ninja_dependencies)
     if(NOT MSVC OR NOT CMAKE_GENERATOR MATCHES "^Ninja")
@@ -248,7 +248,10 @@ if(DOMDOWNTOOL_BUILD_PREVIEW)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/WaybackPreview.cpp)
   set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/preview/PreviewResources.rc
     APPEND PROPERTY OBJECT_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/resources/preview/index.html)
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/preview/index.html
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/preview/DomDownTool.ico)
+  set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/preview_main.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS DOMDOWNTOOL_PREVIEW_VERSION=L"${PROJECT_VERSION}")
   target_link_libraries(DomDownToolPreview PRIVATE
     DomDownToolCore
     SkiaUI::SkuiWin32Dx12
