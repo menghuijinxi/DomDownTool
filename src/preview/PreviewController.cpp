@@ -3852,7 +3852,7 @@ void DomDownToolPreview::PreviewController::selectPlaceSearchResult(skui::Runtim
         searchState_ = SearchState::Loading;
         searchPopupOpen_ = true;
         const uint64_t requestId =
-            placeSearch_.submitSearch(resolutionQuery, renderer_.center());
+            placeSearch_.submitSearch(resolutionQuery, renderer_.center(), resultId);
         pendingLocationRequest_ = PendingLocationRequest{requestId, resultId, resultName};
         writeSearchTrace("Controller", "location_resolution_requested",
                          fmt::format("id={} query={} expected_id={} expected_name={}",

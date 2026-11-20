@@ -17,6 +17,7 @@
 #include "nlohmann/json.hpp"
 #include "webview/webview.h"
 
+#include "AmapSearchPageUrl.h"
 #include "preview/SearchTrace.h"
 
 namespace
@@ -25,7 +26,6 @@ using Json = nlohmann::json;
 using namespace std::chrono_literals;
 
 constexpr std::string_view kAmapHomeUrl = "https://www.amap.com/";
-constexpr std::string_view kAmapSearchUrlPrefix = "https://www.amap.com/search";
 constexpr std::string_view kAmapTipsUrlPrefix =
     "https://www.amap.com/service/poiTipsSearchlite";
 constexpr auto kPageStartupTimeout = 20s;
@@ -129,7 +129,10 @@ std::optional<Json> firstBindingArgument(const std::string& requestJson)
 
 std::string makeFetchScript(uint64_t requestId, const std::string& url)
 {
-    const Json request = {{"requestId", requestId}, {"url", url}};
+    const std::string_view poiId = DomDownToolPreview::isPlaceDetailUrl(url)
+        ? std::string_view(url).substr(DomDownToolPreview::kPlaceDetailPrefix.size())
+        : std::string_view{};
+    const Json request = {{"requestId", requestId}, {"url", url}, {"poiId", poiId}};
     return "(() => {"
            "const request=" + request.dump() + ";"
            "if(typeof window.__domDownToolAmapFetch==='function'){"
@@ -265,6 +268,26 @@ std::string bootstrapScript()
     }
   };
 
+  const detailPois = (html, poiId) => {
+    // 详情页的 JSON-LD 由高德按 POI ID 生成，与当前地图视野无关。
+    const page = new DOMParser().parseFromString(html, 'text/html');
+    const element = page.getElementById('place-schema-' + poiId);
+    if (!element) {
+      return [];
+    }
+    const place = JSON.parse(element.textContent);
+    const lon = place?.geo?.longitude;
+    const lat = place?.geo?.latitude;
+    const validCoordinate = (value, limit) =>
+      (typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')) &&
+      Number.isFinite(Number(value)) && Math.abs(Number(value)) <= limit;
+    if (!place?.name || !validCoordinate(lon, 180) || !validCoordinate(lat, 90)) {
+      return [];
+    }
+    return [{ id: poiId, name: place.name, address: place.address?.streetAddress || '',
+              location: [Number(lon), Number(lat)].join(',') }];
+  };
+
   window.__domDownToolAmapFetch = async (request) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
@@ -273,12 +296,25 @@ std::string bootstrapScript()
         method: 'GET',
         credentials: 'include',
         signal: controller.signal,
-        headers: { 'Accept': 'application/json, text/plain, */*' }
+        headers: { 'Accept': request.poiId ? 'text/html' : 'application/json, text/plain, */*' }
       });
       const body = await response.text();
       const contentType = response.headers.get('content-type') || '';
+      const finalUrl = new URL(response.url);
+      if (request.poiId && finalUrl.origin + finalUrl.pathname === request.url) {
+        const pois = response.ok ? detailPois(body, request.poiId) : [];
+        // 已移除的详情页按空结果处理，允许沿用名称查找。
+        const missing = response.status === 404 || response.status === 410;
+        invokeNative('domDownToolAmapTransportResult', {
+          requestId: request.requestId, statusCode: missing ? 200 : response.status,
+          responseUrl: response.url,
+          contentType: 'application/json', body: JSON.stringify({status: '1', pois}),
+          hasResults: pois.length > 0, riskControl: false, resultSource: 'place-detail'
+        });
+        return;
+      }
       const riskControl =
-        !contentType.toLowerCase().includes('application/json');
+        !!request.poiId || !contentType.toLowerCase().includes('application/json');
       invokeNative('domDownToolAmapTransportResult', {
         requestId: request.requestId,
         statusCode: response.status,
@@ -303,13 +339,10 @@ std::string bootstrapScript()
     }
   };
 
+  let stopCollection;
   window.__domDownToolCollectAmapSearchPage = (request) => {
-    if (window.__domDownToolAmapResultObserver) {
-      window.__domDownToolAmapResultObserver.disconnect();
-    }
-    if (window.__domDownToolAmapResultTimer) {
-      clearInterval(window.__domDownToolAmapResultTimer);
-    }
+    // 人工验证后可能在同一页重试，旧采集的超时不能结束新一轮请求。
+    stopCollection?.();
 
     const requestId = request.requestId;
     const searchQuery = new URL(request.url).searchParams.get('query')?.trim() || '';
@@ -318,14 +351,7 @@ std::string bootstrapScript()
       if (completed) {
         return;
       }
-      completed = true;
-      if (window.__domDownToolAmapResultObserver) {
-        window.__domDownToolAmapResultObserver.disconnect();
-      }
-      if (window.__domDownToolAmapResultTimer) {
-        clearInterval(window.__domDownToolAmapResultTimer);
-      }
-      window.removeEventListener('domdown-amap-json-captured', collect);
+      stopCollection();
       invokeNative('domDownToolAmapTransportResult', {
         requestId,
         statusCode: 200,
@@ -458,15 +484,23 @@ std::string bootstrapScript()
       }
     };
 
-    window.__domDownToolAmapResultObserver = new MutationObserver(collect);
-    window.__domDownToolAmapResultObserver.observe(document.documentElement, {
+    const observer = new MutationObserver(collect);
+    observer.observe(document.documentElement, {
       childList: true,
       subtree: true
     });
     window.addEventListener('domdown-amap-json-captured', collect);
-    window.__domDownToolAmapResultTimer = setInterval(collect, 250);
+    const timer = setInterval(collect, 250);
+    const timeout = setTimeout(() => finish([], 'timeout'), 10000);
+    stopCollection = () => {
+      completed = true;
+      observer.disconnect();
+      clearInterval(timer);
+      clearTimeout(timeout);
+      window.removeEventListener('domdown-amap-json-captured', collect);
+      stopCollection = undefined;
+    };
     collect();
-    setTimeout(() => finish([], 'timeout'), 10000);
   };
 
   const onPageReady = () => {
@@ -482,11 +516,6 @@ std::string bootstrapScript()
   }
 })();
 )javascript";
-}
-
-bool isSearchPageUrl(std::string_view url)
-{
-    return url.starts_with(kAmapSearchUrlPrefix);
 }
 
 bool isFetchUrl(std::string_view url)
@@ -531,7 +560,7 @@ DomDownToolPreview::PlaceSearchHttpResponse DomDownToolPreview::AmapWebViewSearc
     const std::string& url)
 {
     RequestKind kind;
-    if (isFetchUrl(url))
+    if (isFetchUrl(url) || isPlaceDetailUrl(url))
     {
         kind = RequestKind::Fetch;
     }

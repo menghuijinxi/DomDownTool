@@ -199,8 +199,9 @@ profile 持久化，不同 EXE 的验证结果不会自动共享。人工完成�
 - `AmapWebViewSearch` 在独立 UI 线程中维护隐藏的 WebView2 实例。
 - 联想请求从 `https://www.amap.com/` 页面上下文发起，并携带当前会话凭据。
 - 非 JSON 响应或验证码页面触发可见验证窗口；用户确认后回到主页并重放原请求。
-- 完整搜索加载 `/search` 页面，从 `.poibox[data-poiinfo-x][data-poiinfo-y]`
-  提取 GCJ-02 坐标，再统一转换为 WGS84。
+- 完整搜索从 `/search` 发起。WebView2 在旧版 `/search` 或重定向后的
+  `/ssr/search` 收到页面就绪通知时，开始从结果行或网页收到的 JSON 中采集 POI，
+  再把 GCJ-02 坐标转换为 WGS84。
 - 取消新请求、关闭验证窗口和退出程序都会唤醒等待线程，避免后台搜索阻塞析构。
 - 非验证状态下的页面请求有原生超时；不能只依赖页面 JavaScript 回调，否则脚本注入失败时
   搜索界面会永久停留在加载状态。
@@ -216,7 +217,11 @@ profile 持久化，不同 EXE 的验证结果不会自动共享。人工完成�
 
 ### 快速检查清单
 
-- 搜索一直停留在加载状态：检查 WebView 启动、页面 ready 回调和取消唤醒路径。
+- 联想正常、选择地点后等待 30 秒出现回调超时：对照日志中的 `page_ready url` 和
+  `transport_result`。曾用“点石商务公园”复现高德从 `/search` 转到 `/ssr/search` 后，
+  旧版程序虽收到就绪通知，却跳过了坐标采集。`AmapPlaceSearchTest` 覆盖两个落地地址。
+- 在同一页面完成人工验证后重试，应释放前一轮的观察器、事件监听和定时器，
+  防止旧超时回调抢先返回空结果。
 - 验证后仍反复风控：确认验证发生在 `DomDownToolPreview.exe` 使用的 profile 中。
 - 联想正常但完整搜索为空：检查 `.poibox` 选择器及 `data-poiinfo-*` 属性是否变化。
 - 坐标存在但定位偏移：确认网页坐标先按 GCJ-02 转换为 WGS84。
@@ -234,6 +239,13 @@ profile 持久化，不同 EXE 的验证结果不会自动共享。人工完成�
 
 验证时应在日志中确认成功路径的 `location_applied` 名称与用户点击项一致；失败路径只能出现
 `location_resolution_rejected`，不能出现无关地点的 `location_applied`。
+
+从北京视野选择佛山“千灯湖公园北区”时，联想返回了 POI ID，按名称和北京视野再次查询却在
+10 秒后返回零个坐标。选中有 ID 的候选后，预览程序在同一 WebView2 会话中读取高德
+`/ssr/place/<ID>` 详情页，从与该 ID 对应的 `place-schema-<ID>` JSON-LD 元素提取
+`geo.longitude` 和 `geo.latitude`，交给原有 GCJ-02 转换。详情无坐标时再尝试名称查询。
+普通文字搜索返回空列表时会补查联想。排查时可对照 `detail_complete` 和 `location_applied`。
+`AmapPlaceSearchTest` 覆盖北京视野下定位佛山候选以及文字搜索返回空列表的情形。
 
 ## WebView2 同会话访问天地图多时相接口
 

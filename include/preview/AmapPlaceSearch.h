@@ -80,7 +80,8 @@ class AmapPlaceSearch
 
     uint64_t submitSearch(std::string query);
 
-    uint64_t submitSearch(std::string query, const DownTool::LonLat& centerWgs84);
+    uint64_t submitSearch(std::string query, const DownTool::LonLat& centerWgs84,
+                          std::string poiId = {});
 
     uint64_t submitSuggestions(std::string query, const DownTool::LonLat& centerWgs84,
                                std::chrono::milliseconds debounce =
@@ -104,11 +105,14 @@ class AmapPlaceSearch
         uint64_t requestId = 0;
         PlaceSearchRequestKind kind = PlaceSearchRequestKind::Search;
         std::string query;
+        std::string poiId;
         std::optional<DownTool::LonLat> centerWgs84;
         std::chrono::steady_clock::time_point executeAfter;
     };
 
     uint64_t submit(PendingRequest request);
+
+    [[nodiscard]] bool isCurrent(const PendingRequest& request) const;
 
     [[nodiscard]] PlaceSearchResponse execute(const PendingRequest& request) const;
 

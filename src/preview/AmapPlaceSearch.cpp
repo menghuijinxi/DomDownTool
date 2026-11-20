@@ -14,6 +14,7 @@
 #include "fmt/format.h"
 #include "nlohmann/json.hpp"
 
+#include "AmapSearchPageUrl.h"
 #include "GCJ02GoogleDownBase.h"
 #include "preview/SearchTrace.h"
 
@@ -604,12 +605,13 @@ uint64_t DomDownToolPreview::AmapPlaceSearch::submitSearch(std::string query)
 }
 
 uint64_t DomDownToolPreview::AmapPlaceSearch::submitSearch(
-    std::string query, const DownTool::LonLat& centerWgs84)
+    std::string query, const DownTool::LonLat& centerWgs84, std::string poiId)
 {
     PendingRequest request;
     request.kind = PlaceSearchRequestKind::Search;
     request.query = trimAscii(std::move(query));
     request.centerWgs84 = centerWgs84;
+    request.poiId = std::move(poiId);
     request.executeAfter = std::chrono::steady_clock::now();
     return submit(std::move(request));
 }
@@ -712,21 +714,41 @@ DomDownToolPreview::PlaceSearchResponse DomDownToolPreview::AmapPlaceSearch::exe
     }
     if (backend_ == Backend::WebPage)
     {
-        Json root;
-        const PlaceSearchHttpResponse http =
-            httpGet_(makeWebPagePlaceSearchUrl(request.query, request.centerWgs84));
-        writeSearchTrace(
-            "PlaceSearch", "search_http_complete",
-            fmt::format("id={} status={} body_bytes={} transport_error={}", request.requestId,
-                        http.statusCode, http.body.size(), http.error));
-        if (!loadSuccessfulResponse(http, root, response.error))
+        const auto readPlaces = [&](const std::string& url)
         {
-            return response;
+            const PlaceSearchHttpResponse http = httpGet_(url);
+            writeSearchTrace("PlaceSearch", "search_http_complete",
+                             fmt::format("id={} status={} body_bytes={} transport_error={}",
+                                         request.requestId, http.statusCode,
+                                         http.body.size(), http.error));
+            Json root;
+            if (loadSuccessfulResponse(http, root, response.error))
+            {
+                parsePlaces(root, response.results);
+            }
+        };
+        const std::string detailUrl = std::string(kPlaceDetailPrefix) + request.poiId;
+        if (isPlaceDetailUrl(detailUrl))
+        {
+            readPlaces(detailUrl);
+            writeSearchTrace("PlaceSearch", "detail_complete",
+                             fmt::format("id={} poi={} results={}", request.requestId,
+                                         request.poiId, response.results.size()));
+            if (!response.succeeded() || !response.results.empty() || !isCurrent(request))
+            {
+                return response;
+            }
         }
-        parsePlaces(root, response.results);
+        readPlaces(makeWebPagePlaceSearchUrl(request.query, request.centerWgs84));
         writeSearchTrace("PlaceSearch", "search_parse_complete",
                          fmt::format("id={} results={}", request.requestId,
                                      response.results.size()));
+        // 结果页可能只覆盖当前地图范围，联想仍可提供异地候选的 POI ID。
+        if (request.poiId.empty() && response.succeeded() && response.results.empty() &&
+            isCurrent(request))
+        {
+            return executeSuggestions(request);
+        }
         return response;
     }
     if (apiKey_.empty())
@@ -756,6 +778,12 @@ DomDownToolPreview::PlaceSearchResponse DomDownToolPreview::AmapPlaceSearch::exe
     }
     parseGeocodes(geocodeRoot, request.query, response.results);
     return response;
+}
+
+bool DomDownToolPreview::AmapPlaceSearch::isCurrent(const PendingRequest& request) const
+{
+    const std::lock_guard lock(mutex_);
+    return !stopping_ && request.requestId == latestRequestId_;
 }
 
 DomDownToolPreview::PlaceSearchResponse DomDownToolPreview::AmapPlaceSearch::executeSuggestions(

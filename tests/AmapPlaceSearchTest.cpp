@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "../src/preview/AmapSearchPageUrl.h"
 #include "GCJ02GoogleDownBase.h"
 #include "preview/AmapPlaceSearch.h"
 
@@ -222,6 +223,21 @@ bool testWebPageSuggestions()
             "网页联想坐标没有转换为 WGS84");
 }
 
+bool testSearchPageRedirect()
+{
+    using DomDownToolPreview::isSearchPageUrl;
+    return postprocess_test::Require(
+               isSearchPageUrl("https://www.amap.com/ssr/search?query=点石商务公园&city=000000"),
+               "网页搜索重定向后未识别结果页") &&
+        postprocess_test::Require(isSearchPageUrl("https://www.amap.com/search?query=北京"),
+                                  "未识别旧版搜索结果页") &&
+        postprocess_test::Require(
+            !isSearchPageUrl("https://www.amap.com/search/captcha?query=北京") &&
+                !isSearchPageUrl("https://www.amap.com/ssr/searchTips") &&
+                !isSearchPageUrl("https://example.com/ssr/search?query=北京"),
+            "将非高德搜索结果页误识别为结果页");
+}
+
 bool testWebPageSearchAndCoordinateConversion()
 {
     CompletionSignal completion;
@@ -301,6 +317,68 @@ bool testResolvedLocationRequiresExactPoiMatch()
                                   "错误地使用了第一个无关坐标作为定位结果");
 }
 
+bool testSelectedPoiOutsideViewport()
+{
+    CompletionSignal completion;
+    DomDownToolPreview::AmapPlaceSearch search(
+        [&completion] { completion.notify(); },
+        [](const std::string& url) -> DomDownToolPreview::PlaceSearchHttpResponse
+        {
+            if (url == "https://www.amap.com/ssr/place/B0FFIUK5ZQ")
+            {
+                return {200,
+                        R"({"status":"1","pois":[{"id":"B0FFIUK5ZQ","name":"千灯湖公园北区",)"
+                        R"("location":"113.147039,23.069885"}]})", {}};
+            }
+            return {200, R"({"status":"1","pois":[]})", {}};
+        },
+        [] {});
+    search.submitSearch("千灯湖公园北区", {116.193916, 39.935421}, "B0FFIUK5ZQ");
+    if (!postprocess_test::Require(completion.wait(), "跨城市候选定位未完成"))
+    {
+        return false;
+    }
+    const auto responses = search.takeCompleted();
+    const auto expected = DownTool::GCJ02GoogleDownBase::GCJ02ToWGS84({113.147039, 23.069885});
+    return postprocess_test::Require(
+        responses.size() == 1 && responses.front().succeeded() &&
+            responses.front().results.size() == 1 &&
+            responses.front().results.front().id == "B0FFIUK5ZQ" &&
+            responses.front().results.front().coordinateWgs84 &&
+            isNear(*responses.front().results.front().coordinateWgs84, expected),
+        "选中佛山候选后未按其 POI ID 解析坐标");
+}
+
+bool testEmptySearchOffersSuggestions()
+{
+    CompletionSignal completion;
+    DomDownToolPreview::AmapPlaceSearch search(
+        [&completion] { completion.notify(); },
+        [](const std::string& url) -> DomDownToolPreview::PlaceSearchHttpResponse
+        {
+            if (url.find("/service/poiTipsSearchlite?") != std::string::npos)
+            {
+                return {200,
+                        R"({"status":"1","data":{"tip_list":[{"tip":{)"
+                        R"("poiid":"B0FFIUK5ZQ","name":"千灯湖公园北区"}}]}})", {}};
+            }
+            return {200, R"({"status":"1","pois":[]})", {}};
+        },
+        [] {});
+    search.submitSearch("千灯湖", {116.193916, 39.935421});
+    if (!postprocess_test::Require(completion.wait(), "搜索回退未完成"))
+    {
+        return false;
+    }
+    const auto responses = search.takeCompleted();
+    return postprocess_test::Require(
+        responses.size() == 1 && responses.front().succeeded() &&
+            responses.front().kind == DomDownToolPreview::PlaceSearchRequestKind::Search &&
+            responses.front().results.size() == 1 &&
+            responses.front().results.front().id == "B0FFIUK5ZQ",
+        "点击搜索返回空列表时未提供可选的异地候选");
+}
+
 bool testApiFailureIsReported()
 {
     CompletionSignal completion;
@@ -331,7 +409,8 @@ bool runTest()
 {
     const bool succeeded = testPoiSearchAndCoordinateConversion() && testGeocodeFallback() &&
         testSuggestionDebounceKeepsLatestQuery() && testWebPageSuggestions() &&
-        testWebPageSearchAndCoordinateConversion() &&
+        testSearchPageRedirect() && testWebPageSearchAndCoordinateConversion() &&
+        testSelectedPoiOutsideViewport() && testEmptySearchOffersSuggestions() &&
         testResolvedLocationRequiresExactPoiMatch() && testApiFailureIsReported();
     if (succeeded)
     {
